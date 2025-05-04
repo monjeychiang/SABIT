@@ -1,156 +1,156 @@
-# 加密货币交易系统前端
+# 加密貨幣交易系統前端
 
-## 项目概述
-这是使用Vue 3 + TypeScript + Vite开发的加密货币交易平台前端项目。提供用户友好的界面，支持Google账号登录、实时市场数据显示、交易操作等功能。
+## 專案概述
+這是使用Vue 3 + TypeScript + Vite開發的加密貨幣交易平台前端項目。提供用戶友好的介面，支持Google賬號登錄、實時市場數據顯示、交易操作等功能。
 
 ## 主要功能
-- Google OAuth2.0登录集成
-- 实时加密货币市场数据展示
-- 交易下单界面
-- 用户资产管理
-- 响应式设计，支持移动端访问
+- Google OAuth2.0登錄集成
+- 實時加密貨幣市場數據展示
+- 交易下單介面
+- 用戶資產管理
+- 響應式設計，支持移動端訪問
 
-## 技术栈
-- Vue 3 (组合式API)
+## 技術棧
+- Vue 3 (組合式API)
 - TypeScript
 - Vite
 - Vue Router
-- Pinia状态管理
-- Element Plus UI组件库
-- Axios HTTP客户端
-- Vitest单元测试
-- Playwright E2E测试
+- Pinia狀態管理
+- Element Plus UI元件庫
+- Axios HTTP客戶端
+- Vitest單元測試
+- Playwright E2E測試
 
-## 开发环境配置
+## 開發環境配置
 
-### 推荐的IDE设置
+### 推薦的IDE設置
 - [VSCode](https://code.visualstudio.com/) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar)（需禁用Vetur）
-- 启用Take Over Mode以获得更好的类型支持
+- 啟用Take Over Mode以獲得更好的類型支持
 
 =dcxszeAW- Node.js 16+
 - npm 7+
 
-### 项目设置
+### 項目設置
 
-1. 安装依赖：
+1. 安裝依賴：
 ```bash
 npm install
 ```
 
-2. 创建环境配置文件（.env.local）：
+2. 創建環境配置文件（.env.local）：
 ```env
 VITE_API_BASE_URL=http://localhost:8000
 VITE_GOOGLE_CLIENT_ID=your_google_client_id
 ```
 
-### 开发服务器启动
+### 開發伺服器啟動
 ```bash
 npm run dev
 ```
 
-### 生产环境构建
+### 生產環境構建
 ```bash
 npm run build
 ```
 
-## 项目结构
+## 專案結構
 ```
 src/
-├── assets/        # 静态资源
-├── components/    # 通用组件
-├── views/         # 页面组件
+├── assets/        # 靜態資源
+├── components/    # 通用元件
+├── views/         # 頁面元件
 ├── router/        # 路由配置
-├── stores/        # Pinia状态管理
-├── services/      # API服务
-├── utils/         # 工具函数
-└── types/         # TypeScript类型定义
+├── stores/        # Pinia狀態管理
+├── services/      # API服務
+├── utils/         # 工具函數
+└── types/         # TypeScript類型定義
 ```
 
-## 功能模块说明
+## 功能模塊說明
 
-### 用户认证
-- Google OAuth2.0登录流程
+### 用戶認證
+- Google OAuth2.0登錄流程
 - JWT token管理
-- 自动刷新token
-- 登录状态持久化
+- 自動刷新token
+- 登錄狀態持久化
 
-### 市场数据
-- WebSocket实时数据更新
-- 价格走势图表
-- 交易深度图
-- 市场概览
+### 市場數據
+- WebSocket實時數據更新
+- 價格走勢圖表
+- 交易深度圖
+- 市場概覽
 
 ### 交易功能
-- 限价/市价下单
-- 订单管理
-- 交易历史
-- 资产统计
+- 限價/市價下單
+- 訂單管理
+- 交易歷史
+- 資產統計
 
-## 测试
+## 測試
 
-### 单元测试
+### 單元測試
 ```bash
 npm run test:unit
 ```
 
-### E2E测试
+### E2E測試
 ```bash
-# 首次运行需安装浏览器
+# 首次運行需安裝瀏覽器
 npx playwright install
 
-# 运行测试
+# 運行測試
 npm run test:e2e
 ```
 
-## 代码质量
+## 代碼質量
 
-### ESLint代码检查
+### ESLint代碼檢查
 ```bash
 npm run lint
 ```
 
-### TypeScript类型检查
+### TypeScript類型檢查
 ```bash
 npm run type-check
 ```
 
-## 部署说明
+## 部署說明
 
-### 开发环境
-1. 确保后端API服务运行在`http://localhost:8000`
-2. 启动开发服务器：`npm run dev`
-3. 访问`http://localhost:5175`
+### 開發環境
+1. 確保後端API服務運行在`http://localhost:8000`
+2. 啟動開發伺服器：`npm run dev`
+3. 訪問`http://localhost:5175`
 
-### 生产环境
-1. 构建项目：`npm run build`
-2. 将`dist`目录部署到Web服务器
-3. 配置环境变量：
-   - `VITE_API_BASE_URL`：生产环境API地址
-   - `VITE_GOOGLE_CLIENT_ID`：生产环境Google客户端ID
+### 生產環境
+1. 構建項目：`npm run build`
+2. 將`dist`目錄部署到Web伺服器
+3. 配置環境變量：
+   - `VITE_API_BASE_URL`：生產環境API地址
+   - `VITE_GOOGLE_CLIENT_ID`：生產環境Google客戶端ID
 
-## 常见问题
+## 常見問題
 
-### Google登录问题
-1. 检查Google Cloud Console配置
-2. 确认环境变量设置正确
-3. 检查网络请求和响应
+### Google登錄問題
+1. 檢查Google Cloud Console配置
+2. 確認環境變量設置正確
+3. 檢查網絡請求和響應
 
-### 开发调试
+### 開發調試
 1. 使用Vue DevTools
-2. 检查浏览器控制台
-3. 启用Vite开发服务器日志
+2. 檢查瀏覽器控制台
+3. 啟用Vite開發伺服器日誌
 
-## 性能优化
-1. 路由懒加载
-2. 组件按需导入
-3. 资源压缩
-4. 缓存策略
+## 性能優化
+1. 路由懶加載
+2. 元件按需導入
+3. 資源壓縮
+4. 緩存策略
 
-## 贡献指南
-1. Fork项目
-2. 创建功能分支
+## 貢獻指南
+1. Fork項目
+2. 創建功能分支
 3. 提交更改
-4. 发起Pull Request
+4. 發起Pull Request
 
-## 许可证
+## 許可證
 MIT License
