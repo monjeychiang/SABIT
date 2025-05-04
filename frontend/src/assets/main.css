@@ -1,0 +1,512 @@
+@import './base.css';
+
+/* Default theme variables */
+:root {
+  /* 主要颜色 - 使用更现代的蓝色调 */
+  --primary-color: #2563eb;
+  --primary-dark: #1d4ed8;
+  --primary-light: #3b82f6;
+  --primary-gradient: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%);
+  
+  /* 辅助颜色 - 使用更柔和的色调 */
+  --secondary-color: #10b981;
+  --accent-color: #f59e0b;
+  --danger-color: #ef4444;
+  --warning-color: #f59e0b;
+  --info-color: #3b82f6;
+  --success-color: #10b981;
+  
+  /* 文本颜色 - 提高对比度 */
+  --text-primary: #1f2937;
+  --text-secondary: #4b5563;
+  --text-tertiary: #6b7280;
+  --text-light: #ffffff;
+  
+  /* 背景颜色 - 使用更柔和的背景色 */
+  --background-color: #f9fafb;
+  --surface-color: #ffffff;
+  --card-background: #ffffff;
+  --hover-color: rgba(0, 0, 0, 0.04);
+  --notification-unread: rgba(37, 99, 235, 0.08);
+  
+  /* 边框颜色 - 更细腻的边框 */
+  --border-color: #e5e7eb;
+  --border-light: #f3f4f6;
+  
+  /* 边距 - 更合理的间距系统 */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px; 
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  
+  /* 边框圆角 - 更现代的圆角 */
+  --border-radius-sm: 6px;
+  --border-radius-md: 12px;
+  --border-radius-lg: 16px;
+  
+  /* 组件尺寸 - 优化布局尺寸 */
+  --sidebar-width: 280px;
+  --sidebar-collapsed-width: 80px;
+  --navbar-height: 64px;
+  --content-padding: 24px;
+  
+  /* 阴影 - 更自然的阴影效果 */
+  --box-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --box-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --box-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  
+  /* 字体 - 使用系统字体栈 */
+  --font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-md: 1rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.25rem;
+  --font-size-xxl: 1.5rem;
+  
+  /* 动画时间 */
+  --transition-fast: 150ms;
+  --transition-normal: 250ms;
+  --transition-slow: 350ms;
+}
+
+/* 深色模式变量 - 更现代的深色主题 */
+body.dark-theme {
+  --primary-color: #3b82f6;
+  --primary-dark: #2563eb;
+  --primary-light: #60a5fa;
+  --primary-gradient: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
+  
+  --text-primary: #f9fafb;
+  --text-secondary: #d1d5db;
+  --text-tertiary: #9ca3af;
+  
+  --background-color: #111827;
+  --surface-color: #1f2937;
+  --card-background: #1f2937;
+  --hover-color: rgba(255, 255, 255, 0.04);
+  --notification-unread: rgba(59, 130, 246, 0.15);
+  
+  --border-color: #374151;
+  --border-light: #1f2937;
+  
+  --box-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --box-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
+  --box-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+}
+
+/* Global styles */
+html, body {
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+body {
+  background-color: var(--background-color);
+  color: var(--text-primary);
+  min-height: 100vh;
+}
+
+/* 页面级容器 */
+.page-container {
+  background-color: var(--background-color);
+  color: var(--text-primary);
+  min-height: 100vh;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* 确保所有卡片背景颜色在深色模式下正确显示 */
+.card, 
+.crypto-card, 
+.statistic-card, 
+.transaction-card,
+.market-card,
+.grid-card {
+  background-color: var(--card-background);
+  color: var(--text-primary);
+  transition: background-color 0.3s ease, box-shadow 0.3s ease, color 0.3s ease;
+}
+
+/* 确保所有文本颜色在深色模式下正确显示 */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--text-primary);
+  transition: color 0.3s ease;
+}
+
+p, span, div {
+  transition: color 0.3s ease, background-color 0.3s ease;
+}
+
+/* 确保所有输入框样式在深色模式下正确显示 */
+input, select, textarea, button {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+body.dark-theme input,
+body.dark-theme select,
+body.dark-theme textarea {
+  background-color: var(--surface-color);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+/* 确保表格在深色模式下正确显示 */
+table, th, td {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+body.dark-theme table {
+  background-color: var(--card-background);
+  color: var(--text-primary);
+}
+
+body.dark-theme th,
+body.dark-theme td {
+  border-color: var(--border-color);
+}
+
+/* 确保深色模式下链接颜色正确 */
+body.dark-theme a {
+  color: var(--primary-color);
+}
+
+body.dark-theme a:hover {
+  color: var(--primary-light);
+}
+
+/* 确保深色模式下按钮颜色正确 */
+body.dark-theme .btn-primary {
+  background-color: var(--primary-color);
+  color: var(--text-light);
+}
+
+body.dark-theme .btn-secondary {
+  background-color: transparent;
+  color: var(--primary-color);
+  border-color: var(--primary-color);
+}
+
+/* 移除深色主题标识 - 不再需要调试指示器 */
+body.dark-theme::before {
+  display: none;
+}
+
+#app {
+  max-width: 1400px;
+  margin: 0 auto;
+  font-weight: normal;
+}
+
+.card {
+  background-color: var(--card-background);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  transition: background-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Dark theme card adjustments */
+body.dark-theme .card {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  :root {
+    --sidebar-width: 280px;
+    --content-padding: 16px;
+  }
+  
+  h1 {
+    font-size: var(--font-size-xl);
+  }
+  
+  h2 {
+    font-size: var(--font-size-lg);
+  }
+  
+  h3 {
+    font-size: var(--font-size-md);
+  }
+  
+  /* 优化移动端侧边栏的过渡效果 */
+  .app-content {
+    position: relative;
+    overflow-x: hidden;
+  }
+  
+  .sidebar {
+    /* 使用硬件加速提高性能 */
+    will-change: transform;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  
+  .sidebar.mobile {
+    width: 280px;
+    transform: translateX(-100%);
+    z-index: 100;
+  }
+  
+  .sidebar.mobile.visible {
+    transform: translateX(0);
+  }
+  
+  /* 当侧边栏可见时，为内容区域添加交互效果 */
+  .sidebar.mobile.visible ~ .main-content {
+    cursor: pointer;
+  }
+}
+
+a,
+.green {
+  text-decoration: none;
+  color: hsla(160, 100%, 37%, 1);
+  transition: 0.4s;
+  padding: 3px;
+}
+
+@media (hover: hover) {
+  a:hover {
+    background-color: hsla(160, 100%, 37%, 0.2);
+  }
+}
+
+/* 清除旧的深色模式相关样式 */
+@media (min-width: 1024px) {
+  body {
+    display: block; /* 移除 flex 布局，避免与主题切换冲突 */
+  }
+
+  #app {
+    display: flex; /* 改用更合适的布局 */
+    flex-direction: column;
+    padding: 0;
+    max-width: none;
+    width: 100%;
+  }
+}
+
+/* 基础样式重置 */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  background-color: var(--background-color);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-content {
+  flex: 1;
+  display: flex;
+  min-height: calc(100vh - var(--navbar-height));
+  margin-top: var(--navbar-height);
+}
+
+.main-content {
+  flex: 1;
+  padding: var(--content-padding);
+  padding-top: calc(var(--navbar-height) + var(--content-padding));
+  transition: padding-left 0.3s;
+  width: 100%;
+}
+
+/* 按钮样式 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  border-radius: var(--border-radius-md);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+  outline: none;
+  text-decoration: none;
+}
+
+.btn-primary {
+  background-color: var(--primary-color);
+  color: var(--text-light);
+}
+
+.btn-primary:hover {
+  background-color: var(--primary-dark);
+}
+
+.btn-secondary {
+  background-color: transparent;
+  color: var(--primary-color);
+  border: 1px solid var(--primary-color);
+}
+
+.btn-secondary:hover {
+  background-color: rgba(75, 112, 226, 0.08);
+}
+
+.btn-danger {
+  background-color: var(--danger-color);
+  color: var(--text-light);
+}
+
+.btn-danger:hover {
+  filter: brightness(0.9);
+}
+
+/* 卡片样式 */
+.card {
+  background-color: var(--card-background);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--box-shadow-sm);
+  padding: var(--spacing-lg);
+}
+
+/* 标题样式 */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin-bottom: var(--spacing-md);
+  color: var(--text-primary);
+}
+
+h1 {
+  font-size: var(--font-size-xxl);
+}
+
+h2 {
+  font-size: var(--font-size-xl);
+}
+
+h3 {
+  font-size: var(--font-size-lg);
+}
+
+/* 链接样式 */
+a {
+  color: var(--primary-color);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+a:hover {
+  color: var(--primary-dark);
+}
+
+/* 表单元素样式 */
+input, select, textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  font-size: var(--font-size-md);
+  background-color: var(--surface-color);
+  color: var(--text-primary);
+  transition: border-color 0.2s;
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(75, 112, 226, 0.1);
+}
+
+/* 工具类 */
+.text-center {
+  text-align: center;
+}
+
+.mt-1 {
+  margin-top: var(--spacing-xs);
+}
+
+.mt-2 {
+  margin-top: var(--spacing-sm);
+}
+
+.mt-3 {
+  margin-top: var(--spacing-md);
+}
+
+.mt-4 {
+  margin-top: var(--spacing-lg);
+}
+
+.mb-1 {
+  margin-bottom: var(--spacing-xs);
+}
+
+.mb-2 {
+  margin-bottom: var(--spacing-sm);
+}
+
+.mb-3 {
+  margin-bottom: var(--spacing-md);
+}
+
+.mb-4 {
+  margin-bottom: var(--spacing-lg);
+}
+
+.p-1 {
+  padding: var(--spacing-xs);
+}
+
+.p-2 {
+  padding: var(--spacing-sm);
+}
+
+.p-3 {
+  padding: var(--spacing-md);
+}
+
+.p-4 {
+  padding: var(--spacing-lg);
+}
+
+/* 响应式布局 */
+.container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 var(--spacing-md);
+}
+
+@media (max-width: 768px) {
+  :root {
+    --content-padding: 16px;
+  }
+  
+  h1 {
+    font-size: var(--font-size-xl);
+  }
+  
+  h2 {
+    font-size: var(--font-size-lg);
+  }
+  
+  h3 {
+    font-size: var(--font-size-md);
+  }
+}
