@@ -1,51 +1,56 @@
 @echo off
 chcp 65001
-echo 正在啟動加密貨幣交易系統...
+title SABIT Trading System Launcher
 
-REM 檢查環境配置
-IF NOT EXIST backend\.env (
-    echo 警告: 後端環境變數未配置，將複製示例文件...
+echo Starting SABIT Crypto Trading System...
+
+REM Check if .env file exists, copy template if not
+if not exist backend\.env (
     copy backend\.env.example backend\.env
-    echo 請修改 backend\.env 文件配置您的API金鑰
+    echo Created environment config file
 )
 
-REM 檢查後端是否已經運行
-netstat -ano | findstr ":8000" > nul
-if %errorlevel% equ 0 (
-    echo 後端服務已經在運行中...
-) else (
-    echo 正在啟動後端服務...
-    pushd backend
-    start cmd /k "python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000"
-    popd
-    echo 等待後端服務啟動...
-    timeout /t 5 /nobreak > nul
-)
+REM Start backend service directly
+echo Starting backend service...
+pushd backend
+start cmd /k "title SABIT Backend Service & python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000"
+popd
 
-REM 檢查前端是否已經運行
-netstat -ano | findstr ":5175" > nul
-if %errorlevel% equ 0 (
-    echo 前端服務已經在運行中...
-) else (
-    echo 正在啟動前端服務...
-    pushd frontend
-    start cmd /k "npm run dev"
-    popd
-)
+REM Wait for backend service to start
+echo Waiting for backend service...
+timeout /t 3 /nobreak > nul
 
-echo 系統啟動成功！
-echo 後端API服務運行於: http://127.0.0.1:8000
-echo 前端UI服務運行於: http://127.0.0.1:5175
+REM Start frontend service directly
+echo Starting frontend service...
+pushd frontend
+start cmd /k "title SABIT Frontend Service & npm run dev"
+popd
+
 echo.
-echo 按任意鍵打開瀏覽器訪問前端UI...
+echo System started successfully!
+echo Backend API: http://127.0.0.1:8000
+echo Frontend UI: http://127.0.0.1:5175
+echo API Docs:    http://127.0.0.1:8000/docs
+echo.
+
+REM Ask if browser should be opened
+set /p OPEN_BROWSER="Open browser to access frontend UI? (Y/N) "
+if /i "%OPEN_BROWSER%"=="Y" (
+    start http://127.0.0.1:5175
+)
+
+echo.
+echo System is now running. Press any key to stop all services...
 pause > nul
-start http://127.0.0.1:5175
 
-echo 按任意鍵關閉所有服務...
-pause > nul
+REM Close all services
+echo Closing all services...
+FOR /F "tokens=5" %%T IN ('netstat -ano ^| findstr /r /c:"127.0.0.1:8000.*LISTENING"') DO (
+    taskkill /F /PID %%T > nul 2>&1
+)
 
-REM 關閉所有服務
-FOR /F "tokens=5" %%T IN ('netstat -ano ^| findstr /r /c:"127.0.0.1:8000.*LISTENING"') DO taskkill /F /PID %%T > nul 2>&1
-FOR /F "tokens=5" %%T IN ('netstat -ano ^| findstr /r /c:"127.0.0.1:5175.*LISTENING"') DO taskkill /F /PID %%T > nul 2>&1
+FOR /F "tokens=5" %%T IN ('netstat -ano ^| findstr /r /c:"127.0.0.1:5175.*LISTENING"') DO (
+    taskkill /F /PID %%T > nul 2>&1
+)
 
-echo 服務已關閉 
+echo All services closed. 
