@@ -588,7 +588,13 @@ onMounted(async () => {
       // 如果连接断开，尝试重新连接
       if (!notificationStore.websocketConnected) {
         console.log('检测到WebSocket未连接，尝试重新连接...');
+        // 注意：此方法内部已更新为使用WebSocketManager，保留调用是为了兼容现有代码
         notificationStore.connectWebSocket();
+        
+        // 如果需要同时重连所有WebSocket，可以使用以下代码
+        // import('@/services/webSocketService').then(({ default: webSocketManager }) => {
+        //   webSocketManager.connectAll();
+        // });
       }
     }, 3000);
   }
@@ -608,6 +614,9 @@ onUnmounted(() => {
   // 移除通知状态事件监听器
   window.removeEventListener('notification:state-changed', () => {});
   window.removeEventListener('notification:unread-updated', () => {});
+  
+  // 注意：以下closeWebSocket方法调用已经被更新，现在内部使用WebSocketManager管理连接
+  // 这些兼容方法保留是为了确保现有代码继续正常工作，它们会将请求委托给WebSocketManager
   
   // 关闭通知WebSocket连接
   notificationStore.closeWebSocket();
@@ -1029,15 +1038,21 @@ const handleGoogleCallback = () => {
     authStore.handleGoogleCallback(accessToken, refreshToken, keepLoggedIn)
       .then(success => {
         if (success) {
-          // 加載用戶數據
-          loadUserData();
-          
-          // 觸發登入事件
-          window.dispatchEvent(new Event('login-authenticated'));
-          
-          // 清除 URL 參數
-          window.history.replaceState({}, document.title, window.location.pathname);
-          router.push('/');
+          // 先初始化WebSocket连接
+          console.log('Google回调处理成功，初始化WebSocket连接');
+          import('@/services/authService').then(async ({ authService }) => {
+            // 先初始化WebSocket连接
+            await authService.initializeWebSockets();
+            // 再加载用户数据
+            await loadUserData();
+            
+            // 觸發登入事件
+            window.dispatchEvent(new Event('login-authenticated'));
+            
+            // 清除 URL 參數
+            window.history.replaceState({}, document.title, window.location.pathname);
+            router.push('/');
+          });
         } else {
           loginError.value = '處理您的Google登入時發生問題，請稍後再試。';
           showLoginModal.value = true;
@@ -1589,7 +1604,12 @@ const formatDate = (dateString) => {
 .user-button :deep(.user-avatar-component) {
   width: 32px;  /* 设置头像组件的固定宽度 */
   height: 32px;  /* 设置头像组件的固定高度 */
+  min-width: 32px; /* 确保最小宽度一致 */
+  min-height: 32px; /* 确保最小高度一致 */
+  max-width: 32px; /* 确保最大宽度一致 */
+  max-height: 32px; /* 确保最大高度一致 */
   flex-shrink: 0;  /* 防止头像被压缩 */
+  aspect-ratio: 1/1; /* 确保保持正方形比例 */
 }
 
 .username {

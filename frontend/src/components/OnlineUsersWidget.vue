@@ -115,15 +115,15 @@ const fetchOnlineUsers = async () => {
     // 获取token
     const token = localStorage.getItem('token');
     
-    // 设置请求头
-    const headers = token ? { 'Authorization': `bearer ${token}` } : {};
+    // 设置请求头 - 修正Authorization header格式
+    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
     
     // 获取在线用户计数
     const countResponse = await axios.get('/api/v1/users/active-users-count', { headers });
     onlineUsersCount.value = countResponse.data.active_users || 0;
     
-    // 获取在线用户详情
-    const detailsResponse = await axios.get('/api/v1/users/active-users-details', { headers });
+    // 获取在线用户详情 - 使用新的公共API端点
+    const detailsResponse = await axios.get('/api/v1/users/active-users-public', { headers });
     
     // 按最后活跃时间排序
     const sortedUsers = [...(detailsResponse.data.users || [])].sort((a, b) => {
@@ -254,6 +254,10 @@ onUnmounted(() => {
   width: 36px;
   height: 36px;
   min-width: 36px;
+  min-height: 36px;
+  max-width: 36px;
+  max-height: 36px;
+  aspect-ratio: 1/1;
 }
 
 .status-indicator {

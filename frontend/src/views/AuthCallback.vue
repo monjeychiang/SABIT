@@ -152,6 +152,17 @@ async function checkIfAlreadyLoggedIn(): Promise<boolean> {
     // 尝试通过checkAuth检查认证状态
     const isAuthenticated = await authStore.checkAuth();
     console.log(`Auth Callback: authStore.checkAuth结果: ${isAuthenticated ? '已登录' : '未登录'}`)
+    
+    // 如果用户已认证，确保初始化WebSocket连接
+    if (isAuthenticated) {
+      console.log('Auth Callback: 用户已登录，确保初始化WebSocket连接');
+      // 延迟触发login-authenticated事件，确保WebSocket连接初始化
+      setTimeout(() => {
+        console.log('Auth Callback: 延迟触发login-authenticated事件');
+        window.dispatchEvent(new Event('login-authenticated'));
+      }, 500);
+    }
+    
     return isAuthenticated;
   } catch (error) {
     console.error('Auth Callback: 检查登录状态时出错', error)

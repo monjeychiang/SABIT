@@ -67,6 +67,9 @@ import { Star, DocumentCopy, WarningFilled } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import MarkdownView from './MarkdownView.vue';
 
+// 组件名称已从 ChatMessage 更改为 MessageItem
+const name = 'MessageItem';
+
 const props = defineProps({
   message: {
     type: Object,
@@ -248,262 +251,240 @@ const formatTime = (timestamp) => {
 }
 
 .message-card:hover {
-  transform: translateY(-3px);
-  box-shadow: var(--shadow-md, 0 12px 24px rgba(0, 0, 0, 0.08));
+  box-shadow: var(--shadow-md, 0 8px 20px rgba(0, 0, 0, 0.08));
 }
 
 .user-card {
-  background: var(--message-bg-user, linear-gradient(135deg, #eff6ff, #dbeafe));
-  color: var(--message-color-user, #1e3a8a);
-  border-radius: 18px 2px 18px 18px;
+  background-color: var(--primary-light, #eff6ff);
+  border: 1px solid var(--primary-border, #dbeafe);
   margin-left: auto;
 }
 
 .ai-card {
-  background: var(--surface-color, white);
-  color: var(--text-primary, #334155);
-  border-radius: 2px 18px 18px 18px;
-  border: 1px solid transparent;
+  background-color: white;
+  border: 1px solid var(--border-color, #e2e8f0);
   margin-right: auto;
 }
 
-body.dark-theme .message-time {
-  color: var(--text-tertiary, #64748b);
-}
-
-body.dark-theme .user-sender {
-  color: var(--primary-light, #60a5fa);
-}
-
-body.dark-theme .ai-sender {
-  color: var(--secondary-light, #34d399);
-}
-
-body.dark-theme .user-card {
-  background: var(--message-bg-user-dark, linear-gradient(135deg, #172554, #1e40af));
-  color: var(--message-color-user-dark, #e0f2fe);
-}
-
-body.dark-theme .ai-card {
-  background: var(--surface-color, #1e293b);
-  color: var(--text-primary, #e2e8f0);
-  border-color: var(--border-color, #374151);
-}
-
 .message-content {
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: 1.6;
-  font-size: 15px;
-}
-
-.message-text {
-  padding: 16px;
   font-size: 15px;
   line-height: 1.6;
-  color: var(--text-secondary, #334155);
-  white-space: pre-wrap;
+  color: var(--text-primary, #1e293b);
   word-break: break-word;
 }
 
-.message-text.message-appear {
-  animation: message-appear 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+.markdown-content {
+  color: var(--text-primary, #1e293b);
 }
 
-@keyframes message-appear {
-  0% {
-    opacity: 0;
-    transform: translateY(15px);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes highlightGlow {
-  0% {
-    background-color: var(--primary-bg, rgba(59, 130, 246, 0.1));
-  }
-  100% {
-    background-color: transparent;
-  }
-}
-
-/* 代码块样式 */
-.message-text :deep(pre) {
-  margin: 16px 0;
-  border-radius: 10px;
-  overflow: hidden;
-  box-shadow: var(--shadow-sm, 0 4px 15px rgba(0, 0, 0, 0.08));
-}
-
-.message-text :deep(.code-header) {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 16px;
-  background-color: var(--code-header-bg, #1e293b);
-  color: var(--code-header-color, #e2e8f0);
-}
-
-.message-text :deep(.code-language) {
-  font-size: 12px;
+.markdown-content :deep(h1), 
+.markdown-content :deep(h2), 
+.markdown-content :deep(h3), 
+.markdown-content :deep(h4), 
+.markdown-content :deep(h5), 
+.markdown-content :deep(h6) {
+  margin-top: 1.5em;
+  margin-bottom: 0.75em;
   font-weight: 600;
-  text-transform: uppercase;
-  color: var(--text-tertiary, #94a3b8);
-  letter-spacing: 0.5px;
+  line-height: 1.3;
 }
 
-.message-text :deep(.copy-button) {
-  background: var(--code-button-bg, rgba(255, 255, 255, 0.1));
-  border: none;
-  color: var(--code-button-color, #e2e8f0);
-  cursor: pointer;
-  padding: 4px 10px;
+.markdown-content :deep(h1) {
+  font-size: 1.8em;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  padding-bottom: 0.3em;
+  margin-top: 1em;
+}
+
+.markdown-content :deep(h2) {
+  font-size: 1.5em;
+  border-bottom: 1px solid var(--border-color, #e2e8f0);
+  padding-bottom: 0.3em;
+  margin-top: 1em;
+}
+
+.markdown-content :deep(h3) {
+  font-size: 1.3em;
+}
+
+.markdown-content :deep(h4) {
+  font-size: 1.15em;
+}
+
+.markdown-content :deep(h5) {
+  font-size: 1em;
+}
+
+.markdown-content :deep(h6) {
+  font-size: 0.85em;
+  color: var(--text-secondary, #64748b);
+}
+
+.markdown-content :deep(p) {
+  margin: 1em 0;
+}
+
+.markdown-content :deep(ul), 
+.markdown-content :deep(ol) {
+  margin: 1em 0;
+  padding-left: 2em;
+}
+
+.markdown-content :deep(ul) {
+  list-style-type: disc;
+}
+
+.markdown-content :deep(ol) {
+  list-style-type: decimal;
+}
+
+.markdown-content :deep(li) {
+  margin: 0.5em 0;
+}
+
+.markdown-content :deep(code) {
+  font-family: 'Roboto Mono', monospace;
+  background-color: var(--code-bg, #f1f5f9);
+  padding: 0.2em 0.4em;
   border-radius: 4px;
-  font-size: 12px;
-  font-weight: 500;
-  transition: all 0.2s ease;
+  font-size: 0.9em;
+  color: var(--code-color, #475569);
 }
 
-.message-text :deep(.copy-button:hover) {
-  background-color: var(--code-button-hover, rgba(255, 255, 255, 0.2));
-}
-
-.message-text :deep(.copy-button.copied) {
-  background-color: var(--success-color, #10b981);
-  color: white;
-}
-
-.message-text :deep(code) {
-  display: block;
-  padding: 16px;
+.markdown-content :deep(pre) {
+  background-color: var(--code-block-bg, #0f172a);
+  border-radius: 8px;
+  padding: 1em;
+  margin: 1.2em 0;
   overflow-x: auto;
-  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
-  font-size: 14px;
+  position: relative;
+}
+
+.markdown-content :deep(pre code) {
+  background-color: transparent;
+  padding: 0;
+  color: #e2e8f0;
+  font-size: 0.9em;
   line-height: 1.5;
 }
 
-/* Markdown样式 */
-.message-text :deep(p) {
-  margin: 0 0 16px 0;
+.markdown-content :deep(blockquote) {
+  border-left: 4px solid var(--primary-color, #3b82f6);
+  padding-left: 1em;
+  margin: 1em 0;
+  color: var(--text-secondary, #64748b);
+  background-color: var(--blockquote-bg, #f8fafc);
+  padding: 0.5em 1em;
+  border-radius: 4px;
 }
 
-.message-text :deep(p:last-child) {
-  margin-bottom: 0;
-}
-
-.message-text :deep(a) {
+.markdown-content :deep(a) {
   color: var(--primary-color, #3b82f6);
   text-decoration: none;
-  font-weight: 500;
+  border-bottom: 1px dashed var(--primary-light, #93c5fd);
+}
+
+.markdown-content :deep(a:hover) {
+  border-bottom: 1px solid var(--primary-color, #3b82f6);
+}
+
+.markdown-content :deep(table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1.2em 0;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm, 0 4px 8px rgba(0, 0, 0, 0.05));
+}
+
+.markdown-content :deep(th),
+.markdown-content :deep(td) {
+  padding: 0.75em 1em;
+  border: 1px solid var(--border-color, #e2e8f0);
+}
+
+.markdown-content :deep(th) {
+  background-color: var(--table-header-bg, #f8fafc);
+  font-weight: 600;
+  text-align: left;
+}
+
+.markdown-content :deep(tr:nth-child(even)) {
+  background-color: var(--table-alt-row, #f8fafc);
+}
+
+.message-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.action-button {
+  font-size: 14px;
+  color: var(--text-tertiary, #94a3b8);
   transition: all 0.2s ease;
-  border-bottom: 1px solid var(--primary-light-border, rgba(59, 130, 246, 0.3));
 }
 
-.message-text :deep(a:hover) {
-  color: var(--primary-dark, #2563eb);
-  border-bottom-color: var(--primary-dark, #2563eb);
+.action-button:hover {
+  color: var(--primary-color, #3b82f6);
 }
 
-.message-text :deep(ul), .message-text :deep(ol) {
-  padding-left: 24px;
-  margin: 16px 0;
+.like-button .liked {
+  color: var(--yellow-500, #eab308);
 }
 
-.message-text :deep(li) {
-  margin-bottom: 8px;
+.error-message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--error-color, #ef4444);
+  font-size: 14px;
 }
 
-.message-text :deep(img) {
-  max-width: 100%;
-  border-radius: 10px;
-  margin: 16px 0;
-  box-shadow: var(--shadow-sm, 0 4px 15px rgba(0, 0, 0, 0.08));
+.sending-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-secondary, #64748b);
+  font-size: 14px;
 }
 
-.message-text :deep(blockquote) {
-  border-left: 4px solid var(--text-tertiary, #94a3b8);
-  margin: 16px 0;
-  padding: 8px 16px;
-  background-color: var(--quote-bg, #f8fafc);
-  border-radius: 0 8px 8px 0;
-  color: var(--text-tertiary, #475569);
+.typing-animation {
+  display: flex;
+  gap: 4px;
 }
 
-/* 深色模式变量覆盖 - 使用body.dark-theme选择器 */
-body.dark-theme .message-text {
-  color: var(--text-primary, #e2e8f0);
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  background-color: var(--text-secondary, #64748b);
+  border-radius: 50%;
+  animation: typingBounce 1.4s infinite ease-in-out;
 }
 
-body.dark-theme .message-text :deep(blockquote) {
-  background-color: var(--quote-bg, #334155);
-  color: var(--text-secondary, #cbd5e1);
-  border-left-color: var(--text-tertiary, #64748b);
+.typing-dot:nth-child(1) {
+  animation-delay: 0s;
 }
 
-body.dark-theme .message-text :deep(.code-header) {
-  background-color: var(--code-header-bg, #1e293b);
-  border-bottom: 1px solid var(--border-color, #334155);
+.typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
 }
 
-body.dark-theme .message-text :deep(code) {
-  color: var(--text-primary, #e2e8f0);
+.typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
 }
 
-/* 响应式调整 */
-@media screen and (max-width: 768px) {
-  .avatar {
-    width: 36px !important;
-    height: 36px !important;
+@keyframes typingBounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
   }
-  
-  .message-content {
-    max-width: calc(100% - 50px);
-  }
-  
-  .message-header {
-    padding: 10px 14px;
-  }
-  
-  .message-text {
-    padding: 14px;
-    font-size: 14px;
-  }
-  
-  .tool-button {
-    width: 26px;
-    height: 26px;
-  }
-}
-
-@media screen and (max-width: 480px) {
-  .message-container {
-    padding: 0 10px;
-  }
-  
-  .avatar-wrapper {
-    margin-right: 12px;
-  }
-  
-  .avatar {
-    width: 32px !important;
-    height: 32px !important;
-  }
-  
-  .sender-name {
-    font-size: 13px;
-  }
-  
-  .message-text {
-    padding: 12px;
-    font-size: 14px;
-  }
-  
-  .tool-button {
-    width: 24px;
-    height: 24px;
+  30% {
+    transform: translateY(-4px);
   }
 }
 </style> 

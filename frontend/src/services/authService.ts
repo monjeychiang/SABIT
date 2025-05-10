@@ -2,6 +2,8 @@ import { useAuthStore } from '@/stores/auth';
 import { useUserStore } from '@/stores/user';
 import { useChatroomStore } from '@/stores/chatroom';
 import { useNotificationStore } from '@/stores/notification';
+import { useOnlineStatusStore } from '@/stores/online-status';
+import webSocketManager, { WebSocketType } from '@/services/webSocketService';
 import type { User } from '@/stores/user';
 
 // 定義登入憑證介面
@@ -45,6 +47,9 @@ export const authService = {
       console.log('從 auth store 同步用戶數據到 user store');
       const convertedUser = convertToUserType(authStore.user);
       userStore.syncWithAuthStore(authStore.token, convertedUser);
+      
+      // 用户已登录，初始化WebSocket连接
+      await this.initializeWebSockets();
     } else {
       // 嘗試從 user store 初始化令牌
       await userStore.initializeToken();
@@ -53,6 +58,11 @@ export const authService = {
       if (userStore.token && userStore.isTokenValid && !userStore.user) {
         console.log('user store 有有效令牌但沒有用戶數據，嘗試獲取');
         await this.fetchUserData();
+        
+        // 如果获取到了用户数据，初始化WebSocket连接
+        if (userStore.isLoggedIn) {
+          await this.initializeWebSockets();
+        }
       }
     }
     
@@ -64,6 +74,91 @@ export const authService = {
     return {
       isAuthenticated: authStore.isAuthenticated || userStore.isLoggedIn
     };
+  },
+  
+  /**
+   * 初始化WebSocket连接
+   */
+  async initializeWebSockets() {
+    // 如果用户未登录，不初始化连接
+    if (!this.isAuthenticated()) {
+      console.log('[AuthService] 用户未登录，跳过WebSocket初始化');
+      return false;
+    }
+    
+    console.log('[AuthService] 开始初始化WebSocket连接');
+    
+    const notificationStore = useNotificationStore();
+    const chatroomStore = useChatroomStore();
+    const onlineStatusStore = useOnlineStatusStore();
+    
+    try {
+      // 确保authStore中的token是最新的
+      const authStore = useAuthStore();
+      const token = authStore.token || localStorage.getItem('token');
+      
+      if (!token) {
+        console.warn('[AuthService] 没有有效的认证令牌，无法初始化WebSocket');
+        return false;
+      }
+      
+      console.log('[AuthService] 已获取有效的认证令牌，准备注册WebSocket处理器');
+      
+      // 注册各类型的WebSocket连接
+      webSocketManager.register(WebSocketType.NOTIFICATION, {
+        onMessage: (event) => notificationStore.handleWebSocketMessage(event),
+        onConnect: () => {
+          console.log('通知WebSocket已连接');
+          notificationStore.onWebSocketConnected();
+        },
+        onDisconnect: () => {
+          console.log('通知WebSocket已断开');
+          notificationStore.onWebSocketDisconnected();
+        }
+      });
+      
+      webSocketManager.register(WebSocketType.CHATROOM, {
+        onMessage: (event) => chatroomStore.handleWebSocketMessage(event),
+        onConnect: () => {
+          console.log('聊天WebSocket已连接');
+          chatroomStore.onWebSocketConnected();
+        },
+        onDisconnect: () => {
+          console.log('聊天WebSocket已断开');
+          chatroomStore.onWebSocketDisconnected();
+        }
+      });
+      
+      webSocketManager.register(WebSocketType.ONLINE_STATUS, {
+        onMessage: (event) => onlineStatusStore.handleWebSocketMessage(event),
+        onConnect: () => {
+          console.log('在线状态WebSocket已连接');
+          onlineStatusStore.onWebSocketConnected();
+        },
+        onDisconnect: () => {
+          console.log('在线状态WebSocket已断开');
+          onlineStatusStore.onWebSocketDisconnected();
+        }
+      });
+      
+      console.log('[AuthService] 已注册所有WebSocket处理器，开始连接...');
+      
+      // 连接所有注册的WebSocket
+      const result = await webSocketManager.connectAll();
+      console.log(`[AuthService] WebSocket连接结果: ${result ? '成功' : '失败'}`);
+      return result;
+    } catch (error) {
+      console.error('[AuthService] 初始化WebSocket连接时出错:', error);
+      return false;
+    }
+  },
+  
+  /**
+   * 关闭所有WebSocket连接
+   */
+  closeAllWebSockets() {
+    console.log('[AuthService] 关闭所有WebSocket连接');
+    webSocketManager.disconnectAll();
   },
   
   /**
@@ -81,6 +176,9 @@ export const authService = {
     if (authStore.isAuthenticated && authStore.user && authStore.token) {
       const convertedUser = convertToUserType(authStore.user);
       userStore.syncWithAuthStore(authStore.token, convertedUser);
+      
+      // 登录成功后初始化WebSocket连接
+      await this.initializeWebSockets();
     }
     
     return result;
@@ -95,9 +193,8 @@ export const authService = {
     const chatroomStore = useChatroomStore();
     const notificationStore = useNotificationStore();
     
-    // 先关闭WebSocket连接
-    chatroomStore.closeWebSocket();
-    notificationStore.closeWebSocket();
+    // 先关闭所有WebSocket连接
+    this.closeAllWebSockets();
     
     // 重置聊天室状态
     chatroomStore.resetState();

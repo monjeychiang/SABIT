@@ -11,13 +11,8 @@ export const useThemeStore = defineStore('theme', {
   
   actions: {
     initTheme() {
-      // 获取之前存储的主题
-      let savedTheme = localStorage.getItem('theme')
-      
-      // 兼容旧版实现的主题存储方式
-      if (!savedTheme) {
-        savedTheme = localStorage.getItem('el-theme')
-      }
+      // 获取存储的主题
+      const savedTheme = localStorage.getItem('theme')
       
       if (savedTheme === 'dark') {
         this.isDarkMode = true
@@ -57,9 +52,8 @@ export const useThemeStore = defineStore('theme', {
         document.documentElement.classList.remove('dark')
       }
       
-      // 保存到localStorage (保持兼容性)
+      // 保存到localStorage
       localStorage.setItem('theme', this.currentTheme)
-      localStorage.setItem('el-theme', this.currentTheme)
       
       // 更新CSS变量
       this.updateCSSVariables()

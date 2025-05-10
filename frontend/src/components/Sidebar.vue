@@ -61,28 +61,6 @@
             </span>
             <span v-if="!isCollapsed || (isMobile && isVisible)" class="menu-text">AI Chat</span>
           </router-link>
-
-          <!-- 个人资料页面链接 -->
-          <router-link to="/profile" class="menu-item" :class="{ 'active': isActiveRoute('/profile') }" title="Profile" @click="handleMenuItemClick">
-            <span class="menu-icon">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                <circle cx="12" cy="7" r="4"></circle>
-              </svg>
-            </span>
-            <span v-if="!isCollapsed || (isMobile && isVisible)" class="menu-text">Profile</span>
-          </router-link>
-
-          <!-- 添加链接到主题测试页面 -->
-          <router-link to="/theme-test" class="menu-item" :class="{ 'active': isActiveRoute('/theme-test') }" title="Theme Test" @click="handleMenuItemClick">
-            <span class="menu-icon">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 22C6.48 22 2 17.52 2 12S6.48 2 12 2s10 4.48 10 10-4.48 10-10 10z"></path>
-                <path d="M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"></path>
-              </svg>
-            </span>
-            <span v-if="!isCollapsed || (isMobile && isVisible)" class="menu-text">Theme Test</span>
-          </router-link>
         </nav>
         
         <div class="sidebar-section">
@@ -205,7 +183,7 @@ const logout = () => {
 }
 
 .sidebar.sidebar-collapsed {
-  width: 64px;
+  width: var(--sidebar-collapsed-width);
 }
 
 .sidebar-content {
@@ -401,7 +379,7 @@ const logout = () => {
 }
 
 .sidebar-collapsed {
-  width: 64px;
+  width: var(--sidebar-collapsed-width);
 }
 
 /* 侧边栏显示/隐藏动画 */

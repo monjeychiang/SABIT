@@ -47,7 +47,7 @@
   
   /* 组件尺寸 - 优化布局尺寸 */
   --sidebar-width: 280px;
-  --sidebar-collapsed-width: 80px;
+  --sidebar-collapsed-width: 64px;
   --navbar-height: 64px;
   --content-padding: 24px;
   

@@ -71,6 +71,48 @@
             <p>修改個人資料需要驗證您的當前密碼，這是為了保護您的帳戶安全。</p>
           </div>
           
+          <!-- 添加头像上传区域 -->
+          <div class="avatar-upload-section">
+            <h3>個人頭像</h3>
+            <div class="avatar-container">
+              <div class="avatar-preview">
+                <img 
+                  v-if="avatarPreview" 
+                  :src="avatarPreview" 
+                  alt="頭像預覽" 
+                  class="avatar-image"
+                />
+                <div v-else class="avatar-placeholder">
+                  {{ profileData.username ? profileData.username.charAt(0).toUpperCase() : 'U' }}
+                </div>
+              </div>
+              <div class="avatar-actions">
+                <input 
+                  type="file" 
+                  id="avatar-upload" 
+                  ref="avatarInput" 
+                  @change="onAvatarSelected" 
+                  accept="image/png, image/jpeg, image/gif" 
+                  class="avatar-input"
+                />
+                <button type="button" class="avatar-upload-button" @click="triggerAvatarUpload">
+                  {{ profileData.avatar_url ? '更換頭像' : '上傳頭像' }}
+                </button>
+                <button 
+                  v-if="profileData.avatar_url" 
+                  type="button" 
+                  class="avatar-delete-button" 
+                  @click="deleteAvatar"
+                >
+                  刪除頭像
+                </button>
+              </div>
+            </div>
+            <p class="field-help">
+              支持的格式: JPG, JPEG, PNG, GIF。最大文件大小: 5MB
+            </p>
+          </div>
+          
           <form @submit.prevent="updateProfile" class="settings-form">
             <div class="form-group">
               <label for="username">用戶名</label>
@@ -244,6 +286,14 @@
         <!-- 通知設置 -->
         <div v-if="activeTab === 'notifications'" class="panel-content">
           <h2>通知設置</h2>
+          <p class="panel-description">
+            自定义您希望接收的通知类型。这些设置将保存在浏览器Cookie中。
+          </p>
+          
+          <div class="security-tip">
+            <strong>提示</strong>
+            <p>通知设置存储在您的浏览器中，清除浏览器数据会重置这些设置。</p>
+          </div>
           
           <div v-if="notificationMessage" :class="notificationMessage.type === 'success' ? 'success-message' : 'error-message'">
             {{ notificationMessage.text }}
@@ -270,6 +320,39 @@
                 </label>
               </label>
               <p class="field-help">在執行交易時接收通知</p>
+            </div>
+            
+            <div class="toggle-group">
+              <label class="toggle-label">
+                <span>系統通知</span>
+                <label class="switch">
+                  <input type="checkbox" v-model="notificationData.system_notifications">
+                  <span class="slider round"></span>
+                </label>
+              </label>
+              <p class="field-help">接收系統狀態和更新的通知</p>
+            </div>
+            
+            <div class="toggle-group">
+              <label class="toggle-label">
+                <span>桌面通知</span>
+                <label class="switch">
+                  <input type="checkbox" v-model="notificationData.desktop_notifications">
+                  <span class="slider round"></span>
+                </label>
+              </label>
+              <p class="field-help">允許在桌面顯示通知彈窗（需要瀏覽器權限）</p>
+            </div>
+            
+            <div class="toggle-group">
+              <label class="toggle-label">
+                <span>聲音通知</span>
+                <label class="switch">
+                  <input type="checkbox" v-model="notificationData.sound_notifications">
+                  <span class="slider round"></span>
+                </label>
+              </label>
+              <p class="field-help">收到重要通知時播放提示音</p>
             </div>
             
             <div class="toggle-group">
@@ -375,6 +458,12 @@ const showCurrentPassword = ref(false);
 const showNewPassword = ref(false);
 const showConfirmPassword = ref(false);
 
+// 头像上传相关
+const avatarInput = ref(null);
+const avatarPreview = ref('');
+const isAvatarUploading = ref(false);
+const avatarFile = ref(null);
+
 // 切換密碼可見性
 const toggleCurrentPasswordVisibility = () => {
   showCurrentPassword.value = !showCurrentPassword.value;
@@ -413,7 +502,8 @@ const profileData = ref({
   email: '',
   currentPassword: '',
   newPassword: '',
-  confirmPassword: ''
+  confirmPassword: '',
+  avatar_url: ''
 });
 const isProfileUpdating = ref(false);
 const profileMessage = ref(null);
@@ -432,11 +522,15 @@ const apiData = ref({
 const isApiUpdating = ref(false);
 const apiMessage = ref(null);
 
-// 通知設置
+// 通知設置 - 使用cookie存储
 const notificationData = ref({
   email_notifications: true,
   trade_notifications: true,
-  price_alerts: false
+  system_notifications: true,
+  desktop_notifications: false,
+  sound_notifications: false,
+  price_alerts: false,
+  notification_preferences: {}
 });
 const isNotificationUpdating = ref(false);
 const notificationMessage = ref(null);
@@ -467,8 +561,10 @@ const createAuthenticatedRequest = () => {
     return null;
   }
   
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+  
   return axios.create({
-    baseURL: 'http://localhost:8000',
+    baseURL: apiBaseUrl,
     headers: {
       'Authorization': `${tokenType} ${token}`
     }
@@ -493,8 +589,17 @@ const loadUserSettings = async () => {
           email: userData.email,
           currentPassword: '',
           newPassword: '',
-          confirmPassword: ''
+          confirmPassword: '',
+          avatar_url: userData.avatar_url
         };
+        
+        // 设置头像预览
+        if (userData.avatar_url) {
+          const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+          avatarPreview.value = `${apiBaseUrl}${userData.avatar_url}`;
+        } else {
+          avatarPreview.value = '';
+        }
       }
     } catch (profileError) {
       console.error('載入用戶資料失敗:', profileError);
@@ -546,12 +651,18 @@ const loadUserSettings = async () => {
     }
     
     // 載入通知設置
-    // 在實際應用中，您應該從API獲取這些設置
-    notificationData.value = {
-      email_notifications: true,
-      trade_notifications: true,
-      price_alerts: false
-    };
+    try {
+      const notificationResponse = await api.get('/api/v1/notifications');
+      if (notificationResponse.data) {
+        notificationData.value = {
+          ...notificationResponse.data,
+          price_alerts: notificationResponse.data.notification_preferences?.price_alerts || false
+        };
+        console.log('已從cookie載入通知設置');
+      }
+    } catch (notificationError) {
+      console.error('載入通知設置失敗:', notificationError);
+    }
     
   } catch (error) {
     console.error('載入用戶設置失敗:', error);
@@ -624,6 +735,135 @@ const updateProfile = async () => {
     };
   } finally {
     isProfileUpdating.value = false;
+  }
+};
+
+// 触发头像上传弹窗
+const triggerAvatarUpload = () => {
+  if (avatarInput.value) {
+    avatarInput.value.click();
+  }
+};
+
+// 头像选择处理
+const onAvatarSelected = (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  
+  // 验证文件类型
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
+  if (!allowedTypes.includes(file.type)) {
+    ElMessage.error('不支持的文件格式，请上传JPG、PNG或GIF图片');
+    return;
+  }
+  
+  // 验证文件大小（5MB）
+  const maxSize = 5 * 1024 * 1024; // 5MB
+  if (file.size > maxSize) {
+    ElMessage.error('文件太大，请上传小于5MB的图片');
+    return;
+  }
+  
+  // 保存文件引用
+  avatarFile.value = file;
+  
+  // 创建本地预览
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    avatarPreview.value = e.target.result;
+  };
+  reader.readAsDataURL(file);
+  
+  // 自动上传
+  uploadAvatar();
+};
+
+// 上传头像到服务器
+const uploadAvatar = async () => {
+  if (!avatarFile.value) return;
+  
+  const api = createAuthenticatedRequest();
+  if (!api) return;
+  
+  try {
+    isAvatarUploading.value = true;
+    
+    // 创建FormData对象
+    const formData = new FormData();
+    formData.append('file', avatarFile.value);
+    
+    // 上传头像
+    const response = await api.post('/api/v1/user/avatar', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    });
+    
+    if (response.data && response.data.success) {
+      // 更新用户头像URL
+      profileData.value.avatar_url = response.data.avatar_url;
+      
+      // 更新预览（使用服务器返回的URL）
+      const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+      avatarPreview.value = `${apiBaseUrl}${response.data.avatar_url}`;
+      
+      // 通知用户
+      ElMessage.success('头像上传成功');
+      
+      // 更新全局用户信息
+      if (authStore.user) {
+        authStore.user.avatar_url = response.data.avatar_url;
+      }
+    } else {
+      throw new Error(response.data?.message || '头像上传失败');
+    }
+  } catch (error) {
+    console.error('上传头像失败:', error);
+    ElMessage.error(error.response?.data?.detail || '上传头像失败，请稍后重试');
+  } finally {
+    isAvatarUploading.value = false;
+    // 清空文件输入以允许再次选择相同文件
+    if (avatarInput.value) {
+      avatarInput.value.value = '';
+    }
+    avatarFile.value = null;
+  }
+};
+
+// 删除头像
+const deleteAvatar = async () => {
+  // 确认删除
+  if (!window.confirm('确定要删除您的头像吗？')) {
+    return;
+  }
+  
+  const api = createAuthenticatedRequest();
+  if (!api) return;
+  
+  try {
+    // 删除头像
+    const response = await api.delete('/api/v1/user/avatar');
+    
+    if (response.data && response.data.success) {
+      // 清除头像预览
+      avatarPreview.value = '';
+      
+      // 清除头像URL
+      profileData.value.avatar_url = null;
+      
+      // 更新全局用户信息
+      if (authStore.user) {
+        authStore.user.avatar_url = null;
+      }
+      
+      // 通知用户
+      ElMessage.success('头像已成功删除');
+    } else {
+      throw new Error(response.data?.message || '删除头像失败');
+    }
+  } catch (error) {
+    console.error('删除头像失败:', error);
+    ElMessage.error(error.response?.data?.detail || '删除头像失败，请稍后重试');
   }
 };
 
@@ -776,21 +1016,42 @@ const updateNotificationSettings = async () => {
     isNotificationUpdating.value = true;
     notificationMessage.value = null;
     
-    const response = await api.post('/api/settings/notifications', notificationData.value);
-    
-    notificationMessage.value = {
-      type: 'success',
-      text: '通知設置更新成功'
+    // 准备要发送的数据
+    const payload = {
+      email_notifications: notificationData.value.email_notifications,
+      trade_notifications: notificationData.value.trade_notifications,
+      system_notifications: notificationData.value.system_notifications || true,
+      desktop_notifications: notificationData.value.desktop_notifications || false,
+      sound_notifications: notificationData.value.sound_notifications || false,
+      notification_preferences: {
+        price_alerts: notificationData.value.price_alerts
+      }
     };
+    
+    // 调用API保存设置到cookie
+    const response = await api.post('/api/v1/notifications', payload);
+    
+    if (response.status >= 200 && response.status < 300) {
+      notificationMessage.value = {
+        type: 'success',
+        text: '通知設置更新成功'
+      };
+      
+      ElMessage.success('通知設置已保存到您的瀏覽器中');
+    } else {
+      throw new Error(response.data?.detail || '更新通知設置失敗');
+    }
     
   } catch (error) {
     console.error('更新通知設置時出錯:', error);
     notificationMessage.value = {
       type: 'error',
-      text: error.response && error.response.data.detail 
+      text: error.response?.data?.detail 
         ? error.response.data.detail 
-        : '更新通知設置失敗'
+        : '更新通知設置失敗，請稍後重試'
     };
+    
+    ElMessage.error('無法更新通知設置');
   } finally {
     isNotificationUpdating.value = false;
   }
@@ -1425,5 +1686,85 @@ body.dark-theme .security-tip {
 .delete-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.avatar-upload-section {
+  margin-bottom: 24px;
+}
+
+.avatar-container {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.avatar-preview {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  overflow: hidden;
+  margin-right: 16px;
+}
+
+.avatar-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatar-placeholder {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  background-color: var(--surface-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  color: var(--text-secondary);
+}
+
+.avatar-actions {
+  display: flex;
+  align-items: center;
+}
+
+.avatar-input {
+  display: none;
+}
+
+.avatar-upload-button {
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 5px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-left: 8px;
+  transition: background-color 0.3s;
+}
+
+.avatar-upload-button:hover {
+  background-color: var(--primary-dark);
+}
+
+.avatar-delete-button {
+  background-color: var(--surface-color);
+  color: var(--danger-color);
+  border: 1px solid var(--danger-color);
+  border-radius: 5px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-left: 8px;
+  transition: background-color 0.3s, color 0.3s;
+}
+
+.avatar-delete-button:hover {
+  background-color: var(--danger-color);
+  color: white;
 }
 </style> 

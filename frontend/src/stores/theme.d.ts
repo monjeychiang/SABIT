@@ -4,8 +4,8 @@ declare module '@/stores/theme' {
     currentTheme: 'dark' | 'light';
     initTheme: () => void;
     toggleTheme: () => void;
-    applyTheme: (isDark: boolean) => void;
-    updateCSSVariables: (isDark: boolean) => void;
+    applyTheme: () => void;
+    updateCSSVariables: () => void;
   }
 
   export function useThemeStore(): ThemeStore;

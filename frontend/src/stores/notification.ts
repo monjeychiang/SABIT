@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import axios from 'axios'
 import { useAuthStore } from './auth'
+import webSocketManager, { WebSocketType } from '@/services/webSocketService'
 
 // 通知类型枚举
 export const NotificationType = {
@@ -191,218 +192,7 @@ export const useNotificationStore = defineStore('notification', {
   },
 
   actions: {
-    // 连接到通知WebSocket
-    connectWebSocket(): void {
-      const authStore = useAuthStore();
-      if (!authStore.isAuthenticated || !authStore.token) {
-        console.log('未登录，不能连接WebSocket');
-        return;
-      }
-
-      // 如果已经连接，先关闭现有连接
-      this.closeWebSocket();
-
-      try {
-        const apiBaseUrl = getApiBaseUrl();
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsBaseUrl = apiBaseUrl.replace(/^http(s)?:/, wsProtocol);
-        
-        // 获取上次活动时间
-        const lastActivityTime = localStorage.getItem('lastLogoutTime');
-        
-        // 创建WebSocket连接，包括认证token和上次活动时间
-        let wsUrl = `${wsBaseUrl}/api/v1/notifications/ws?token=${authStore.token}`;
-        
-        // 添加上次活动时间参数（如果有）
-        if (lastActivityTime) {
-          const lastActivityDate = new Date(parseInt(lastActivityTime));
-          if (!isNaN(lastActivityDate.getTime())) {
-            wsUrl += `&last_activity=${lastActivityDate.toISOString()}`;
-          }
-        }
-        
-        console.log(`正在连接通知WebSocket: ${wsUrl.replace(/token=[^&]+/, 'token=***')}`);
-        
-        this.websocket = new WebSocket(wsUrl);
-
-        // 连接打开事件
-        this.websocket.onopen = (): void => {
-          console.log('通知WebSocket连接已建立');
-          this.websocketConnected = true;
-          this.reconnectAttempts = 0;
-          this.error = null;
-          
-          // 连接建立后清除上次活动时间
-          if (lastActivityTime) {
-            localStorage.removeItem('lastLogoutTime');
-          }
-          
-          // 设置心跳检测
-          this.startHeartbeat();
-          
-          // 添加调试信息
-          console.log('通知WebSocket连接状态:', {
-            连接状态: this.websocketConnected ? '已连接' : '未连接',
-            重连次数: this.reconnectAttempts,
-            用户ID: authStore.user?.id
-          });
-          
-          // 触发连接成功事件，通知UI更新
-          window.dispatchEvent(new Event('notification:websocket-connected'));
-        };
-
-        // 连接关闭事件
-        this.websocket.onclose = (event: CloseEvent): void => {
-          this.websocketConnected = false;
-          
-          // 触发断开连接事件，通知UI更新
-          window.dispatchEvent(new Event('notification:websocket-disconnected'));
-          
-          // 清除心跳检测
-          if (this.heartbeatTimeout) {
-            clearTimeout(this.heartbeatTimeout);
-            this.heartbeatTimeout = null;
-          }
-          
-          console.log(`通知WebSocket连接已关闭，代码: ${event.code}，原因: ${event.reason || '未提供原因'}`);
-          
-          // 记录常见关闭代码的含义，帮助诊断问题
-          if (event.code === 1000) {
-            console.log('WebSocket正常关闭');
-            // 正常关闭，不进行重连
-            return;
-          } else if (event.code === 1001) {
-            console.log('WebSocket关闭: 终端离开');
-          } else if (event.code === 1005) {
-            console.log('WebSocket关闭: 无状态码接收');
-          } else if (event.code === 1006) {
-            console.log('WebSocket关闭: 异常关闭，可能是网络问题或服务器重启');
-          } else if (event.code === 1008) {
-            console.log('WebSocket关闭: 违反策略，可能是认证问题');
-          } else if (event.code === 1011) {
-            console.log('WebSocket关闭: 服务器内部错误');
-          }
-          
-          // 认证错误不尝试重连
-          if (event.code === 1008) {
-            console.log('认证问题，不进行重连');
-            // 可能需要刷新令牌或重新登录
-            console.log('可能需要重新登录或刷新令牌');
-            return;
-          }
-          
-          // 只有在非正常关闭且未超过最大重连次数时尝试重连
-          if (event.code !== 1000 && event.code !== 1001 && this.reconnectAttempts < this.maxReconnectAttempts) {
-            this.attemptReconnect();
-          } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-            console.log('已达到最大重连尝试次数，停止重连');
-            // 达到最大重试次数后，尝试使用HTTP轮询作为备用
-            this.fetchNotifications();
-            
-            // 5分钟后尝试重新连接
-            setTimeout(() => {
-              console.log('重置重连计数器，再次尝试连接');
-              this.reconnectAttempts = 0;
-              this.connectWebSocket();
-            }, 5 * 60 * 1000);
-          }
-        };
-
-        // 连接错误事件
-        this.websocket.onerror = (error: Event): void => {
-          console.error('通知WebSocket连接出错:', error);
-          this.error = '通知WebSocket连接出错';
-          
-          // 在错误发生时不立即尝试重连，让onclose事件处理重连逻辑
-          // 因为onerror事件后通常会触发onclose事件
-        };
-
-        // 收到消息事件
-        this.websocket.onmessage = (event: MessageEvent): void => {
-          // 接收消息时重置心跳检测
-          if (this.heartbeatTimeout) {
-            clearTimeout(this.heartbeatTimeout);
-          }
-          this.startHeartbeat();
-          
-          // 处理消息
-          this.handleWebSocketMessage(event);
-        };
-      } catch (error) {
-        console.error('创建通知WebSocket连接失败:', error);
-        this.error = '创建通知WebSocket连接失败';
-        
-        // 如果创建WebSocket对象失败，直接尝试重连
-        if (this.reconnectAttempts < this.maxReconnectAttempts) {
-          this.attemptReconnect();
-        }
-      }
-    },
-
-    // 尝试重新连接WebSocket
-    attemptReconnect(): void {
-      this.reconnectAttempts++;
-      
-      // 确保不超过最大重连次数
-      if (this.reconnectAttempts > this.maxReconnectAttempts) {
-        console.log('已达到最大重连尝试次数，停止重连');
-        return;
-      }
-      
-      // 使用指数退避策略，增加重连间隔
-      const delay = this.reconnectInterval * Math.pow(1.5, this.reconnectAttempts - 1);
-      
-      console.log(`尝试重新连接WebSocket (${this.reconnectAttempts}/${this.maxReconnectAttempts})...将在 ${delay/1000} 秒后尝试`);
-      
-      setTimeout(() => {
-        // 检查登录状态再尝试重连
-        const authStore = useAuthStore();
-        if (authStore.isAuthenticated && authStore.token) {
-          console.log(`正在执行第 ${this.reconnectAttempts} 次重连尝试...`);
-          this.connectWebSocket();
-        } else {
-          console.log('用户已登出，取消重连');
-        }
-      }, delay);
-    },
-
-    // 关闭WebSocket连接
-    closeWebSocket(): void {
-      // 清除所有心跳相关定时器
-      if (this.heartbeatInterval) {
-        clearInterval(this.heartbeatInterval);
-        this.heartbeatInterval = null;
-      }
-      
-      if (this.heartbeatTimeout) {
-        clearTimeout(this.heartbeatTimeout);
-        this.heartbeatTimeout = null;
-      }
-      
-      // 关闭WebSocket连接
-      if (this.websocket) {
-        try {
-          // 先移除所有事件监听器
-          this.websocket.onopen = null;
-          this.websocket.onmessage = null;
-          this.websocket.onerror = null;
-          this.websocket.onclose = null;
-          
-          // 如果连接仍处于打开状态，则关闭连接
-          if (this.websocket.readyState === WebSocket.OPEN || 
-              this.websocket.readyState === WebSocket.CONNECTING) {
-            this.websocket.close();
-          }
-        } catch (e) {
-          console.error('关闭WebSocket连接失败:', e);
-        }
-        this.websocket = null;
-      }
-      
-      this.websocketConnected = false;
-    },
-
-    // 处理WebSocket收到的消息
+    // 新增：处理WebSocket消息的方法
     handleWebSocketMessage(event: MessageEvent): void {
       try {
         const data = JSON.parse(event.data);
@@ -416,11 +206,7 @@ export const useNotificationStore = defineStore('notification', {
             break;
           
           case 'pong':
-            // 收到服务器pong响应，清除心跳超时
-            if (this.heartbeatTimeout) {
-              clearTimeout(this.heartbeatTimeout);
-              this.heartbeatTimeout = null;
-            }
+            // 收到服务器pong响应，不需要处理
             break;
 
           case 'notification':
@@ -456,6 +242,44 @@ export const useNotificationStore = defineStore('notification', {
       }
     },
 
+    // 新增：WebSocket连接成功的处理方法
+    onWebSocketConnected(): void {
+      console.log('通知WebSocket连接已建立');
+      this.websocketConnected = true;
+      this.reconnectAttempts = 0;
+      this.error = null;
+      
+      // 连接成功后开始拉取最新通知
+      this.fetchNotifications();
+      
+      // 添加调试信息
+      console.log('通知WebSocket连接状态:', {
+        连接状态: this.websocketConnected ? '已连接' : '未连接',
+        重连次数: this.reconnectAttempts
+      });
+      
+      // 触发连接成功事件，通知UI更新
+      window.dispatchEvent(new Event('notification:websocket-connected'));
+    },
+
+    // 新增：WebSocket断开连接的处理方法
+    onWebSocketDisconnected(): void {
+      this.websocketConnected = false;
+      
+      // 触发断开连接事件，通知UI更新
+      window.dispatchEvent(new Event('notification:websocket-disconnected'));
+    },
+
+    // 发送pong响应
+    sendPong(): void {
+      webSocketManager.send(WebSocketType.NOTIFICATION, { type: 'pong' });
+    },
+    
+    // 发送ping请求
+    sendPing(): void {
+      webSocketManager.send(WebSocketType.NOTIFICATION, { type: 'ping' });
+    },
+    
     // 处理新通知
     handleNewNotification(notification: Notification): void {
       // 如果不存在或已经存在相同ID的通知，则不处理
@@ -480,63 +304,6 @@ export const useNotificationStore = defineStore('notification', {
           console.error('调用新通知回调函数失败:', error);
         }
       }
-    },
-
-    // 发送pong响应
-    sendPong(): void {
-      if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) return;
-      
-      try {
-        this.websocket.send(JSON.stringify({ type: 'pong' }));
-      } catch (error) {
-        console.error('发送pong响应失败:', error);
-      }
-    },
-
-    // 发送ping请求
-    sendPing(): void {
-      if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) return;
-      
-      try {
-        this.websocket.send(JSON.stringify({ type: 'ping' }));
-        console.debug('发送ping请求');
-      } catch (error) {
-        console.error('发送ping请求失败:', error);
-      }
-    },
-
-    // 设置心跳检测
-    startHeartbeat(): void {
-      // 清除现有的心跳计时器
-      if (this.heartbeatInterval) {
-        clearInterval(this.heartbeatInterval);
-      }
-      
-      if (this.heartbeatTimeout) {
-        clearTimeout(this.heartbeatTimeout);
-      }
-      
-      // 每30秒发送一次ping
-      this.heartbeatInterval = window.setInterval(() => {
-        if (!this.websocket || this.websocket.readyState !== WebSocket.OPEN) return;
-        
-        try {
-          // 发送ping
-          this.websocket.send(JSON.stringify({ type: 'ping' }));
-          
-          // 设置10秒超时等待pong响应
-          this.heartbeatTimeout = window.setTimeout(() => {
-            console.warn('心跳检测失败: 未收到pong响应');
-            // 关闭连接并触发重连
-            this.closeWebSocket();
-            this.attemptReconnect();
-          }, 10000);
-        } catch (error) {
-          console.error('发送ping心跳失败:', error);
-          this.closeWebSocket();
-          this.attemptReconnect();
-        }
-      }, 30000);
     },
 
     // 显示桌面通知
@@ -896,8 +663,7 @@ export const useNotificationStore = defineStore('notification', {
       // 请求桌面通知权限
       this.requestNotificationPermission();
       
-      // 连接到WebSocket
-      this.connectWebSocket();
+      // 不再直接连接WebSocket，由authService统一管理
       
       // 设置周期性刷新
       this.startPeriodicRefresh();
@@ -940,8 +706,7 @@ export const useNotificationStore = defineStore('notification', {
     
     // 重置状态
     resetState(): void {
-      // 关闭WebSocket连接
-      this.closeWebSocket();
+      // 不再需要关闭WebSocket连接，由WebSocketManager统一管理
       
       // 清除定时器
       if (this.refreshTimer) {
@@ -1014,6 +779,20 @@ export const useNotificationStore = defineStore('notification', {
       } catch (error) {
         console.error('发送登录成功通知失败:', error);
       }
+    },
+
+    // 兼容方法：提供与旧版API兼容的WebSocket连接方法
+    // 此方法仅用于兼容现有代码，不应在新代码中使用
+    connectWebSocket(): boolean {
+      console.warn('[Notification] connectWebSocket方法已弃用，WebSocket连接现在由WebSocketManager统一管理');
+      return webSocketManager.connect(WebSocketType.NOTIFICATION);
+    },
+    
+    // 兼容方法：提供与旧版API兼容的WebSocket关闭方法
+    // 此方法仅用于兼容现有代码，不应在新代码中使用
+    closeWebSocket(): boolean {
+      console.warn('[Notification] closeWebSocket方法已弃用，WebSocket连接现在由WebSocketManager统一管理');
+      return webSocketManager.disconnect(WebSocketType.NOTIFICATION);
     }
   }
 }); 

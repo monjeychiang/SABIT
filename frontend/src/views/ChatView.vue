@@ -177,7 +177,7 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ChatSessionList from '@/components/chat/ChatSessionList.vue'
-import ChatMessage from '@/components/ChatMessage.vue'
+import ChatMessage from '@/components/MessageItem.vue'
 import ChatInput from '@/components/chat/ChatInput.vue'
 import { chatService } from '@/services/chatService'
 import { 

@@ -10,6 +10,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { useChatroomStore } from '@/stores/chatroom'
 import { useNotificationStore } from '@/stores/notification.ts'
+import { useOnlineStatusStore } from '@/stores/online-status'
 import latencyService from '@/services/latencyService'
 import authService from '@/services/authService'
 
@@ -19,6 +20,7 @@ const authStore = useAuthStore();
 const themeStore = useThemeStore();
 const chatroomStore = useChatroomStore();
 const notificationStore = useNotificationStore();
+const onlineStatusStore = useOnlineStatusStore();
 const isSidebarCollapsed = ref(false);
 const notifications = ref();
 // 新增：移动设备检测
@@ -30,12 +32,13 @@ const isSidebarVisible = ref(false);
 const serverTime = ref(new Date());
 const wsStatus = ref({
   chat: false,
-  notification: false
+  notification: false,
+  online: false
 });
 const wsStatusText = computed(() => {
-  if (wsStatus.value.chat && wsStatus.value.notification) {
+  if (wsStatus.value.chat && wsStatus.value.notification && wsStatus.value.online) {
     return '全部连接';
-  } else if (wsStatus.value.chat || wsStatus.value.notification) {
+  } else if (wsStatus.value.chat || wsStatus.value.notification || wsStatus.value.online) {
     return '部分连接';
   } else {
     return '未连接';
@@ -136,6 +139,7 @@ const handleLogout = async () => {
     // 更新WebSocket状态显示
     wsStatus.value.chat = false;
     wsStatus.value.notification = false;
+    wsStatus.value.online = false;
     
     // 跳转到首页而不是刷新页面
     router.push('/');
@@ -187,9 +191,11 @@ const updateWebSocketStatus = () => {
   if (authStore.isAuthenticated) {
     wsStatus.value.chat = chatroomStore.isConnected;
     wsStatus.value.notification = notificationStore.isWebSocketConnected;
+    wsStatus.value.online = onlineStatusStore.isConnected;
   } else {
     wsStatus.value.chat = false;
     wsStatus.value.notification = false;
+    wsStatus.value.online = false;
   }
 };
 
@@ -206,16 +212,36 @@ const updateServerLatency = () => {
 // 新增：重连WebSocket的方法
 const reconnectWebSockets = () => {
   if (authStore.isAuthenticated) {
-    if (!wsStatus.value.chat) {
-      chatroomStore.connectWebSocket();
-    }
-    if (!wsStatus.value.notification) {
-      notificationStore.connectWebSocket();
-    }
-    // 短暂延迟后关闭弹窗
-    setTimeout(() => {
-      showWsDetails.value = false;
-    }, 500);
+    // 使用WebSocketManager重连所有WebSocket连接
+    import('@/services/webSocketService').then(({ default: webSocketManager }) => {
+      webSocketManager.connectAll().then(result => {
+        console.log('WebSocket重连结果:', result ? '成功' : '失败');
+        // 短暂延迟后关闭弹窗
+        setTimeout(() => {
+          showWsDetails.value = false;
+        }, 500);
+      }).catch(error => {
+        console.error('WebSocket重连失败:', error);
+      });
+    }).catch(error => {
+      console.error('导入WebSocketManager失败:', error);
+      
+      // 如果导入失败，回退到旧方法
+      if (!wsStatus.value.chat) {
+        chatroomStore.connectWebSocket();
+      }
+      if (!wsStatus.value.notification) {
+        notificationStore.connectWebSocket();
+      }
+      if (!wsStatus.value.online) {
+        onlineStatusStore.connectWebSocket();
+      }
+      
+      // 短暂延迟后关闭弹窗
+      setTimeout(() => {
+        showWsDetails.value = false;
+      }, 500);
+    });
   }
 };
 
@@ -375,10 +401,13 @@ const handleAuthTokensFromUrl = async () => {
                          keepLoggedInStr === '1' || keepLoggedInStr === 'yes';
     
     // 获取过期时间参数
-    const expiresIn = params.get('expires_in') ? parseInt(params.get('expires_in')) : undefined;
-    const refreshTokenExpiresIn = params.get('refresh_token_expires_in') 
-                               ? parseInt(params.get('refresh_token_expires_in')) 
-                               : expiresIn;
+    const expiresInParam = params.get('expires_in');
+    const expiresIn = expiresInParam ? parseInt(expiresInParam) : undefined;
+    
+    const refreshTokenExpiresInParam = params.get('refresh_token_expires_in');
+    const refreshTokenExpiresIn = refreshTokenExpiresInParam 
+                              ? parseInt(refreshTokenExpiresInParam) 
+                              : expiresIn;
     
     // 处理Google登录回调
     const success = await authStore.handleGoogleCallback(
@@ -416,14 +445,18 @@ const handleAuthTokensFromUrl = async () => {
   }
 };
 
+// 定义timeInterval变量，用于在onUnmounted中清除
+let timeInterval: number | undefined;
+
 // 初始化
 onMounted(async () => {
   // 监听加载动画开始和结束事件
-  window.addEventListener('auth-loading-start', (event) => {
+  window.addEventListener('auth-loading-start', (event: Event) => {
     authLoading.value = true;
     // 如果事件中提供了消息，则使用它
-    if (event.detail && event.detail.message) {
-      authMessage.value = event.detail.message;
+    const customEvent = event as CustomEvent<{message?: string}>;
+    if (customEvent.detail?.message) {
+      authMessage.value = customEvent.detail.message;
     } else {
       authMessage.value = '正在处理...';
     }
@@ -454,14 +487,32 @@ onMounted(async () => {
     wsStatus.value.notification = false;
     console.log('通知WebSocket已断开 - 状态已更新');
   });
+  
+  window.addEventListener('online:websocket-connected', () => {
+    wsStatus.value.online = true;
+    console.log('在线状态WebSocket已连接 - 状态已更新');
+  });
+  
+  window.addEventListener('online:websocket-disconnected', () => {
+    wsStatus.value.online = false;
+    console.log('在线状态WebSocket已断开 - 状态已更新');
+  });
 
   // 添加统一的登录成功事件处理器
-  window.addEventListener('login-authenticated', () => {
+  window.addEventListener('login-authenticated', async () => {
     console.log('检测到登录成功事件，初始化聊天和通知系统');
     // 初始化通知系统
     notificationStore.initialize();
     // 初始化聊天系统
     chatroomStore.initialize();
+    // 初始化在线状态系统
+    onlineStatusStore.initialize();
+    
+    // 确保WebSocket连接被建立 - 添加这一行解决Google登录不初始化WebSocket的问题
+    import('@/services/authService').then(async ({ authService }) => {
+      console.log('从login-authenticated事件中初始化WebSocket连接');
+      await authService.initializeWebSockets();
+    });
   });
 
   // 尝试处理URL中的令牌参数
@@ -518,7 +569,7 @@ onMounted(async () => {
   });
 
   // 设置定时器，定期更新服务器时间和WebSocket状态
-  const timeInterval = setInterval(() => {
+  timeInterval = window.setInterval(() => {
     updateServerTime();
     updateWebSocketStatus();
     updateServerLatency();
@@ -535,25 +586,25 @@ onMounted(async () => {
   if (lastTestTime.value > 0) {
     updateCooldown();
   }
-
-  // 在组件卸载时清除定时器
-  onUnmounted(() => {
-    clearInterval(timeInterval);
-    latencyService.stopAutoMeasurement();
-    
-    // 清除冷却计时器
-    if (cooldownTimer.value !== null) {
-      clearInterval(cooldownTimer.value);
-      cooldownTimer.value = null;
-    }
-  });
 });
 
-// 在組件卸載時移除事件監聽器
+// 在组件卸载时清除定时器
 onUnmounted(() => {
+  if (timeInterval !== undefined) {
+    clearInterval(timeInterval);
+  }
+  latencyService.stopAutoMeasurement();
+  
+  // 清除冷却计时器
+  if (cooldownTimer.value !== null) {
+    clearInterval(cooldownTimer.value);
+    cooldownTimer.value = null;
+  }
+
+  // 移除事件监听器
   window.removeEventListener('resize', handleResize);
   window.removeEventListener('auth:tokens-updated', () => {});
-  latencyService.stopAutoMeasurement();
+  
   // 移除加载动画事件监听器
   window.removeEventListener('auth-loading-start', () => {});
   window.removeEventListener('auth-loading-end', () => {});
@@ -563,6 +614,8 @@ onUnmounted(() => {
   window.removeEventListener('chat:websocket-disconnected', () => {});
   window.removeEventListener('notification:websocket-connected', () => {});
   window.removeEventListener('notification:websocket-disconnected', () => {});
+  window.removeEventListener('online:websocket-connected', () => {});
+  window.removeEventListener('online:websocket-disconnected', () => {});
 });
 </script>
 
@@ -575,120 +628,127 @@ onUnmounted(() => {
 
     <!-- 默認佈局：有導航欄和側邊欄 -->
     <template v-if="currentLayout === 'default'">
-      <NavBar 
-        :username="username"
-        :notifications="notifications"
-        @toggle-sidebar="toggleSidebar"
-        @logout="handleLogout"
-      />
-      
-      <div class="app-content">
-        <Sidebar 
-          :is-collapsed="isSidebarCollapsed" 
-          :is-mobile="isMobile"
-          :is-visible="isSidebarVisible"
-          @close-mobile-sidebar="isSidebarVisible = false"
+      <div class="default-layout">
+        <NavBar 
+          :username="username"
+          :notifications="notifications"
+          @toggle-sidebar="toggleSidebar"
+          @logout="handleLogout"
         />
         
-        <main class="main-content" :style="mainContentStyle" @click="closeMenuOnContentClick">
-          <!-- 添加面包屑导航 -->
-          <Breadcrumb />
+        <div class="app-content">
+          <Sidebar 
+            :is-collapsed="isSidebarCollapsed" 
+            :is-mobile="isMobile"
+            :is-visible="isSidebarVisible"
+            @close-mobile-sidebar="isSidebarVisible = false"
+          />
           
-          <router-view v-slot="{ Component, route }">
-            <transition name="fade" mode="out-in">
-              <component 
-                :is="Component"
-                :key="route.meta.reload ? route.fullPath : route.path"
-              />
-            </transition>
-          </router-view>
-        </main>
-      </div>
-      
-      <!-- 底部状态栏 -->
-      <div class="status-bar">
-        <div class="status-bar-content">
-          <div class="status-bar-section">
-            <span class="connection-dot" :class="{ 
-              'connected': wsStatus.chat && wsStatus.notification, 
-              'partial': (wsStatus.chat || wsStatus.notification) && !(wsStatus.chat && wsStatus.notification),
-              'disconnected': !wsStatus.chat && !wsStatus.notification 
-            }"></span>
-            <span class="status-value clickable" 
-                  :class="latencyStatus"
-                  @click="showWsDetails = !showWsDetails">{{ serverLatency }}</span>
+          <main class="main-content" :style="mainContentStyle" @click="closeMenuOnContentClick">
+            <!-- 添加面包屑导航 -->
+            <Breadcrumb />
             
-            <!-- WebSocket详情弹窗 -->
-            <div v-if="showWsDetails" class="ws-details-popup">
-              <div class="ws-details-header">
-                <h3>系统状态</h3>
-                <button class="ws-details-close" @click="showWsDetails = false">×</button>
-              </div>
-              <div class="ws-details-content">
-                <div class="ws-detail-item">
-                  <span class="ws-detail-label">服务器延迟:</span>
-                  <span class="ws-detail-status" :class="latencyStatus">{{ serverLatency }}</span>
+            <router-view v-slot="{ Component, route }">
+              <transition name="fade" mode="out-in">
+                <component 
+                  :is="Component"
+                  :key="route.meta.reload ? route.fullPath : route.path"
+                />
+              </transition>
+            </router-view>
+          </main>
+        </div>
+        
+        <!-- 确保底部状态栏在侧边栏之外 -->
+        <div class="status-bar" :class="{'sidebar-collapsed': isSidebarCollapsed && !isMobile}">
+          <div class="status-bar-content">
+            <div class="status-bar-section">
+              <span class="connection-dot" :class="{ 
+                'connected': wsStatus.chat && wsStatus.notification && wsStatus.online, 
+                'partial': (wsStatus.chat || wsStatus.notification || wsStatus.online) && !(wsStatus.chat && wsStatus.notification && wsStatus.online),
+                'disconnected': !wsStatus.chat && !wsStatus.notification && !wsStatus.online 
+              }"></span>
+              <span class="status-value clickable" 
+                    :class="latencyStatus"
+                    @click="showWsDetails = !showWsDetails">{{ serverLatency }}</span>
+              
+              <!-- WebSocket详情弹窗 -->
+              <div v-if="showWsDetails" class="ws-details-popup">
+                <div class="ws-details-header">
+                  <h3>系统状态</h3>
+                  <button class="ws-details-close" @click="showWsDetails = false">×</button>
                 </div>
-                <div class="ws-detail-item">
-                  <span class="ws-detail-label">聊天系统:</span>
-                  <span class="connection-dot" :class="{ 'connected': wsStatus.chat, 'disconnected': !wsStatus.chat }"></span>
-                  <span class="ws-detail-status">{{ wsStatus.chat ? '已连接' : '未连接' }}</span>
-                </div>
-                <div class="ws-detail-item">
-                  <span class="ws-detail-label">通知系统:</span>
-                  <span class="connection-dot" :class="{ 'connected': wsStatus.notification, 'disconnected': !wsStatus.notification }"></span>
-                  <span class="ws-detail-status">{{ wsStatus.notification ? '已连接' : '未连接' }}</span>
-                </div>
-                
-                <!-- 网络测试区域 -->
-                <div class="network-test-section">
-                  <h4>网络测试</h4>
-                  
-                  <!-- 测试按钮 -->
-                  <button 
-                    class="network-test-button" 
-                    @click="runNetworkTest"
-                    :disabled="testButtonDisabled"
-                    :class="{ 'cooldown': cooldownRemaining > 0 }"
-                  >
-                    {{ testButtonText }}
-                  </button>
-                  
-                  <!-- 测试中进度条 -->
-                  <div v-if="networkTestInProgress" class="network-test-progress">
-                    <div class="progress-bar">
-                      <div class="progress-inner" :style="{ width: `${networkTestProgress}%` }"></div>
-                    </div>
-                    <div class="progress-info">
-                      <span class="progress-text">正在测量平均延迟... {{ Math.round(networkTestProgress) }}%</span>
-                      <span class="current-latency">当前延迟: {{ currentLatency }}</span>
-                    </div>
+                <div class="ws-details-content">
+                  <div class="ws-detail-item">
+                    <span class="ws-detail-label">服务器延迟:</span>
+                    <span class="ws-detail-status" :class="latencyStatus">{{ serverLatency }}</span>
+                  </div>
+                  <div class="ws-detail-item">
+                    <span class="ws-detail-label">聊天系统:</span>
+                    <span class="connection-dot" :class="{ 'connected': wsStatus.chat, 'disconnected': !wsStatus.chat }"></span>
+                    <span class="ws-detail-status">{{ wsStatus.chat ? '已连接' : '未连接' }}</span>
+                  </div>
+                  <div class="ws-detail-item">
+                    <span class="ws-detail-label">通知系统:</span>
+                    <span class="connection-dot" :class="{ 'connected': wsStatus.notification, 'disconnected': !wsStatus.notification }"></span>
+                    <span class="ws-detail-status">{{ wsStatus.notification ? '已连接' : '未连接' }}</span>
+                  </div>
+                  <div class="ws-detail-item">
+                    <span class="ws-detail-label">在线状态:</span>
+                    <span class="connection-dot" :class="{ 'connected': wsStatus.online, 'disconnected': !wsStatus.online }"></span>
+                    <span class="ws-detail-status">{{ wsStatus.online ? '已连接' : '未连接' }}</span>
                   </div>
                   
-                  <!-- 测试结果 -->
-                  <div v-if="networkTestResults" class="network-test-results">
-                    <div class="test-result-header">测试结果：</div>
-                    <div class="test-result-item">
-                      <span class="test-label">平均延迟:</span>
-                      <span class="test-value" :class="networkTestResults.status">
-                        {{ networkTestResults.average }}
-                      </span>
+                  <!-- 网络测试区域 -->
+                  <div class="network-test-section">
+                    <h4>网络测试</h4>
+                    
+                    <!-- 测试按钮 -->
+                    <button 
+                      class="network-test-button" 
+                      @click="runNetworkTest"
+                      :disabled="testButtonDisabled"
+                      :class="{ 'cooldown': cooldownRemaining > 0 }"
+                    >
+                      {{ testButtonText }}
+                    </button>
+                    
+                    <!-- 测试中进度条 -->
+                    <div v-if="networkTestInProgress" class="network-test-progress">
+                      <div class="progress-bar">
+                        <div class="progress-inner" :style="{ width: `${networkTestProgress}%` }"></div>
+                      </div>
+                      <div class="progress-info">
+                        <span class="progress-text">正在测量平均延迟... {{ Math.round(networkTestProgress) }}%</span>
+                        <span class="current-latency">当前延迟: {{ currentLatency }}</span>
+                      </div>
                     </div>
-                    <div class="test-result-item">
-                      <span class="test-label">测试时间:</span>
-                      <span class="test-value">{{ formatTestTime(networkTestResults.timestamp) }}</span>
+                    
+                    <!-- 测试结果 -->
+                    <div v-if="networkTestResults" class="network-test-results">
+                      <div class="test-result-header">测试结果：</div>
+                      <div class="test-result-item">
+                        <span class="test-label">平均延迟:</span>
+                        <span class="test-value" :class="networkTestResults.status">
+                          {{ networkTestResults.average }}
+                        </span>
+                      </div>
+                      <div class="test-result-item">
+                        <span class="test-label">测试时间:</span>
+                        <span class="test-value">{{ formatTestTime(networkTestResults.timestamp) }}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-              <div class="ws-details-footer">
-                <button class="ws-refresh-button" @click="latencyService.measure(); reconnectWebSockets();">刷新状态</button>
+                <div class="ws-details-footer">
+                  <button class="ws-refresh-button" @click="latencyService.measure(); reconnectWebSockets();">刷新状态</button>
+                </div>
               </div>
             </div>
-          </div>
-          
-          <div class="status-bar-section">
-            <span class="status-value">{{ formatServerTime(serverTime) }}</span>
+            
+            <div class="status-bar-section">
+              <span class="status-value">{{ formatServerTime(serverTime) }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -710,9 +770,9 @@ onUnmounted(() => {
         <div class="status-bar-content">
           <div class="status-bar-section">
             <span class="connection-dot" :class="{ 
-              'connected': wsStatus.chat && wsStatus.notification, 
-              'partial': (wsStatus.chat || wsStatus.notification) && !(wsStatus.chat && wsStatus.notification),
-              'disconnected': !wsStatus.chat && !wsStatus.notification 
+              'connected': wsStatus.chat && wsStatus.notification && wsStatus.online, 
+              'partial': (wsStatus.chat || wsStatus.notification || wsStatus.online) && !(wsStatus.chat && wsStatus.notification && wsStatus.online),
+              'disconnected': !wsStatus.chat && !wsStatus.notification && !wsStatus.online 
             }"></span>
             <span class="status-value clickable" 
                   :class="latencyStatus"
@@ -738,6 +798,11 @@ onUnmounted(() => {
                   <span class="ws-detail-label">通知系统:</span>
                   <span class="connection-dot" :class="{ 'connected': wsStatus.notification, 'disconnected': !wsStatus.notification }"></span>
                   <span class="ws-detail-status">{{ wsStatus.notification ? '已连接' : '未连接' }}</span>
+                </div>
+                <div class="ws-detail-item">
+                  <span class="ws-detail-label">在线状态:</span>
+                  <span class="connection-dot" :class="{ 'connected': wsStatus.online, 'disconnected': !wsStatus.online }"></span>
+                  <span class="ws-detail-status">{{ wsStatus.online ? '已连接' : '未连接' }}</span>
                 </div>
                 
                 <!-- 网络测试区域 -->
@@ -846,8 +911,9 @@ onUnmounted(() => {
 .status-bar {
   position: fixed;
   bottom: 0;
-  left: 0;
+  left: var(--sidebar-width);
   right: 0;
+  width: calc(100% - var(--sidebar-width));
   height: var(--status-bar-height, 24px);
   background-color: var(--surface-color);
   border-top: 1px solid var(--border-color);
@@ -858,6 +924,27 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--text-secondary);
   z-index: 999;
+  transition: left var(--transition-normal) ease, width var(--transition-normal) ease;
+}
+
+/* 侧边栏折叠时状态栏位置变化 */
+.status-bar.sidebar-collapsed {
+  left: var(--sidebar-collapsed-width);
+  width: calc(100% - var(--sidebar-collapsed-width));
+}
+
+/* 认证布局下状态栏占据全宽 */
+.auth-layout + .status-bar {
+  left: 0;
+  width: 100%;
+}
+
+/* 移动设备上状态栏占据全宽 */
+@media (max-width: 768px) {
+  .status-bar {
+    left: 0;
+    width: 100%;
+  }
 }
 
 .status-bar-content {
