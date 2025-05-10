@@ -8,6 +8,16 @@ from decimal import Decimal
 import asyncio
 import random
 
+# 导入Cython优化模块
+try:
+    from ..cython_modules import calculate_position_value, calculate_margin_requirement, CYTHON_ENABLED
+    import logging
+    logging.info("使用Cython加速版交易计算函数")
+except ImportError:
+    # 如果导入失败，使用原生Python版本
+    CYTHON_ENABLED = False
+    logging.warning("Cython模块导入失败，使用Python原生实现")
+
 from ..core.security import decrypt_api_key
 from ..db.models.user import User
 from ..db.models.exchange_api import ExchangeAPI
@@ -2150,3 +2160,130 @@ class TradingService:
             logger.error(f"检查用户类型失败: {str(e)}")
             # 出错时返回默认值
             return result
+
+    def _calculate_position_value(self, position: Dict[str, Any], mark_price: float) -> float:
+        """
+        计算持仓价值
+        
+        Args:
+            position: 持仓信息字典
+            mark_price: 标记价格
+                
+        Returns:
+            float: 持仓价值
+        """
+        # 使用Cython加速版本（如果可用）
+        if CYTHON_ENABLED:
+            return calculate_position_value(position, mark_price)
+        
+        # 否则使用原生Python实现
+        position_amount = float(position.get("position_amount", 0))
+        abs_position = abs(position_amount)
+        
+        # 计算持仓价值
+        position_value = abs_position * mark_price
+        
+        return position_value
+    
+    def _calculate_margin_requirement(self, position: Dict[str, Any], 
+                                    mark_price: float, 
+                                    maintenance_margin_rate: float, 
+                                    margin_type: str = "ISOLATED") -> Dict[str, float]:
+        """
+        计算保证金需求
+        
+        Args:
+            position: 持仓信息字典
+            mark_price: 标记价格
+            maintenance_margin_rate: 维持保证金率
+            margin_type: 保证金类型，可选 "ISOLATED" 或 "CROSS"
+                
+        Returns:
+            Dict[str, float]: 包含保证金需求信息的字典
+        """
+        # 使用Cython加速版本（如果可用）
+        if CYTHON_ENABLED:
+            return calculate_margin_requirement(position, mark_price, maintenance_margin_rate, margin_type)
+        
+        # 否则使用原生Python实现
+        position_amount = float(position.get("position_amount", 0))
+        entry_price = float(position.get("entry_price", 0))
+        isolated_wallet = float(position.get("isolated_wallet", 0))
+        abs_position = abs(position_amount)
+        
+        # 计算持仓价值
+        position_value = abs_position * mark_price
+        
+        # 计算未实现盈亏
+        unrealized_pnl = 0.0
+        if position_amount > 0:  # 多头
+            unrealized_pnl = abs_position * (mark_price - entry_price)
+        elif position_amount < 0:  # 空头
+            unrealized_pnl = abs_position * (entry_price - mark_price)
+        
+        # 计算维持保证金
+        maintenance_margin = position_value * maintenance_margin_rate
+        
+        # 计算保证金率
+        margin_ratio = 0.0
+        if margin_type == "ISOLATED":
+            # 对于逐仓，保证金率 = (钱包余额 + 未实现盈亏) / 维持保证金
+            if maintenance_margin > 0:
+                margin_ratio = (isolated_wallet + unrealized_pnl) / maintenance_margin
+        else:  # CROSS
+            # 对于全仓，需要考虑账户余额，这里简化处理
+            # 实际应用中需要传入更多参数
+            if maintenance_margin > 0:
+                margin_ratio = (isolated_wallet + unrealized_pnl) / maintenance_margin
+        
+        # 返回计算结果
+        return {
+            "position_value": position_value,
+            "maintenance_margin": maintenance_margin,
+            "unrealized_pnl": unrealized_pnl,
+            "margin_ratio": margin_ratio,
+            "liquidation_price": self._calculate_liquidation_price(
+                position_amount, entry_price, isolated_wallet, 
+                maintenance_margin_rate, margin_type
+            )
+        }
+    
+    def _calculate_liquidation_price(self, position_amount: float,
+                                  entry_price: float,
+                                  wallet_balance: float,
+                                  maintenance_margin_rate: float,
+                                  margin_type: str = "ISOLATED") -> float:
+        """
+        计算清算价格
+        
+        Args:
+            position_amount: 持仓数量
+            entry_price: 开仓均价
+            wallet_balance: 钱包余额
+            maintenance_margin_rate: 维持保证金率
+            margin_type: 保证金类型
+                
+        Returns:
+            float: 清算价格
+        """
+        # 如果没有持仓，返回0
+        if position_amount == 0:
+            return 0.0
+        
+        abs_position = abs(position_amount)
+        maintenance_amount = wallet_balance - abs_position * entry_price * maintenance_margin_rate
+        liquidation_price = 0.0
+        
+        if position_amount > 0:  # 多头
+            # 对于多头，清算价格 = (开仓价值 - 钱包余额) / ((1 - 维持保证金率) * 持仓数量)
+            if abs_position * (1 - maintenance_margin_rate) == 0:
+                return 0.0  # 避免除以零
+            liquidation_price = (abs_position * entry_price - wallet_balance) / (abs_position * (1 - maintenance_margin_rate))
+        else:  # 空头
+            # 对于空头，清算价格 = (开仓价值 + 钱包余额) / ((1 + 维持保证金率) * 持仓数量)
+            if abs_position * (1 + maintenance_margin_rate) == 0:
+                return 0.0  # 避免除以零
+            liquidation_price = (abs_position * entry_price + wallet_balance) / (abs_position * (1 + maintenance_margin_rate))
+        
+        # 确保清算价格为正数
+        return max(0.0, liquidation_price)

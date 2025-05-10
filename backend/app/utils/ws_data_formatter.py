@@ -12,6 +12,16 @@ from datetime import datetime
 import logging
 from enum import Enum
 
+# 尝试导入Cython优化版本
+try:
+    from ..cython_modules import format_decimal, format_binance_data, CYTHON_ENABLED
+    import logging
+    logging.info("使用Cython加速版数据格式化函数")
+except ImportError:
+    # 如果导入失败，使用原生Python版本
+    CYTHON_ENABLED = False
+    logging.warning("Cython模块导入失败，使用Python原生实现")
+
 from ..schemas.trading import ExchangeEnum, Balance
 
 logger = logging.getLogger(__name__)
@@ -55,7 +65,11 @@ class WebSocketDataFormatter:
         try:
             # 根据不同交易所处理数据
             if exchange == ExchangeEnum.BINANCE:
-                return WebSocketDataFormatter._format_binance_data(data, formatted_data)
+                # 如果Cython模块可用，使用加速版本
+                if CYTHON_ENABLED:
+                    return format_binance_data(data, formatted_data)
+                else:
+                    return WebSocketDataFormatter._format_binance_data(data, formatted_data)
             elif exchange == ExchangeEnum.BYBIT:
                 return WebSocketDataFormatter._format_bybit_data(data, formatted_data)
             elif exchange == ExchangeEnum.okx:
@@ -198,13 +212,6 @@ class WebSocketDataFormatter:
                 "is_maker": order_data.get("m", False),
                 "reduce_only": order_data.get("R", False),
                 "realized_profit": WebSocketDataFormatter._format_decimal(order_data.get("rp", "0"))
-            }
-        
-        # 添加其他事件类型的处理...
-        else:
-            formatted_data["event_type"] = f"UNKNOWN_{event_type}"
-            formatted_data["data"] = {
-                "message": f"未知事件类型: {event_type}"
             }
         
         return formatted_data
@@ -350,40 +357,85 @@ class WebSocketDataFormatter:
     @staticmethod
     def _format_decimal(value: Any) -> str:
         """
-        格式化数字为易读字符串
+        格式化小数值为字符串
+        
+        将各种类型的值转换为标准格式的字符串，去除尾随零
         
         Args:
-            value: 需要格式化的数值
-            
+            value: 待格式化的值，可以是字符串、浮点数或None
+                
         Returns:
             str: 格式化后的字符串
         """
-        if value is None:
+        # 如果Cython版本可用，使用Cython版本
+        if CYTHON_ENABLED:
+            return format_decimal(value)
+            
+        # 否则使用原始Python实现
+        # 如果值为None或空字符串，返回"0"
+        if value is None or value == "":
             return "0"
             
+        # 尝试转换为Decimal进行精确处理
         try:
-            # 转换为Decimal确保精度
-            decimal_value = Decimal(str(value))
-            
-            # 如果是整数，去除小数点后的零
-            if decimal_value == decimal_value.to_integral_value():
-                return str(decimal_value.quantize(Decimal("1")))
+            # 对于字符串，先转换为Decimal再格式化
+            if isinstance(value, str):
+                # 替换逗号，避免解析错误
+                value = value.replace(',', '')
+                try:
+                    decimal_val = Decimal(value)
+                    result = str(decimal_val.normalize())
+                    # 如果结果等于零值的Decimal，返回"0"
+                    if result == "0E-8" or result == "0":
+                        return "0"
+                    # 规范化输出，去除科学记数法
+                    if 'E' in result:
+                        # 处理科学记数法
+                        mantissa, exponent = result.split('E')
+                        exponent = int(exponent)
+                        if exponent > 0:
+                            mantissa = mantissa.replace('.', '')
+                            result = mantissa + '0' * (exponent - len(mantissa) + 1)
+                        else:
+                            mantissa = mantissa.replace('.', '')
+                            result = '0.' + '0' * (-exponent - 1) + mantissa
+                    return result
+                except:
+                    # 如果转换失败，尝试直接使用浮点数
+                    try:
+                        float_val = float(value)
+                        # 避免精度问题，使用字符串格式化
+                        result = f"{float_val:.8f}".rstrip('0').rstrip('.')
+                        return result if result != "" else "0"
+                    except:
+                        # 如果仍然失败，返回原始值
+                        return str(value)
+                    
+            # 对于数值类型，直接格式化
+            elif isinstance(value, (int, float)):
+                # 避免精度问题，使用字符串格式化
+                result = f"{float(value):.8f}".rstrip('0').rstrip('.')
+                return result if result != "" else "0"
                 
-            # 否则格式化为最多8位小数
-            return str(decimal_value.quantize(Decimal("0.00000001")).normalize())
-        except:
-            # 转换失败返回原值的字符串
+            # 默认情况，转换为字符串
+            else:
+                return str(value)
+                
+        except Exception as e:
+            # 出现异常时，尝试简单地转换为字符串
             return str(value)
     
     @staticmethod
     def get_human_readable_summary(exchange: ExchangeEnum, data: Dict[str, Any]) -> str:
         """
-        生成人类可读的WebSocket数据摘要
+        获取人类可读的数据摘要
+        
+        将格式化后的数据转换为简洁的文本摘要，便于阅读和理解
         
         Args:
             exchange: 交易所枚举
-            data: 原始WebSocket数据
-            
+            data: 格式化后的数据
+                
         Returns:
             str: 人类可读的摘要
         """

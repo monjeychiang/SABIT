@@ -10,6 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from sqlalchemy.orm import Session
 import time
+# 添加靜態文件支持
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
 # 设置标准时间
 os.environ['TZ'] = 'Asia/Shanghai'
@@ -27,6 +30,10 @@ if root_dir not in sys.path:
 # 確保日誌目錄存在
 logs_dir = os.path.join(os.path.dirname(current_dir), 'logs')
 os.makedirs(logs_dir, exist_ok=True)
+
+# 確保靜態文件目錄存在
+static_dir = os.path.join(os.path.dirname(current_dir), 'static')
+os.makedirs(static_dir, exist_ok=True)
 
 # 配置日誌 - 解决中文编码问题
 logging.basicConfig(
@@ -52,7 +59,7 @@ logger.info(f"应用启动于：{datetime.now(CHINA_TZ)}...")
 from app.api.endpoints import auth, admin, notifications, settings, markets, chat, chatroom
 # 新增: 导入在线状态API
 from app.api.endpoints import online_status
-from app.db.database import engine, Base
+from app.db.database import engine, Base, create_tables
 
 # 添加系统状态API模块
 from app.api.endpoints import system
@@ -104,6 +111,31 @@ app = FastAPI(
     description="加密货币交易平台API",
     version="1.0.0"
 )
+
+# 添加靜態文件服務
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+# 設置favicon路由 - 直接從靜態目錄提供favicon
+@app.get("/favicon.ico", include_in_schema=False)
+async def get_favicon():
+    from fastapi.responses import FileResponse
+    favicon_path = os.path.join(static_dir, "favicon.ico")
+    # 如果文件不存在，則從前端目錄複製
+    if not os.path.exists(favicon_path):
+        try:
+            import shutil
+            frontend_favicon = os.path.join(root_dir, 'frontend', 'public', 'favicon.ico')
+            if os.path.exists(frontend_favicon):
+                shutil.copy(frontend_favicon, favicon_path)
+                logger.info(f"已從前端複製favicon.ico到靜態目錄: {favicon_path}")
+        except Exception as e:
+            logger.error(f"複製favicon.ico時出錯: {str(e)}")
+    
+    if os.path.exists(favicon_path):
+        return FileResponse(favicon_path)
+    
+    # 如果文件仍然不存在，返回404
+    raise HTTPException(status_code=404, detail="Favicon not found")
 
 # CORS 配置
 origins = [
@@ -175,8 +207,8 @@ app.include_router(
 # 添加活跃跟踪中间件（在其他中间件之后添加）
 app.add_middleware(ActivityTrackerMiddleware)
 
-# 创建数据库表
-Base.metadata.create_all(bind=engine)
+# 创建数据库表（使用database.py中的create_tables函数，而不是直接调用Base.metadata.create_all）
+create_tables()
 logger.info("数据库表创建完成")
 
 @app.on_event("startup")

@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 from ...core.security import get_current_active_user, get_current_admin_user
 from ...db.models import User
 from sqlalchemy.orm import Session
-from ...db.database import get_db
+from ...db.database import get_db, SessionLocal
 from ...schemas.user import UserPublicInfo
 import logging
 
@@ -21,6 +21,43 @@ async def get_active_users_count(current_user: User = Depends(get_current_active
     只有已認證的用戶才能訪問此資訊。
     """
     return {"active_users": active_session_store.get_active_users_count()}
+
+# 添加一个新的API端点，允许普通用户访问在线用户列表的基本信息，但不包含敏感数据
+@router.get("/active-users-public")
+async def get_active_users_public(current_user: User = Depends(get_current_active_user)):
+    """獲取在線用戶基本公開信息（適用於普通用戶）
+    
+    此端點返回系統中當前活躍用戶的基本公開資訊，如用戶名和頭像。
+    只包含已允許公開顯示的資訊，不包含敏感數據如電子郵件。
+    所有已認證的用戶均可訪問此端點。
+    """
+    # 使用with語句和try-finally確保連接被正確釋放回連接池
+    db = SessionLocal()
+    try:
+        active_user_ids = active_session_store.get_all_active_users()
+        
+        if not active_user_ids:
+            return {"users": []}
+        
+        # 獲取活躍用戶詳細資訊
+        users = db.query(User).filter(User.id.in_(active_user_ids)).all()
+        
+        # 構建包含最後活躍時間的用戶資訊，但只包含公開資料
+        result = []
+        for user in users:
+            last_active = active_session_store.get_user_last_active(user.id)
+            user_dict = {
+                "id": user.id,
+                "username": user.username,
+                "avatar_url": user.avatar_url,
+                "last_active": last_active.isoformat() if last_active else None
+            }
+            result.append(user_dict)
+        
+        return {"users": result}
+    finally:
+        # 確保在任何情況下都會關閉連接並釋放回連接池
+        db.close()
 
 @router.get("/is-active/{user_id}")
 async def check_user_active(

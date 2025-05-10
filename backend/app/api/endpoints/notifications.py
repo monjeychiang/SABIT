@@ -260,8 +260,8 @@ class NotificationConnectionManager:
             self.active_connections_count += 1
             
             # 生成客戶端ID（方便日誌記錄）
-            client_id = f"user_{user_id}_{id(websocket)}"
-            logger.info(f"通知WebSocket連接已建立: {client_id}，當前連接總數: {self.active_connections_count}")
+            client_id = f"notification_{user_id}_{id(websocket)}"
+            logger.info(f"[Notification] WebSocket连接已建立: 用户ID={user_id}, 连接ID={client_id}, 当前连接总数={self.active_connections_count}")
             return client_id
             
         except Exception as e:
@@ -282,6 +282,9 @@ class NotificationConnectionManager:
             if websocket in self.connection_user:
                 user_id = self.connection_user[websocket]
                 
+                # 生成连接ID用于日志
+                connection_id = f"notification_{user_id}_{id(websocket)}"
+                
                 # 從用戶連接列表中移除
                 if user_id in self.user_connections and websocket in self.user_connections[user_id]:
                     self.user_connections[user_id].remove(websocket)
@@ -299,7 +302,7 @@ class NotificationConnectionManager:
                 self.active_connections_count -= 1
                 
                 # 記錄連接關閉信息
-                logger.info(f"通知WebSocket連接已關閉，用戶ID: {user_id}，當前連接總數: {self.active_connections_count}")
+                logger.info(f"[Notification] WebSocket连接已断开: 用户ID={user_id}, 连接ID={connection_id}, 当前连接总数={self.active_connections_count}")
             
         except ValueError:
             logger.warning("嘗試移除不存在的通知WebSocket連接")

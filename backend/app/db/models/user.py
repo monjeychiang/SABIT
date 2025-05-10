@@ -49,11 +49,6 @@ class User(Base):
     # 一對多關係，一個用戶可以有多個通知
     notifications = relationship("Notification", back_populates="user")
     
-    # 關聯關係：通知設置
-    # 一對一關係，一個用戶只有一個通知設置檔案
-    # cascade="all, delete-orphan" 確保刪除用戶時同時刪除關聯的通知設置
-    notification_settings = relationship("NotificationSetting", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    
     # 關聯關係：刷新令牌
     # 一對多關係，一個用戶可以有多個刷新令牌（支持多設備同時登入）
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")

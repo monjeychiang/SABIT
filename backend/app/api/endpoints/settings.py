@@ -1,11 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Response, Cookie
 from sqlalchemy.orm import Session
 from typing import Any, Dict, Optional, List
 from pydantic import BaseModel
 import logging
+import os
+import uuid
+import shutil
+from pathlib import Path
+from PIL import Image
+import io
+import json
 
 from ...db.database import get_db
-from ...db.models import User, NotificationSetting, ExchangeAPI
+from ...db.models import User, ExchangeAPI
 from ...schemas.notification import NotificationSettingsUpdate, NotificationSettingsResponse
 from ...core.security import oauth2_scheme, verify_token, encrypt_api_key, decrypt_api_key, get_current_user
 from jose import JWTError
@@ -13,6 +20,15 @@ from ...schemas.settings import (
     ExchangeAPICreate, ExchangeAPIUpdate, ExchangeAPIResponse,
     ExchangeAPIListResponse, ApiKeyResponse
 )
+
+# 获取当前代码文件的绝对路径
+current_file_path = Path(__file__).resolve()
+# 获取后端目录路径
+backend_dir = current_file_path.parent.parent.parent.parent
+# 构建静态文件中的头像目录路径
+avatar_dir = backend_dir / "static" / "avatars"
+# 确保头像目录存在
+avatar_dir.mkdir(parents=True, exist_ok=True)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -246,89 +262,324 @@ async def delete_api_key(
             detail="刪除API密鑰失敗"
         )
 
-# 獲取通知設置
+# 获取通知设置 - 改为使用cookie
 @router.get("/notifications", response_model=NotificationSettingsResponse)
 def get_notification_settings(
-    db: Session = Depends(get_db),
+    response: Response,
+    notification_settings: Optional[str] = Cookie(None),
     current_user: User = Depends(get_current_user)
 ) -> Any:
     """
-    獲取當前用戶的通知設置
+    获取当前用户的通知设置
     
-    返回用戶的通知偏好設置，包括電子郵件通知、系統通知等各種通知類型的啟用狀態。
-    若用戶尚未設置通知偏好，將返回系統默認設置。
+    返回用户的通知首选项设置，包括电子邮件通知、系统通知等各种通知类型的启用状态。
+    通知设置存储在cookie中，而不是数据库。
     
     返回:
-        用戶的通知設置詳情
+        用户的通知设置详情
     """
-    # 檢查用戶是否已有通知設置
-    if not current_user.notification_settings:
-        # 如果沒有，創建默認設置
-        notification_settings = NotificationSetting(user_id=current_user.id)
-        db.add(notification_settings)
-        db.commit()
-        db.refresh(notification_settings)
-    else:
-        notification_settings = current_user.notification_settings
-    
-    return notification_settings
+    try:
+        # 如果有cookie，解析通知设置
+        if notification_settings:
+            try:
+                settings = json.loads(notification_settings)
+                return NotificationSettingsResponse(
+                    email_notifications=settings.get("email_notifications", True),
+                    trade_notifications=settings.get("trade_notifications", True),
+                    system_notifications=settings.get("system_notifications", True),
+                    desktop_notifications=settings.get("desktop_notifications", False),
+                    sound_notifications=settings.get("sound_notifications", False),
+                    notification_preferences=settings.get("notification_preferences", {})
+                )
+            except json.JSONDecodeError:
+                logger.warning(f"用户 {current_user.username} 的通知设置cookie无效，使用默认设置")
+        
+        # 如果没有cookie或解析失败，返回默认设置
+        default_settings = NotificationSettingsResponse(
+            email_notifications=True,
+            trade_notifications=True,
+            system_notifications=True,
+            desktop_notifications=False,
+            sound_notifications=False,
+            notification_preferences={}
+        )
+        
+        # 设置默认cookie
+        response.set_cookie(
+            key="notification_settings",
+            value=json.dumps(default_settings.dict()),
+            max_age=60 * 60 * 24 * 365,  # 一年有效期
+            httponly=True,
+            samesite="lax",
+            secure=False  # 在生产环境中应设为True
+        )
+        
+        return default_settings
+    except Exception as e:
+        logger.error(f"获取通知设置时出错: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="获取通知设置失败"
+        )
 
-# 更新通知設置
+# 更新通知设置 - 改为使用cookie
 @router.post("/notifications", response_model=NotificationSettingsResponse)
 def update_notification_settings(
     settings: NotificationSettingsUpdate,
-    db: Session = Depends(get_db),
+    response: Response,
     current_user: User = Depends(get_current_user)
 ) -> Any:
     """
-    更新用戶的通知設置
+    更新用户的通知设置
     
-    允許用戶自定義各種通知偏好，包括是否接收特定類型的通知，
-    以及通知的接收方式（電子郵件、系統通知、桌面推送等）。
+    允许用户自定义各种通知首选项，包括是否接收特定类型的通知，
+    以及通知的接收方式（电子邮件、系统通知、桌面推送等）。
+    更新后的设置会保存在cookie中，不保存到数据库。
     
-    參數:
-        settings: 包含用戶更新後通知偏好的對象
+    参数:
+        settings: 包含用户更新后通知首选项的对象
         
     返回:
-        更新後的通知設置詳情
+        更新后的通知设置详情
         
-    錯誤:
-        500: 更新過程中出現伺服器錯誤
+    错误:
+        500: 更新过程中出现服务器错误
     """
     try:
-        # 檢查用戶是否已有通知設置
-        if not current_user.notification_settings:
-            # 如果沒有，創建新設置
-            notification_settings = NotificationSetting(
-                user_id=current_user.id,
-                email_notifications=settings.email_notifications,
-                trade_notifications=settings.trade_notifications,
-                system_notifications=settings.system_notifications,
-                desktop_notifications=settings.desktop_notifications,
-                sound_notifications=settings.sound_notifications,
-                notification_preferences=settings.notification_preferences
-            )
-            db.add(notification_settings)
-        else:
-            # 更新現有設置
-            notification_settings = current_user.notification_settings
-            notification_settings.email_notifications = settings.email_notifications
-            notification_settings.trade_notifications = settings.trade_notifications
-            notification_settings.system_notifications = settings.system_notifications
-            notification_settings.desktop_notifications = settings.desktop_notifications
-            notification_settings.sound_notifications = settings.sound_notifications
-            notification_settings.notification_preferences = settings.notification_preferences
+        # 创建更新后的设置
+        updated_settings = {
+            "email_notifications": settings.email_notifications,
+            "trade_notifications": settings.trade_notifications,
+            "system_notifications": settings.system_notifications,
+            "desktop_notifications": settings.desktop_notifications,
+            "sound_notifications": settings.sound_notifications,
+            "notification_preferences": settings.notification_preferences
+        }
         
-        db.commit()
-        db.refresh(notification_settings)
+        # 设置cookie
+        response.set_cookie(
+            key="notification_settings",
+            value=json.dumps(updated_settings),
+            max_age=60 * 60 * 24 * 365,  # 一年有效期
+            httponly=True,
+            samesite="lax",
+            secure=False  # 在生产环境中应设为True
+        )
         
-        logger.info(f"用戶 {current_user.username} 已更新通知設置")
-        return notification_settings
+        logger.info(f"用户 {current_user.username} 已更新通知设置（使用cookie）")
+        return NotificationSettingsResponse(**updated_settings)
         
     except Exception as e:
-        db.rollback()
-        logger.error(f"更新通知設置時出錯: {str(e)}", exc_info=True)
+        logger.error(f"更新通知设置时出错: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="更新通知設置失敗"
+            detail="更新通知设置失败"
+        )
+
+# 圖片壓縮功能
+def compress_image(file_content, max_size=(200, 200), quality=85, format='WEBP'):
+    """
+    壓縮圖片並轉換為WebP格式
+    
+    參數:
+        file_content: 文件內容的字節流
+        max_size: 圖片的最大尺寸(寬,高)
+        quality: 壓縮質量(1-100)
+        format: 輸出格式，默認為WebP
+        
+    返回:
+        bytes: 壓縮後的圖片字節數據
+    """
+    try:
+        # 打開圖片
+        img = Image.open(io.BytesIO(file_content))
+        
+        # 縮放圖片，保持比例
+        img.thumbnail(max_size)
+        
+        # 準備輸出
+        output = io.BytesIO()
+        
+        # 如果圖片有透明通道且輸出格式為WebP，需要確保透明度得到保留
+        if img.mode in ('RGBA', 'LA') and format == 'WEBP':
+            img.save(output, format=format, quality=quality, lossless=False, method=6)
+        else:
+            # 轉換為RGB模式（WebP支持的模式）
+            if format == 'WEBP' and img.mode not in ('RGBA', 'RGB'):
+                img = img.convert('RGB')
+            img.save(output, format=format, quality=quality)
+            
+        # 獲取壓縮後的數據
+        compressed_data = output.getvalue()
+        
+        logger.info(f"圖片已壓縮: 原始格式={img.format}, 原始尺寸={img.size}, "
+                    f"壓縮後格式={format}, 壓縮後尺寸={img.size}")
+        
+        return compressed_data
+    except Exception as e:
+        logger.error(f"圖片壓縮失敗: {str(e)}")
+        raise e
+
+@router.post("/user/avatar", response_model=Dict[str, Any])
+async def upload_avatar(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """
+    上传用户头像
+    
+    接收用户上传的图片文件，保存到服务器并更新用户的avatar_url字段。
+    支持的图片格式: .jpg, .jpeg, .png, .gif
+    文件大小限制: 最大5MB
+    图片会自动压缩并转换为WebP格式以节省空间
+    
+    参数:
+        file: 上传的图片文件
+        
+    返回:
+        包含操作状态和新头像URL的响应
+        
+    错误:
+        400: 文件格式不被支持或文件大小超过限制
+        500: 上传过程中服务器错误
+    """
+    try:
+        # 验证文件类型
+        allowed_extensions = [".jpg", ".jpeg", ".png", ".gif"]
+        file_extension = os.path.splitext(file.filename)[1].lower()
+        
+        if file_extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="不支持的文件格式，请上传JPG、JPEG、PNG或GIF图片"
+            )
+        
+        # 限制文件大小（5MB）
+        file_size_limit = 5 * 1024 * 1024  # 5MB in bytes
+        file.file.seek(0, 2)  # 移动到文件末尾
+        file_size = file.file.tell()  # 获取文件大小
+        file.file.seek(0)  # 重置文件指针
+        
+        if file_size > file_size_limit:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="文件大小超过限制，请上传小于5MB的图片"
+            )
+        
+        # 读取文件内容
+        file_content = await file.read()
+        
+        try:
+            # 压缩图片
+            compressed_data = compress_image(
+                file_content, 
+                max_size=(300, 300),  # 设置最大尺寸为300x300像素
+                quality=85,           # 设置压缩质量为85%
+                format='WEBP'         # 转换为WebP格式
+            )
+            
+            # 生成唯一文件名 (使用WebP扩展名)
+            unique_filename = f"{uuid.uuid4()}.webp"
+            file_path = avatar_dir / unique_filename
+            
+            # 保存压缩后的文件
+            with open(file_path, "wb") as f:
+                f.write(compressed_data)
+                
+        except Exception as e:
+            logger.warning(f"图片压缩失败，将使用原始图片: {str(e)}")
+            
+            # 压缩失败时回退到原始方法
+            # 生成唯一文件名
+            unique_filename = f"{uuid.uuid4()}{file_extension}"
+            file_path = avatar_dir / unique_filename
+            
+            # 重置文件指针
+            file.file.seek(0)
+            
+            # 保存原始文件
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+        
+        # 更新用户头像URL
+        avatar_url = f"/static/avatars/{unique_filename}"
+        
+        # 删除旧头像文件（如果存在且不是默认头像）
+        if current_user.avatar_url and "default" not in current_user.avatar_url:
+            old_avatar_path = backend_dir / current_user.avatar_url.lstrip("/")
+            if os.path.exists(old_avatar_path):
+                os.remove(old_avatar_path)
+        
+        # 更新数据库中的头像URL
+        current_user.avatar_url = avatar_url
+        db.commit()
+        
+        logger.info(f"用户 {current_user.username} 成功上传新头像: {avatar_url}")
+        
+        return {
+            "success": True,
+            "message": "头像上传成功",
+            "avatar_url": avatar_url
+        }
+    
+    except HTTPException as e:
+        # 重新抛出HTTP异常
+        raise
+    except Exception as e:
+        logger.error(f"头像上传失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"头像上传失败: {str(e)}"
+        )
+
+@router.delete("/user/avatar", response_model=Dict[str, Any])
+async def delete_avatar(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """
+    删除用户头像
+    
+    删除用户当前的自定义头像，并重置为默认头像或清空头像URL。
+    
+    返回:
+        包含操作状态的响应
+        
+    错误:
+        404: 用户没有设置头像
+        500: 删除过程中服务器错误
+    """
+    try:
+        # 检查用户是否设置了头像
+        if not current_user.avatar_url or "default" in current_user.avatar_url:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="用户没有设置自定义头像"
+            )
+        
+        # 删除头像文件
+        avatar_path = backend_dir / current_user.avatar_url.lstrip("/")
+        if os.path.exists(avatar_path):
+            os.remove(avatar_path)
+        
+        # 清空数据库中的头像URL
+        current_user.avatar_url = None
+        db.commit()
+        
+        logger.info(f"用户 {current_user.username} 已删除头像")
+        
+        return {
+            "success": True,
+            "message": "头像已成功删除"
+        }
+    
+    except HTTPException as e:
+        # 重新抛出HTTP异常
+        raise
+    except Exception as e:
+        logger.error(f"删除头像失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"删除头像失败: {str(e)}"
         ) 

@@ -38,6 +38,10 @@ brotlipy>=0.7.0
 orjson>=3.8.10
 google-generativeai>=0.3.0
 
+# 高性能扩展支持
+Cython>=0.29.24
+setuptools>=50.0.0
+
 # WebSocket和Redis支持
 aioredis==1.3.1
 redis==4.5.5
@@ -46,4 +50,13 @@ websockets==10.4
 
 # 监控和度量
 prometheus-client==0.16.0
-prometheus-fastapi-instrumentator==6.0.0 
+prometheus-fastapi-instrumentator==6.0.0
+
+# 网页爬虫和数据提取
+crawl4ai>=0.6.0
+playwright>=1.49.0
+
+# 添加Cython相关依赖
+numpy>=1.20.0
+matplotlib>=3.4.0  # 用于绘制性能比较图表 
+pillow>=10.0.0

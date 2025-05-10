@@ -49,21 +49,30 @@ class ConnectionManager:
         if user_id not in self.user_rooms:
             self.user_rooms[user_id] = set()
         
-        logger.info(f"WebSocket连接成功: 用户ID={user_id}, 活跃用户数={len(self.active_connections)}")
+        # 生成连接ID，用于日志追踪
+        connection_id = f"chatroom_{user_id}_{id(websocket)}"
+        
+        logger.info(f"[Chatroom] WebSocket连接已建立: 用户ID={user_id}, 连接ID={connection_id}, 当前连接总数={len(self.active_connections)}")
         
         # 通知其他用户该用户上线
         await self.broadcast_user_status_change(user_id, True)
     
     def disconnect(self, user_id: int):
         """断开用户的WebSocket连接"""
+        websocket = None
         if user_id in self.active_connections:
+            # 保存websocket引用以生成连接ID
+            websocket = self.active_connections[user_id]
             del self.active_connections[user_id]
                 
             # 更新用户状态
             if user_id in self.user_status:
                 self.user_status[user_id]["online"] = False
             
-            logger.info(f"WebSocket连接断开: 用户ID={user_id}, 剩余活跃用户数={len(self.active_connections)}")
+            # 生成连接ID，用于日志追踪
+            connection_id = f"chatroom_{user_id}_{id(websocket)}" if websocket else "unknown"
+            
+            logger.info(f"[Chatroom] WebSocket连接已断开: 用户ID={user_id}, 连接ID={connection_id}, 当前连接总数={len(self.active_connections)}")
     
     async def broadcast_user_status_change(self, user_id: int, is_online: bool):
         """广播用户状态变化"""

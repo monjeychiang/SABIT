@@ -3,6 +3,17 @@ from typing import Dict, Any, List, Optional
 from app.core.exchanges.base import ExchangeBase
 from app.core.exchanges.binance import BinanceExchange
 
+# 导入Cython优化模块
+try:
+    from ..cython_modules import calculate_indicators, CYTHON_ENABLED
+    import logging
+    logging.info("使用Cython加速版技术指标计算函数")
+except ImportError:
+    # 如果导入失败，使用原生Python版本
+    CYTHON_ENABLED = False
+    logging.warning("Cython模块导入失败，使用Python原生实现")
+    import numpy as np
+
 # 初始化日誌記錄器，用於記錄市場數據服務的運行情況
 logger = logging.getLogger(__name__)
 
@@ -206,28 +217,203 @@ class MarketDataService:
             logger.error(f"取消訂閱{exchange}交易所{market_type}市場交易對時出錯: {str(e)}")
             return False
             
+    def calculate_technical_indicators(self, 
+                                     ohlcv_data: Dict[str, List[float]], 
+                                     indicators: List[str] = None) -> Dict[str, Any]:
+        """
+        计算技术指标
+        
+        计算给定OHLCV数据的各种技术指标，包括均线、RSI、布林带等
+        
+        参数:
+            ohlcv_data: 包含OHLCV数据的字典
+            indicators: 要计算的指标列表
+            
+        返回:
+            Dict[str, Any]: 包含各指标计算结果的字典
+        """
+        # 如果没有指定指标，默认计算常用指标
+        if indicators is None:
+            indicators = ['sma', 'ema', 'rsi', 'bollinger', 'macd']
+            
+        # 使用Cython加速版本（如果可用）
+        if CYTHON_ENABLED:
+            return calculate_indicators(ohlcv_data, indicators)
+            
+        # 否则使用原生Python实现
+        result = {}
+        
+        # 确保数据正确转换为NumPy数组
+        closes = np.array(ohlcv_data.get('close', []), dtype=np.float64)
+        
+        # 计算所需指标
+        for indicator in indicators:
+            if indicator.lower() == 'sma':
+                result['sma'] = {
+                    '5': self._calculate_sma(closes, 5),
+                    '10': self._calculate_sma(closes, 10),
+                    '20': self._calculate_sma(closes, 20),
+                    '50': self._calculate_sma(closes, 50),
+                    '200': self._calculate_sma(closes, 200)
+                }
+            elif indicator.lower() == 'ema':
+                result['ema'] = {
+                    '5': self._calculate_ema(closes, 5),
+                    '10': self._calculate_ema(closes, 10),
+                    '20': self._calculate_ema(closes, 20),
+                    '50': self._calculate_ema(closes, 50),
+                    '200': self._calculate_ema(closes, 200)
+                }
+            elif indicator.lower() == 'rsi':
+                result['rsi'] = {
+                    '14': self._calculate_rsi(closes, 14)
+                }
+            elif indicator.lower() == 'bollinger':
+                upper, middle, lower = self._calculate_bollinger_bands(closes, 20, 2.0)
+                result['bollinger'] = {
+                    'upper': upper,
+                    'middle': middle,
+                    'lower': lower
+                }
+            elif indicator.lower() == 'macd':
+                macd_line, signal_line, histogram = self._calculate_macd(closes, 12, 26, 9)
+                result['macd'] = {
+                    'macd': macd_line,
+                    'signal': signal_line,
+                    'histogram': histogram
+                }
+        
+        return result
+    
+    def _calculate_sma(self, data, period):
+        """简单移动平均线计算"""
+        n = len(data)
+        result = np.zeros(n)
+        result[:period-1] = np.nan
+        
+        # 使用滑动窗口计算
+        for i in range(period-1, n):
+            result[i] = np.mean(data[i-period+1:i+1])
+            
+        return result
+    
+    def _calculate_ema(self, data, period):
+        """指数移动平均线计算"""
+        n = len(data)
+        result = np.zeros(n)
+        alpha = 2.0 / (period + 1.0)
+        
+        # 前period-1个点设为NaN
+        result[:period-1] = np.nan
+        
+        # 计算第一个EMA值
+        result[period-1] = np.mean(data[:period])
+        
+        # 计算其余EMA值
+        for i in range(period, n):
+            result[i] = data[i] * alpha + result[i-1] * (1.0 - alpha)
+            
+        return result
+    
+    def _calculate_rsi(self, data, period):
+        """相对强弱指标计算"""
+        n = len(data)
+        result = np.zeros(n)
+        delta = np.zeros(n)
+        
+        # 计算价格变化
+        for i in range(1, n):
+            delta[i] = data[i] - data[i-1]
+        
+        # 分离涨跌
+        gain = np.zeros(n)
+        loss = np.zeros(n)
+        
+        for i in range(1, n):
+            if delta[i] > 0:
+                gain[i] = delta[i]
+            elif delta[i] < 0:
+                loss[i] = -delta[i]
+        
+        # 计算平均涨幅和跌幅
+        avg_gain = np.zeros(n)
+        avg_loss = np.zeros(n)
+        
+        # 计算第一个值
+        avg_gain[period] = np.sum(gain[1:period+1]) / period
+        avg_loss[period] = np.sum(loss[1:period+1]) / period
+        
+        # 计算其余值
+        for i in range(period+1, n):
+            avg_gain[i] = (avg_gain[i-1] * (period-1) + gain[i]) / period
+            avg_loss[i] = (avg_loss[i-1] * (period-1) + loss[i]) / period
+        
+        # 计算相对强度
+        rs = np.zeros(n)
+        for i in range(period, n):
+            if avg_loss[i] == 0:
+                result[i] = 100
+            else:
+                rs[i] = avg_gain[i] / avg_loss[i]
+                result[i] = 100 - (100 / (1 + rs[i]))
+        
+        # 前期值设为NaN
+        result[:period] = np.nan
+        
+        return result
+    
+    def _calculate_bollinger_bands(self, data, period=20, deviation=2.0):
+        """布林带计算"""
+        # 计算中轨(SMA)
+        middle = self._calculate_sma(data, period)
+        
+        # 计算标准差
+        std = np.zeros(len(data))
+        for i in range(period-1, len(data)):
+            window = data[i-period+1:i+1]
+            std[i] = np.std(window)
+        
+        # 计算上轨和下轨
+        upper = middle + deviation * std
+        lower = middle - deviation * std
+        
+        return upper, middle, lower
+    
+    def _calculate_macd(self, data, fast_period=12, slow_period=26, signal_period=9):
+        """MACD计算"""
+        # 计算快线和慢线
+        fast_ema = self._calculate_ema(data, fast_period)
+        slow_ema = self._calculate_ema(data, slow_period)
+        
+        # 计算MACD线
+        macd_line = fast_ema - slow_ema
+        
+        # 计算信号线
+        signal_line = self._calculate_ema(macd_line, signal_period)
+        
+        # 计算直方图
+        histogram = macd_line - signal_line
+        
+        return macd_line, signal_line, histogram
+    
     def get_exchange(self, exchange: str) -> Optional[ExchangeBase]:
         """
         獲取指定交易所實例
         
-        根據交易所名稱獲取對應的交易所實例。
-        
         參數:
-            exchange: 交易所名稱，例如 "binance"
+            exchange: 交易所名稱
             
         返回:
-            交易所實例，若交易所不存在則返回None
+            ExchangeBase: 交易所實例，若不存在則返回None
         """
-        return self.exchanges.get(exchange)
-        
+        return self.exchanges.get(exchange.lower())
+    
     def get_supported_exchanges(self) -> List[str]:
         """
-        獲取支援的交易所列表
-        
-        返回當前服務支援的所有交易所名稱列表。
+        獲取所有支援的交易所列表
         
         返回:
-            交易所名稱列表，例如 ["binance"]
+            List[str]: 交易所名稱列表
         """
         return list(self.exchanges.keys())
 

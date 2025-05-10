@@ -123,7 +123,10 @@ class OnlineStatusManager:
             "connection_time": datetime.now().isoformat()
         }
         
-        logger.info(f"用户 {user_id} 已连接, 当前在线用户: {len(self.active_connections)}")
+        # 生成连接ID，用于日志追踪
+        connection_id = f"online_status_{user_id}_{id(websocket)}"
+        
+        logger.info(f"[OnlineStatus] WebSocket连接已建立: 用户ID={user_id}, 连接ID={connection_id}, 当前连接总数={len(self.active_connections)}")
         
         # 向所有相关聊天室通知用户在线
         await self.broadcast_user_status_change(user_id, True)
@@ -131,7 +134,9 @@ class OnlineStatusManager:
     async def disconnect_user(self, user_id: int):
         """断开用户连接并更新状态"""
         # 如果用户在线，关闭WebSocket连接
+        websocket = None
         if user_id in self.active_connections:
+            websocket = self.active_connections[user_id]
             try:
                 await self.active_connections[user_id].close()
             except:
@@ -147,7 +152,10 @@ class OnlineStatusManager:
         if user_id in self.last_active:
             del self.last_active[user_id]
         
-        logger.info(f"用户 {user_id} 已断开连接, 剩余在线用户: {len(self.active_connections)}")
+        # 生成连接ID，用于日志追踪
+        connection_id = f"online_status_{user_id}_{id(websocket)}" if websocket else "unknown"
+        
+        logger.info(f"[OnlineStatus] WebSocket连接已断开: 用户ID={user_id}, 连接ID={connection_id}, 当前连接总数={len(self.active_connections)}")
         
         # 向所有相关聊天室通知用户离线
         await self.broadcast_user_status_change(user_id, False)
