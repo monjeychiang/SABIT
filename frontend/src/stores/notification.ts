@@ -192,53 +192,135 @@ export const useNotificationStore = defineStore('notification', {
   },
 
   actions: {
-    // 新增：处理WebSocket消息的方法
-    handleWebSocketMessage(event: MessageEvent): void {
-      try {
-        const data = JSON.parse(event.data);
-        console.debug('收到WebSocket消息:', data);
+    /**
+     * 從WebSocket消息中解析通知數據
+     * 支持多種格式的通知數據結構
+     */
+    parseNotificationFromMessage(data: any): any {
+      console.log('嘗試解析通知數據:', data);
+      
+      // 嘗試不同的數據格式
+      if (data.payload && typeof data.payload === 'object') {
+        console.log('使用data.payload格式解析通知');
+        return {...data.payload, is_read: data.payload.is_read || data.payload.read || false};
+      } 
+      
+      if (data.notification && typeof data.notification === 'object') {
+        console.log('使用data.notification格式解析通知');
+        return {...data.notification, is_read: data.notification.is_read || data.notification.read || false};
+      }
+      
+      if (data.data && typeof data.data === 'object') {
+        console.log('使用data.data格式解析通知');
+        return {...data.data, is_read: data.data.is_read || data.data.read || false};
+      }
+      
+      // 如果消息本身就是通知對象
+      if (data.id && (data.title || data.message)) {
+        console.log('消息本身是通知對象');
+        return {...data, is_read: data.is_read || data.read || false};
+      }
+      
+      console.error('無法從消息中解析通知數據:', data);
+      return null;
+    },
 
-        // 处理不同类型的消息
+    // 新增：处理WebSocket消息的方法
+    handleWebSocketMessage(event: MessageEvent | any): void {
+      try {
+        // 記錄原始事件物件類型，便於調試
+        console.log("收到WebSocket消息，事件類型:", typeof event, event);
+
+        // 處理傳入的消息可能是已解析的對象或字符串的情況
+        let data: any;
+
+        // 如果 event 本身就是一個物件且不是 MessageEvent (來自 webSocketManager 的直接調用)
+        if (event && typeof event === 'object' && !(event instanceof MessageEvent)) {
+          console.log("直接接收到解析後的消息物件");
+          data = event;
+        }
+        // 如果是標準 MessageEvent
+        else if (event && event.data !== undefined) {
+          console.log("收到標準 MessageEvent 消息:", event.data);
+          
+          // 如果 data 是字符串，嘗試解析為 JSON
+          if (typeof event.data === 'string') {
+            try {
+              data = JSON.parse(event.data);
+            } catch (parseError) {
+              console.error("解析 WebSocket 消息失敗:", parseError);
+              return;
+            }
+          } else if (typeof event.data === 'object') {
+            // 如果 data 已經是物件，直接使用
+            data = event.data;
+          } else {
+            console.error("未知的 WebSocket 消息格式:", typeof event.data);
+            return;
+          }
+        } else {
+          console.error("收到無效的 WebSocket 消息或空消息");
+          return;
+        }
+        
+        // 確保 data 不為 undefined
+        if (!data) {
+          console.error("解析後的消息為空");
+          return;
+        }
+        
+        // 增加詳細日誌以進行調試
+        console.log("處理 WebSocket 消息:", data);
+        console.log("WebSocket 消息類型:", data.type);
+        
+        // 處理不同類型的消息
         switch (data.type) {
           case 'ping':
-            // 收到服务器ping，回复pong
+            // 收到服務器ping，回復pong
             this.sendPong();
             break;
           
           case 'pong':
-            // 收到服务器pong响应，不需要处理
+            // 收到服務器pong響應，不需要處理
             break;
 
           case 'notification':
-            // 添加详细日志
+            // 添加詳細日誌
             console.log('收到通知消息:', data);
             
-            // 检查消息格式，兼容两种可能的数据结构
-            if (data.data) {
-              // 将后端的read属性映射为is_read
-              const notification = { ...data.data, is_read: data.data.read || false };
-              console.log('处理data.data格式的通知:', notification);
-              this.handleNewNotification(notification);
-            } else if (data.notification) {
-              const notification = { ...data.notification, is_read: data.notification.read || false };
-              console.log('处理data.notification格式的通知:', notification);
-              this.handleNewNotification(notification);
-            } else {
-              console.error('收到的通知消息格式不正确:', data);
+            // 解析通知數據
+            const notification = this.parseNotificationFromMessage(data);
+            
+            // 處理通知
+            if (notification && notification.id) {
+              // 檢查是否已存在相同ID的通知
+              if (!this.notifications.some(n => n.id === notification.id)) {
+                // 添加新通知
+                this.notifications.unshift(notification);
+                this.unreadCount++;
+                
+                // 使用瀏覽器通知API (如果用戶允許)
+                this.showDesktopNotification(notification);
+                
+                console.log("通知已添加到列表，目前有", this.notifications.length, "條通知");
+                console.log("未讀通知數:", this.unreadCount);
+              } else {
+                console.log("忽略重複通知, ID:", notification.id);
+              }
             }
             break;
             
           case 'error':
-            // 错误消息
-            console.error('通知WebSocket错误:', data.message);
-            this.error = data.message || '通知服务发生错误';
+            // 錯誤消息
+            console.error('通知WebSocket錯誤:', data.message);
+            this.error = data.message || '通知服務發生錯誤';
             break;
             
           default:
-            console.log('收到未知类型的WebSocket消息:', data);
+            console.log('收到未知類型的WebSocket消息:', data);
         }
       } catch (error) {
-        console.error('处理WebSocket消息错误:', error);
+        console.error("處理WebSocket消息時出錯:", error);
       }
     },
 
@@ -272,12 +354,12 @@ export const useNotificationStore = defineStore('notification', {
 
     // 发送pong响应
     sendPong(): void {
-      webSocketManager.send(WebSocketType.NOTIFICATION, { type: 'pong' });
+      webSocketManager.send({ type: 'pong' });
     },
     
     // 发送ping请求
     sendPing(): void {
-      webSocketManager.send(WebSocketType.NOTIFICATION, { type: 'ping' });
+      webSocketManager.send({ type: 'ping' });
     },
     
     // 处理新通知
@@ -536,7 +618,12 @@ export const useNotificationStore = defineStore('notification', {
         try {
           // 获取当前用户的存储键名
           const authStore = useAuthStore();
-          const storageKey = getUserNotificationsKey(authStore.user?.id, authStore.user?.username);
+          const userId = localStorage.getItem('userId');
+          const username = localStorage.getItem('username');
+          const storageKey = getUserNotificationsKey(
+            userId ? parseInt(userId) : null, 
+            username
+          );
           
           // 删除本地存储条目
           localStorage.removeItem(storageKey);
@@ -590,16 +677,19 @@ export const useNotificationStore = defineStore('notification', {
           return;
         }
         
-        // 准备要保存的数据
+        // 準備要保存的數據 - 不再引用 user 屬性
         const storageData: StoredNotificationData = {
           notifications: this.notifications,
-          timestamp: Date.now(),
-          userId: authStore.user?.id,
-          username: authStore.user?.username
+          timestamp: Date.now()
         };
         
-        // 获取用户特定的存储键名
-        const storageKey = getUserNotificationsKey(authStore.user?.id, authStore.user?.username);
+        // 獲取用戶特定的存儲鍵名，適應現有的 authStore 結構
+        const userId = localStorage.getItem('userId');
+        const username = localStorage.getItem('username');
+        const storageKey = getUserNotificationsKey(
+          userId ? parseInt(userId) : null, 
+          username
+        );
         
         // 保存到本地存储
         localStorage.setItem(storageKey, JSON.stringify(storageData));
@@ -617,8 +707,13 @@ export const useNotificationStore = defineStore('notification', {
           return;
         }
         
-        // 获取用户特定的存储键名
-        const storageKey = getUserNotificationsKey(authStore.user?.id, authStore.user?.username);
+        // 獲取用戶特定的存儲鍵名，適應現有的 authStore 結構
+        const userId = localStorage.getItem('userId');
+        const username = localStorage.getItem('username');
+        const storageKey = getUserNotificationsKey(
+          userId ? parseInt(userId) : null, 
+          username
+        );
         
         // 从本地存储中获取数据
         const storageItem = localStorage.getItem(storageKey);
@@ -634,12 +729,6 @@ export const useNotificationStore = defineStore('notification', {
         if (now - storageData.timestamp > LOCAL_STORAGE_NOTIFICATIONS_EXPIRY) {
           // 数据已过期，删除
           localStorage.removeItem(storageKey);
-          return;
-        }
-        
-        // 检查用户ID是否匹配
-        if (storageData.userId && authStore.user?.id && storageData.userId !== authStore.user.id) {
-          // 用户ID不匹配，不加载
           return;
         }
         
@@ -663,7 +752,29 @@ export const useNotificationStore = defineStore('notification', {
       // 请求桌面通知权限
       this.requestNotificationPermission();
       
-      // 不再直接连接WebSocket，由authService统一管理
+      // 設置消息處理回調函數
+      webSocketManager.register({
+        onMessage: (data) => {
+          console.log('通知管理器收到WebSocket消息:', data);
+          
+          // 只處理通知類型的消息
+          if (data && data.type === 'notification') {
+            // 注意：這裡直接傳入消息數據對象，而不是構造 MessageEvent 對象
+            this.handleWebSocketMessage(data);
+          }
+        },
+        onConnect: () => {
+          this.onWebSocketConnected();
+        },
+        onDisconnect: () => {
+          this.onWebSocketDisconnected();
+        }
+      });
+      
+      // 確保連接到主WebSocket
+      if (!webSocketManager.isConnected()) {
+        webSocketManager.connect();
+      }
       
       // 设置周期性刷新
       this.startPeriodicRefresh();
@@ -706,8 +817,6 @@ export const useNotificationStore = defineStore('notification', {
     
     // 重置状态
     resetState(): void {
-      // 不再需要关闭WebSocket连接，由WebSocketManager统一管理
-      
       // 清除定时器
       if (this.refreshTimer) {
         clearInterval(this.refreshTimer);
@@ -785,14 +894,14 @@ export const useNotificationStore = defineStore('notification', {
     // 此方法仅用于兼容现有代码，不应在新代码中使用
     connectWebSocket(): boolean {
       console.warn('[Notification] connectWebSocket方法已弃用，WebSocket连接现在由WebSocketManager统一管理');
-      return webSocketManager.connect(WebSocketType.NOTIFICATION);
+      return webSocketManager.connect() as any;
     },
     
     // 兼容方法：提供与旧版API兼容的WebSocket关闭方法
     // 此方法仅用于兼容现有代码，不应在新代码中使用
-    closeWebSocket(): boolean {
+    closeWebSocket(): void {
       console.warn('[Notification] closeWebSocket方法已弃用，WebSocket连接现在由WebSocketManager统一管理');
-      return webSocketManager.disconnect(WebSocketType.NOTIFICATION);
+      webSocketManager.disconnect();
     }
   }
 }); 

@@ -11,6 +11,7 @@
 8. [用戶 API](#用戶-api)
 9. [聊天室 API](#聊天室-api)
 10. [在線狀態 API](#在線狀態-api)
+11. [主 WebSocket API](#主-websocket-api)
 
 ## 認證 API
 
@@ -2378,11 +2379,232 @@ fetch('http://localhost:8000/api/v1/chatroom/rooms/1', {
 .catch(error => console.error('Error:', error));
 ```
 
+### 更新聊天室
+
+- **URL**: `/rooms/{room_id}`
+- **方法**: `PATCH`
+- **描述**: 更新聊天室信息
+- **授權**: 需要 Bearer Token（僅聊天室管理員或系統管理員可操作）
+- **路徑參數**:
+  - `room_id`: 聊天室ID
+- **請求體**:
+  ```json
+  {
+    "name": "更新後的名稱",
+    "description": "更新後的描述",
+    "is_public": false
+  }
+  ```
+- **響應**:
+  - 狀態碼: `200 OK`
+  - 返回更新後的聊天室信息
+
+#### 範例用法
+
+```bash
+# 使用 curl 更新聊天室
+curl -X PATCH http://localhost:8000/api/v1/chatroom/rooms/1 \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -d '{
+    "name": "更新後的名稱",
+    "description": "更新後的描述",
+    "is_public": false
+  }'
+```
+
+```javascript
+// 使用 JavaScript/Fetch API 更新聊天室
+fetch('http://localhost:8000/api/v1/chatroom/rooms/1', {
+  method: 'PATCH',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer ' + localStorage.getItem('token')
+  },
+  body: JSON.stringify({
+    name: '更新後的名稱',
+    description: '更新後的描述',
+    is_public: false
+  })
+})
+.then(response => response.json())
+.then(data => console.log(data))
+.catch(error => console.error('Error:', error));
+```
+
+### 加入聊天室
+
+- **URL**: `/rooms/{room_id}/join`
+- **方法**: `POST`
+- **描述**: 加入特定聊天室
+- **授權**: 需要 Bearer Token
+- **路徑參數**:
+  - `room_id`: 聊天室ID
+- **響應**:
+  - 狀態碼: `200 OK`
+  - 返回加入成功信息
+
+#### 範例用法
+
+```bash
+# 使用 curl 加入聊天室
+curl -X POST http://localhost:8000/api/v1/chatroom/rooms/1/join \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```javascript
+// 使用 JavaScript/Fetch API 加入聊天室
+fetch('http://localhost:8000/api/v1/chatroom/rooms/1/join', {
+  method: 'POST',
+  headers: {
+    'Authorization': 'Bearer ' + localStorage.getItem('token')
+  }
+})
+.then(response => response.json())
+.then(data => console.log(data))
+.catch(error => console.error('Error:', error));
+```
+
+### 離開聊天室
+
+- **URL**: `/rooms/{room_id}/leave`
+- **方法**: `POST`
+- **描述**: 離開特定聊天室
+- **授權**: 需要 Bearer Token
+- **路徑參數**:
+  - `room_id`: 聊天室ID
+- **響應**:
+  - 狀態碼: `200 OK`
+  - 返回離開成功信息
+
+#### 範例用法
+
+```bash
+# 使用 curl 離開聊天室
+curl -X POST http://localhost:8000/api/v1/chatroom/rooms/1/leave \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```javascript
+// 使用 JavaScript/Fetch API 離開聊天室
+fetch('http://localhost:8000/api/v1/chatroom/rooms/1/leave', {
+  method: 'POST',
+  headers: {
+    'Authorization': 'Bearer ' + localStorage.getItem('token')
+  }
+})
+.then(response => response.json())
+.then(data => console.log(data))
+.catch(error => console.error('Error:', error));
+```
+
+### 刪除聊天室
+
+- **URL**: `/rooms/{room_id}`
+- **方法**: `DELETE`
+- **描述**: 刪除聊天室（僅限創建者或管理員）
+- **授權**: 需要 Bearer Token
+- **路徑參數**:
+  - `room_id`: 聊天室ID
+- **響應**:
+  - 狀態碼: `200 OK`
+  - 返回刪除成功信息
+
+#### 範例用法
+
+```bash
+# 使用 curl 刪除聊天室
+curl -X DELETE http://localhost:8000/api/v1/chatroom/rooms/1 \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```javascript
+// 使用 JavaScript/Fetch API 刪除聊天室
+fetch('http://localhost:8000/api/v1/chatroom/rooms/1', {
+  method: 'DELETE',
+  headers: {
+    'Authorization': 'Bearer ' + localStorage.getItem('token')
+  }
+})
+.then(response => response.json())
+.then(data => console.log(data))
+.catch(error => console.error('Error:', error));
+```
+
+### 獲取聊天室成員
+
+- **URL**: `/rooms/{room_id}/members`
+- **方法**: `GET`
+- **描述**: 獲取特定聊天室的成員列表
+- **授權**: 需要 Bearer Token
+- **路徑參數**:
+  - `room_id`: 聊天室ID
+- **響應**:
+  - 狀態碼: `200 OK`
+  - 返回成員列表
+
+#### 範例用法
+
+```bash
+# 使用 curl 獲取聊天室成員
+curl -X GET http://localhost:8000/api/v1/chatroom/rooms/1/members \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```javascript
+// 使用 JavaScript/Fetch API 獲取聊天室成員
+fetch('http://localhost:8000/api/v1/chatroom/rooms/1/members', {
+  method: 'GET',
+  headers: {
+    'Authorization': 'Bearer ' + localStorage.getItem('token')
+  }
+})
+.then(response => response.json())
+.then(data => console.log(data))
+.catch(error => console.error('Error:', error));
+```
+
+### 獲取聊天記錄
+
+- **URL**: `/messages/{room_id}`
+- **方法**: `GET`
+- **描述**: 獲取特定聊天室的聊天記錄
+- **授權**: 需要 Bearer Token
+- **路徑參數**:
+  - `room_id`: 聊天室ID
+- **查詢參數**:
+  - `skip`: 跳過的記錄數（默認: 0）
+  - `limit`: 返回的記錄數（默認: 50，最大: 100）
+- **響應**:
+  - 狀態碼: `200 OK`
+  - 返回聊天記錄列表
+
+#### 範例用法
+
+```bash
+# 使用 curl 獲取聊天記錄
+curl -X GET "http://localhost:8000/api/v1/chatroom/messages/1?skip=0&limit=50" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```javascript
+// 使用 JavaScript/Fetch API 獲取聊天記錄
+fetch('http://localhost:8000/api/v1/chatroom/messages/1?skip=0&limit=50', {
+  method: 'GET',
+  headers: {
+    'Authorization': 'Bearer ' + localStorage.getItem('token')
+  }
+})
+.then(response => response.json())
+.then(data => console.log(data))
+.catch(error => console.error('Error:', error));
+```
+
 ### WebSocket 聊天連接
 
 - **URL**: `/ws/user/{token}`
 - **方法**: `WebSocket`
-- **描述**: 建立聊天WebSocket連接
+- **描述**: 建立聊天WebSocket連接（推薦使用主WebSocket連接代替此連接）
 - **授權**: 通過URL參數提供JWT令牌
 - **路徑參數**:
   - `token`: JWT訪問令牌
@@ -2464,7 +2686,7 @@ ws.onopen = function() {
   
   // 設置定時發送心跳包
   setInterval(() => {
-    ws.send(JSON.stringify({ type: 'ping' }));
+    ws.send(JSON.stringify({ type: "ping" }));
   }, 30000);
 };
 
@@ -2579,3 +2801,177 @@ fetch('http://localhost:8000/api/v1/online-status/users/online?user_ids=1,2,3', 
 .then(data => console.log(data))
 .catch(error => console.error('Error:', error));
 ```
+
+### 獲取系統在線狀態統計
+
+- **URL**: `/stats`
+- **方法**: `GET`
+- **描述**: 獲取系統在線狀態統計信息（僅限管理員）
+- **授權**: 需要 Bearer Token（管理員權限）
+- **響應**:
+  - 狀態碼: `200 OK`
+  - 格式:
+    ```json
+    {
+      "total_users": 120,
+      "online_users": 32,
+      "online_percentage": 26.7,
+      "active_rooms": 15,
+      "most_active_rooms": [
+        {"id": 5, "name": "比特幣交易討論", "online_count": 12},
+        {"id": 3, "name": "以太坊資訊", "online_count": 8},
+        {"id": 7, "name": "新幣種分析", "online_count": 6}
+      ]
+    }
+    ```
+
+#### 範例用法
+
+```bash
+# 使用 curl 獲取系統在線狀態統計
+curl -X GET http://localhost:8000/api/v1/online-status/stats \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```javascript
+// 使用 JavaScript/Fetch API 獲取系統在線狀態統計
+fetch('http://localhost:8000/api/v1/online-status/stats', {
+  method: 'GET',
+  headers: {
+    'Authorization': 'Bearer ' + localStorage.getItem('token')
+  }
+})
+.then(response => response.json())
+.then(data => console.log(data))
+.catch(error => console.error('Error:', error));
+```
+
+## 主 WebSocket API
+
+API前綴: `/api/v1`
+
+### 主WebSocket連接
+
+- **URL**: `/ws/main`
+- **方法**: `WebSocket`
+- **描述**: 單一主WebSocket連線，整合聊天、通知、在線狀態功能
+- **授權**: 通過URL查詢參數提供JWT令牌
+- **查詢參數**:
+  - `token`: JWT訪問令牌
+- **特性**:
+  - 整合了聊天室功能
+  - 整合了通知功能
+  - 整合了在線狀態功能
+  - 減少了需要維護的連接數量
+
+#### 範例用法
+
+```javascript
+// 使用 JavaScript WebSocket API 建立主WebSocket連接
+const token = localStorage.getItem('token');
+const ws = new WebSocket(`ws://localhost:8000/api/v1/ws/main?token=${token}`);
+
+ws.onopen = function() {
+  console.log('主WebSocket連接已建立');
+  
+  // 設置定時發送心跳包
+  setInterval(() => {
+    ws.send(JSON.stringify({ type: "ping" }));
+  }, 30000);
+};
+
+ws.onmessage = function(event) {
+  const message = JSON.parse(event.data);
+  console.log('收到消息:', message);
+  
+  // 根據消息類型處理不同業務邏輯
+  switch(message.type) {
+    case 'connected':
+      // 處理連接成功消息
+      console.log(`已連接，用戶ID: ${message.user_id}，加入聊天室: ${message.room_ids.join(',')}`);
+      break;
+      
+    case 'chat/message':
+      // 處理聊天消息
+      displayChatMessage(message);
+      break;
+      
+    case 'chat/join':
+    case 'chat/leave':
+      // 處理用戶加入/離開聊天室
+      updateRoomMembers(message);
+      break;
+      
+    case 'notification':
+      // 處理通知消息
+      showNotification(message);
+      break;
+      
+    case 'pong':
+      // 處理心跳回應
+      break;
+  }
+};
+
+ws.onclose = function(event) {
+  console.log('主WebSocket連接已關閉，代碼:', event.code, '原因:', event.reason);
+  
+  // 可以在這裡實現重連邏輯
+  setTimeout(function() {
+    console.log('嘗試重新連接主WebSocket...');
+    // 重新建立WebSocket連接
+  }, 5000);
+};
+
+// 發送聊天消息
+function sendChatMessage(roomId, content) {
+  const message = {
+    type: 'chat/message',
+    room_id: roomId,
+    content: content
+  };
+  ws.send(JSON.stringify(message));
+}
+
+// 加入聊天室
+function joinChatRoom(roomId) {
+  const message = {
+    type: 'chat/join_room',
+    room_id: roomId
+  };
+  ws.send(JSON.stringify(message));
+}
+
+// 離開聊天室
+function leaveChatRoom(roomId) {
+  const message = {
+    type: 'chat/leave_room',
+    room_id: roomId
+  };
+  ws.send(JSON.stringify(message));
+}
+```
+
+#### 可發送的消息類型
+
+| 類型 | 描述 | 所需參數 |
+|------|------|---------|
+| `ping` | 心跳檢測 | 無 |
+| `chat/message` | 發送聊天消息 | `room_id`, `content` |
+| `chat/join_room` | 加入聊天室 | `room_id` |
+| `chat/leave_room` | 離開聊天室 | `room_id` |
+| `notification` | 發送通知 | `content` |
+| `online/status` | 更新在線狀態 | 無 |
+
+#### 可接收的消息類型
+
+| 類型 | 描述 | 包含參數 |
+|------|------|---------|
+| `connected` | 連接成功 | `user_id`, `room_ids`, `timestamp` |
+| `pong` | 心跳回應 | 無 |
+| `chat/message` | 聊天消息 | `message_id`, `room_id`, `user_id`, `username`, `avatar_url`, `content`, `timestamp` |
+| `chat/join` | 用戶加入聊天室 | `room_id`, `user_id`, `username`, `avatar_url`, `content`, `timestamp` |
+| `chat/leave` | 用戶離開聊天室 | `room_id`, `user_id`, `username`, `content`, `timestamp` |
+| `chat/error` | 聊天錯誤 | `room_id`, `content`, `timestamp` |
+| `notification` | 通知消息 | `content`, `timestamp` |
+| `online_status` | 在線狀態變更 | `user_id`, `status`, `timestamp` |

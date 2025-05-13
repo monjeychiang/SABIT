@@ -3,7 +3,8 @@ import { useAuthStore } from '@/stores/auth';
 
 // 單一主WebSocket連線類型
 export enum WebSocketType {
-  MAIN = 'main'
+  MAIN = 'main',
+  CHATROOM = 'chatroom'
 }
 
 // WebSocket狀態
@@ -12,6 +13,7 @@ interface WebSocketState {
   connected: boolean;
   reconnectAttempts: number;
   heartbeatTimer: number | null;
+  lastPongTime: number; // 新增：上次收到pong的時間
 }
 
 // 主WebSocket配置
@@ -21,6 +23,7 @@ interface MainWebSocketOptions {
   maxReconnectAttempts?: number;
   reconnectFactor?: number;
   maxReconnectDelay?: number;
+  heartbeatTimeout?: number; // 新增：心跳超時時間
   onMessage?: (data: any) => void;
   onConnect?: () => void;
   onDisconnect?: () => void;
@@ -31,7 +34,8 @@ class MainWebSocketManager {
     socket: null,
     connected: false,
     reconnectAttempts: 0,
-    heartbeatTimer: null
+    heartbeatTimer: null,
+    lastPongTime: 0 // 初始化
   };
   private options: MainWebSocketOptions = {};
   private isInitialized = ref(false);
@@ -44,6 +48,7 @@ class MainWebSocketManager {
       maxReconnectAttempts: 10,
       reconnectFactor: 1.5,
       maxReconnectDelay: 30000,
+      heartbeatTimeout: 60000, // 默認60秒心跳超時
       ...options
     };
   }
@@ -77,6 +82,7 @@ class MainWebSocketManager {
           clearTimeout(timeout);
           this.state.connected = true;
           this.state.reconnectAttempts = 0;
+          this.state.lastPongTime = Date.now(); // 重置心跳時間
           this.startHeartbeat();
           if (this.options.onConnect) this.options.onConnect();
           resolve(true);
@@ -91,10 +97,14 @@ class MainWebSocketManager {
             
             // 處理心跳消息
             if (type === 'ping') {
-              this.send({ type: 'pong' });
+              // 立即回應ping，更新心跳時間
+              this.send({ type: 'pong', timestamp: new Date().toISOString() });
+              this.state.lastPongTime = Date.now(); // 更新最後活動時間
               return;
             } else if (type === 'pong') {
-              // 心跳回應，不需處理
+              // 收到服務器的pong回應，更新心跳時間
+              console.debug('[WS:Main] 收到服務器PONG回應');
+              this.state.lastPongTime = Date.now();
               return;
             }
             
@@ -153,7 +163,7 @@ class MainWebSocketManager {
   }
 
   // 斷開主WebSocket
-  public disconnect(): void {
+  public disconnect(type?: WebSocketType): void {
     this.stopHeartbeat();
     if (this.state.socket) {
       try {
@@ -176,15 +186,28 @@ class MainWebSocketManager {
     this.disconnect();
   }
 
-  // 發送消息
-  public send(message: any): boolean {
+  // 發送消息 - 允許一個或兩個參數，兼容舊代碼
+  public send(typeOrMessage: WebSocketType | any, message?: any): boolean {
+    // 處理參數
+    let finalMessage: any;
+    
+    // 如果只有一個參數，則使用該參數作為消息
+    if (message === undefined) {
+      finalMessage = typeOrMessage;
+    } 
+    // 如果有兩個參數，第一個參數是WebSocketType，第二個參數是消息
+    else {
+      finalMessage = message;
+    }
+    
     if (!this.state.socket || this.state.socket.readyState !== WebSocket.OPEN) {
       console.warn('[WebSocket] 嘗試發送消息，但連接未打開');
       return false;
     }
+    
     try {
-      const data = typeof message === 'string' ? message : JSON.stringify(message);
-      console.log('[WebSocket] 發送消息:', typeof message === 'string' ? message : JSON.parse(data));
+      const data = typeof finalMessage === 'string' ? finalMessage : JSON.stringify(finalMessage);
+      console.log('[WebSocket] 發送消息:', typeof finalMessage === 'string' ? finalMessage : JSON.parse(data));
       this.state.socket.send(data);
       return true;
     } catch (error) {
@@ -197,12 +220,35 @@ class MainWebSocketManager {
   private startHeartbeat(): void {
     this.stopHeartbeat();
     if (!this.options.heartbeatInterval) return;
+    
+    // 設置初始心跳時間
+    this.state.lastPongTime = Date.now();
+    
     this.state.heartbeatTimer = window.setInterval(() => {
-      if (this.state.socket && this.state.socket.readyState === WebSocket.OPEN) {
-        this.state.socket.send(JSON.stringify({ type: 'ping' }));
+      if (!this.state.socket || this.state.socket.readyState !== WebSocket.OPEN) {
+        return;
       }
+      
+      const currentTime = Date.now();
+      const heartbeatTimeout = this.options.heartbeatTimeout || 60000;
+      
+      // 檢查是否超時
+      if (currentTime - this.state.lastPongTime > heartbeatTimeout) {
+        console.warn('[WebSocket] 心跳超時，重新連接...');
+        this.disconnect();
+        this.connect();
+        return;
+      }
+      
+      // 發送ping
+      console.debug('[WebSocket] 發送PING');
+      this.state.socket.send(JSON.stringify({ 
+        type: 'ping',
+        timestamp: new Date().toISOString()
+      }));
     }, this.options.heartbeatInterval);
   }
+  
   private stopHeartbeat(): void {
     if (this.state.heartbeatTimer) {
       clearInterval(this.state.heartbeatTimer);
@@ -220,7 +266,7 @@ class MainWebSocketManager {
       this.connect();
     }, delay);
   }
-  public isConnected(): boolean {
+  public isConnected(type?: WebSocketType): boolean {
     return this.state.connected;
   }
   public get initialized() {

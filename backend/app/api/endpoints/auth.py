@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Form, Body, Response
 from sqlalchemy.orm import Session
 from typing import Any, List, Dict
-from datetime import timedelta
+from datetime import timedelta, datetime
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError
 import logging
@@ -11,6 +11,9 @@ import base64
 from urllib.parse import quote, urlencode
 import secrets
 import os
+import httpx
+import re
+import asyncio
 
 from ...db.database import get_db
 from ...db.models import User, get_china_time
@@ -35,12 +38,19 @@ from ...core.security import (
     get_current_active_user
 )
 from ...core.config import settings
+from ...schemas.event import UserActionEvent, EventType
+
+# 從事件管理器導入
+from ...core.event_manager import event_manager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # 定義過期時間（分鐘）
 EXTENDED_TOKEN_EXPIRE_MINUTES = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7")) * 24 * 60
+
+# 設定登入事件延遲處理時間(秒)，使用配置值
+LOGIN_EVENT_DELAY_SECONDS = settings.LOGIN_EVENT_DELAY_SECONDS
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register_user(*, db: Session = Depends(get_db), user_in: UserCreate) -> Any:
@@ -111,7 +121,7 @@ def register_user(*, db: Session = Depends(get_db), user_in: UserCreate) -> Any:
     return db_user
 
 @router.post("/login", response_model=Token)
-def login(
+async def login(
     request: Request,
     db: Session = Depends(get_db),
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -189,6 +199,54 @@ def login(
         
         logger.info(f"Login successful: {form_data.username}, IP: {client_ip}, Extended session: {keep_logged_in}")
         
+        # 獲取用戶代理信息
+        user_agent = request.headers.get("user-agent", "")
+        
+        # 創建登入成功事件
+        try:
+            # 提取設備信息
+            device_info = parse_user_agent(user_agent)
+            
+            # 創建登入成功事件
+            login_event = UserActionEvent(
+                event_type=EventType.LOGIN_SUCCESS,
+                source="auth_service",
+                user_ids=[user.id],
+                action_type="login",
+                device_info=device_info,
+                ip_address=client_ip,
+                location="未知位置",  # 可以在這裡添加地理位置查詢服務
+                data={
+                    "username": user.username,
+                    "login_time": datetime.now().isoformat(),
+                    "keep_logged_in": keep_logged_in,
+                    "user_agent": user_agent
+                }
+            )
+            
+            # 實現延遲處理登入事件
+            async def delayed_event_processing():
+                logger.info(f"延遲 {LOGIN_EVENT_DELAY_SECONDS} 秒後處理登入成功事件，用戶: {user.username}")
+                await asyncio.sleep(LOGIN_EVENT_DELAY_SECONDS)
+                try:
+                    # 創建新的數據庫會話，因為原會話可能已關閉
+                    from ...db.database import SessionLocal
+                    async_db = SessionLocal()
+                    try:
+                        await event_manager.process_event(login_event, async_db)
+                        logger.info(f"成功處理延遲的登入事件: {user.username}")
+                    finally:
+                        async_db.close()
+                except Exception as delayed_err:
+                    logger.error(f"延遲處理登入事件時發生錯誤: {str(delayed_err)}")
+            
+            # 創建延遲任務但不等待完成
+            asyncio.create_task(delayed_event_processing())
+            logger.info(f"已安排延遲處理登入事件: {user.username}")
+        except Exception as event_error:
+            # 記錄錯誤但不中斷登入流程
+            logger.error(f"設置延遲登入事件失敗: {str(event_error)}")
+        
         return {
             "access_token": access_token, 
             "token_type": "bearer",
@@ -196,6 +254,7 @@ def login(
             "expires_in": access_token_expires.total_seconds()
         }
     except HTTPException:
+        # 直接重新拋出HTTP異常
         raise
     except Exception as e:
         logger.error(f"Error during login: {str(e)}", exc_info=True)
@@ -282,6 +341,53 @@ def login_simple(
         db.commit()
         
         logger.info(f"Login successful: {username}, IP: {client_ip}, Extended session: {keep_logged_in}")
+        
+        # 獲取用戶代理信息
+        user_agent = request.headers.get("user-agent", "")
+        
+        # 創建並處理登入成功事件
+        try:
+            # 提取設備信息
+            device_info = parse_user_agent(user_agent)
+            
+            # 創建登入成功事件
+            login_event = UserActionEvent(
+                event_type=EventType.LOGIN_SUCCESS,
+                source="auth_service",
+                user_ids=[user.id],
+                action_type="login",
+                device_info=device_info,
+                ip_address=client_ip,
+                location="未知位置",
+                data={
+                    "username": user.username,
+                    "login_time": datetime.now().isoformat(),
+                    "keep_logged_in": keep_logged_in,
+                    "user_agent": user_agent
+                }
+            )
+            
+            # 實現延遲處理登入事件
+            async def delayed_event_processing():
+                await asyncio.sleep(LOGIN_EVENT_DELAY_SECONDS)
+                try:
+                    # 創建新的數據庫會話
+                    from ...db.database import SessionLocal
+                    async_db = SessionLocal()
+                    try:
+                        await event_manager.process_event(login_event, async_db)
+                        logger.info(f"成功處理延遲的登入事件: {username}")
+                    finally:
+                        async_db.close()
+                except Exception as delayed_err:
+                    logger.error(f"延遲處理登入事件時發生錯誤: {str(delayed_err)}")
+            
+            # 創建任務但不等待完成
+            asyncio.create_task(delayed_event_processing())
+            logger.info(f"已安排延遲處理登入事件: {username}")
+        except Exception as event_error:
+            # 記錄錯誤但不中斷登入流程
+            logger.error(f"設置延遲登入事件失敗: {str(event_error)}")
         
         # 返回token
         return {
@@ -829,6 +935,56 @@ async def google_callback(
                 # 如果保持登入，刷新令牌使用7天有效期
                 refresh_token_expires_in = int(timedelta(days=int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))).total_seconds())
             
+            # 獲取用戶代理和IP
+            user_agent = request.headers.get("user-agent", "")
+            client_ip = request.client.host
+            
+            # 創建登入成功事件（Google登入）
+            try:
+                # 提取設備信息
+                device_info = parse_user_agent(user_agent)
+                
+                # 創建登入成功事件
+                login_event = UserActionEvent(
+                    event_type=EventType.LOGIN_SUCCESS,
+                    source="google_oauth_service",
+                    user_ids=[user.id],
+                    action_type="google_login",
+                    device_info=device_info,
+                    ip_address=client_ip,
+                    location="未知位置",
+                    data={
+                        "username": user.username,
+                        "login_time": datetime.now().isoformat(),
+                        "keep_logged_in": keep_logged_in,
+                        "user_agent": user_agent,
+                        "login_method": "google"
+                    }
+                )
+                
+                # 實現延遲處理Google登入事件
+                async def delayed_google_event_processing():
+                    logger.info(f"延遲 {LOGIN_EVENT_DELAY_SECONDS} 秒後處理Google登入成功事件，用戶: {user.username}")
+                    await asyncio.sleep(LOGIN_EVENT_DELAY_SECONDS)
+                    try:
+                        # 創建新的數據庫會話
+                        from ...db.database import SessionLocal
+                        async_db = SessionLocal()
+                        try:
+                            await event_manager.process_event(login_event, async_db)
+                            logger.info(f"成功處理延遲的Google登入事件: {user.username}")
+                        finally:
+                            async_db.close()
+                    except Exception as delayed_err:
+                        logger.error(f"延遲處理Google登入事件時發生錯誤: {str(delayed_err)}")
+                
+                # 創建任務但不等待完成
+                asyncio.create_task(delayed_google_event_processing())
+                logger.info(f"已安排延遲處理Google登入事件: {user.username}")
+            except Exception as event_error:
+                # 記錄錯誤但不中斷登入流程
+                logger.error(f"設置延遲Google登入事件失敗: {str(event_error)}")
+            
             # 構建重定向 URL
             redirect_params = {
                 "access_token": access_token,
@@ -907,3 +1063,52 @@ async def get_auth_config():
         "cookie_domain": settings.COOKIE_DOMAIN,
         "cookie_samesite": settings.COOKIE_SAMESITE,
     } 
+
+# 添加一個簡單的User Agent解析函數
+def parse_user_agent(user_agent_string: str) -> Dict[str, str]:
+    """簡單解析User Agent字符串獲取設備信息"""
+    device_info = {
+        "name": "未知設備",
+        "type": "unknown",
+        "os": "未知系統"
+    }
+    
+    ua = user_agent_string.lower()
+    
+    # 檢測設備類型
+    if "mobile" in ua or "android" in ua or "iphone" in ua or "ipad" in ua:
+        device_info["type"] = "mobile"
+        
+        if "iphone" in ua or "ipad" in ua or "ios" in ua:
+            device_info["name"] = "iPhone/iPad"
+            device_info["os"] = "iOS"
+        elif "android" in ua:
+            device_info["name"] = "Android裝置"
+            device_info["os"] = "Android"
+    else:
+        device_info["type"] = "desktop"
+        
+        if "windows" in ua:
+            device_info["name"] = "Windows電腦"
+            device_info["os"] = "Windows"
+        elif "macintosh" in ua or "mac os" in ua:
+            device_info["name"] = "Mac電腦"
+            device_info["os"] = "macOS"
+        elif "linux" in ua:
+            device_info["name"] = "Linux電腦"
+            device_info["os"] = "Linux"
+    
+    # 檢測瀏覽器
+    browser = "未知瀏覽器"
+    if "chrome" in ua and "edg" not in ua:
+        browser = "Chrome"
+    elif "firefox" in ua:
+        browser = "Firefox"
+    elif "safari" in ua and "chrome" not in ua:
+        browser = "Safari"
+    elif "edg" in ua:
+        browser = "Edge"
+    
+    device_info["browser"] = browser
+    
+    return device_info 

@@ -11,6 +11,7 @@ class NotificationBase(BaseModel):
 class NotificationCreate(NotificationBase):
     is_global: bool = Field(False, title="是否全局通知", description="如果为True，则发送给所有用户")
     user_ids: Optional[List[int]] = Field(None, title="用户ID列表", description="要发送通知的特定用户ID列表，如果is_global为True则忽略")
+    template_variables: Optional[Dict[str, Any]] = Field(None, title="模板變量", description="用於替換通知消息中的變量，格式為 {變量名: 值}")
 
 class NotificationUpdate(BaseModel):
     read: bool = Field(..., title="是否已读", description="设置通知为已读或未读")

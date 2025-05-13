@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, Query
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
+import asyncio
+import time
 
 from ...db.database import get_db
 from ...db.models.chatroom import ChatRoom, ChatRoomMember, ChatRoomMessage
@@ -10,6 +12,7 @@ from ...core.security import verify_token_ws
 from .chatroom import manager, cleanup_messages
 from ...core.main_ws_manager import main_ws_manager
 from ...core.online_status_manager import online_status_manager
+from ...core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -65,17 +68,39 @@ async def main_websocket_endpoint(
         "timestamp": datetime.now().isoformat()
     })
 
+    # 追蹤最後活動時間（僅用於日誌記錄，不主動斷開）
+    last_activity_time = time.time()
+
     try:
         while True:
             try:
                 data = await websocket.receive_text()
+                # 更新最後活動時間
+                current_time = time.time()
+                time_since_last = current_time - last_activity_time
+                last_activity_time = current_time
+                
+                # 如果超過30秒沒活動，記錄一下（但不斷開連接）
+                if time_since_last > 30:
+                    # 刪除DEBUG日誌記錄
+                    # logger.debug(f"[MainWS] 用戶 {user.id} 恢復活動，之前 {time_since_last:.1f} 秒無活動")
+                    pass
+                
                 message_data = json.loads(data)
                 msg_type = message_data.get("type")
 
                 # 處理心跳
                 if msg_type == "ping":
                     logger.debug(f"PING - user:{user.id}")
-                    await websocket.send_json({"type": "pong"})
+                    # 同時更新在線狀態管理器中的最後活動時間
+                    online_status_manager.update_user_active_time(user.id)
+                    await websocket.send_json({
+                        "type": "pong", 
+                        "timestamp": datetime.now().isoformat()
+                    })
+                    continue
+                elif msg_type == "pong":
+                    logger.debug(f"PONG - user:{user.id}")
                     continue
 
                 # 處理聊天訊息
@@ -243,6 +268,11 @@ async def main_websocket_endpoint(
                 logger.error(f"[MainWS] 處理消息失敗: {str(e)}")
                 break
     except WebSocketDisconnect:
+        logger.info(f"[MainWS] 用戶 {user.id} 的WebSocket連接已斷開")
+    except Exception as e:
+        logger.error(f"[MainWS] 連線處理失敗: {str(e)}")
+    finally:
+        # 清理連接
         main_ws_manager.disconnect(user.id)
         manager.disconnect(user.id)
         
@@ -253,8 +283,4 @@ async def main_websocket_endpoint(
         except Exception as e:
             logger.error(f"[MainWS] 更新在線狀態管理器（斷開連接）失敗: {str(e)}")
             
-        await manager.broadcast_user_status_change(user.id, False)
-    except Exception as e:
-        logger.error(f"[MainWS] 連線處理失敗: {str(e)}")
-        main_ws_manager.disconnect(user.id)
-        manager.disconnect(user.id) 
+        await manager.broadcast_user_status_change(user.id, False) 

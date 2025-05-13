@@ -22,15 +22,15 @@ class MainWSManager:
         if ws:
             try:
                 await ws.send_json(message)
-                logger.debug(f"[MainWS] 成功發送消息到用戶 {user_id}: 類型={message.get('type')}")
+                logger.debug(f"[MainWS] 成功發送訊息到用戶 {user_id}: 類型={message.get('type')}")
             except Exception as e:
-                logger.error(f"[MainWS] 向用戶 {user_id} 發送消息失敗: {str(e)}")
+                logger.error(f"[MainWS] 向用戶 {user_id} 發送訊息失敗: {str(e)}")
                 self.disconnect(user_id)
         else:
-            logger.warning(f"[MainWS] 嘗試發送消息到不存在的連接, 用戶ID: {user_id}")
+            logger.warning(f"[MainWS] 嘗試發送訊息到不存在的連接, 用戶ID: {user_id}")
 
     async def broadcast(self, message: Dict[str, Any]):
-        logger.debug(f"[MainWS] 廣播消息給所有用戶: 類型={message.get('type')}, 活動連接數={len(self.active_connections)}")
+        logger.debug(f"[MainWS] 廣播訊息給所有用戶: 類型={message.get('type')}, 活動連接數={len(self.active_connections)}")
         for user_id in list(self.active_connections.keys()):
             await self.send_to_user(user_id, message)
 

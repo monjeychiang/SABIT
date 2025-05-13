@@ -58,6 +58,7 @@ declare module 'vue' {
     MessageItem: typeof import('./src/components/MessageItem.vue')['default']
     Modal: typeof import('./src/components/Modal.vue')['default']
     NavBar: typeof import('./src/components/NavBar.vue')['default']
+    NotificationPopover: typeof import('./src/components/NotificationPopover.vue')['default']
     OnlineStatusIndicator: typeof import('./src/components/OnlineStatusIndicator.vue')['default']
     OnlineUsersWidget: typeof import('./src/components/OnlineUsersWidget.vue')['default']
     PageHeader: typeof import('./src/components/PageHeader.vue')['default']

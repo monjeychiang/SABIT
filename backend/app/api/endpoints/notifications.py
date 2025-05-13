@@ -399,6 +399,11 @@ async def broadcast_notification(notification: Notification, db: Session) -> Non
     將新創建的通知通過主 WebSocket 以 type: "notification" 推送給相關用戶。
     """
     try:
+        # 檢查消息中是否有未替換的模板變量
+        message_text = notification.message
+        if "{" in message_text and "}" in message_text:
+            logger.warning(f"檢測到通知消息中可能包含未替換的模板變量: {message_text}")
+        
         notification_data = {
             "id": notification.id,
             "title": notification.title,
@@ -409,16 +414,52 @@ async def broadcast_notification(notification: Notification, db: Session) -> Non
             "created_at": notification.created_at.isoformat(),
             "user_id": notification.user_id
         }
+        
+        # 創建標準格式的消息，使用payload和notification兩個字段都包含通知數據
+        # 這樣前端無論使用哪個字段都能獲取到通知
         message = {
             "type": "notification",
-            "notification": notification_data
+            "payload": notification_data,
+            "notification": notification_data  # 保留notification字段以兼容舊代碼
         }
-        # 這裡假設有一個全域 WebSocket 管理器，能夠推播到所有主連線
-        # 例如: main_ws_manager.broadcast_to_user(user_id, message)
+        
+        # 根據通知類型選擇廣播方式
         if notification.is_global:
-            await manager.broadcast_global(message)
+            logger.info(f"開始廣播全局通知: ID={notification.id}, 標題={notification.title}")
+            # 嘗試使用main_ws_manager廣播
+            try:
+                from ...core.main_ws_manager import main_ws_manager
+                await main_ws_manager.broadcast(message)
+                logger.info(f"通過主WebSocket管理器成功廣播全局通知，ID: {notification.id}")
+                return
+            except Exception as e:
+                logger.warning(f"無法通過主WebSocket管理器廣播全局通知: {str(e)}，嘗試使用聊天室管理器")
+            
+            # 如果主WebSocket管理器失敗，嘗試使用聊天室管理器
+            try:
+                await manager.broadcast_global(message)
+                logger.info(f"通過聊天室管理器成功廣播全局通知，ID: {notification.id}")
+            except Exception as e:
+                logger.error(f"廣播全局通知時出錯: {str(e)}")
+                raise
+                
         elif notification.user_id:
-            await manager.broadcast_to_user(notification.user_id, message)
+            logger.info(f"開始廣播用戶特定通知: ID={notification.id}, 用戶ID={notification.user_id}")
+            # 嘗試使用main_ws_manager發送給特定用戶
+            try:
+                from ...core.main_ws_manager import main_ws_manager
+                await main_ws_manager.send_to_user(notification.user_id, message)
+                logger.info(f"通過主WebSocket管理器成功發送通知給用戶 {notification.user_id}，通知ID: {notification.id}")
+                return
+            except Exception as e:
+                logger.warning(f"無法通過主WebSocket管理器發送通知給用戶 {notification.user_id}: {str(e)}，嘗試使用聊天室管理器")
+            
+            # 如果主WebSocket管理器失敗，嘗試使用聊天室管理器
+            try:
+                await manager.broadcast_to_user(notification.user_id, message)
+                logger.info(f"通過聊天室管理器成功發送通知給用戶 {notification.user_id}，通知ID: {notification.id}")
+            except Exception as e:
+                logger.error(f"發送通知給用戶 {notification.user_id} 時出錯: {str(e)}")
     except Exception as e:
         logger.error(f"廣播通知時出錯: {str(e)}")
 
@@ -446,11 +487,38 @@ async def create_and_broadcast_notification(
     created_notifications = []
     
     try:
+        # 處理模板變量
+        message = notification_data.message
+        title = notification_data.title
+        
+        # 檢查消息中是否有未替換的模板變量
+        if "{" in message and "}" in message:
+            # 如果存在template_variables字段，則進行替換
+            template_variables = getattr(notification_data, 'template_variables', None)
+            if template_variables and isinstance(template_variables, dict):
+                logger.info(f"嘗試使用變量替換模板: {template_variables}")
+                try:
+                    # 替換消息中的變量
+                    for key, value in template_variables.items():
+                        placeholder = "{" + key + "}"
+                        message = message.replace(placeholder, str(value))
+                    
+                    # 替換標題中的變量
+                    for key, value in template_variables.items():
+                        placeholder = "{" + key + "}"
+                        title = title.replace(placeholder, str(value))
+                    
+                    logger.info("模板變量替換完成")
+                except Exception as e:
+                    logger.error(f"替換模板變量時出錯: {str(e)}")
+            else:
+                logger.warning(f"檢測到未替換的模板變量，但未提供template_variables: {message}")
+        
         if notification_data.is_global:
             # 創建全局通知
             db_notification = Notification(
-                title=notification_data.title,
-                message=notification_data.message,
+                title=title,
+                message=message,
                 is_global=True,
                 read=False,
                 notification_type=notification_data.notification_type
@@ -469,8 +537,8 @@ async def create_and_broadcast_notification(
                 user = db.query(User).filter(User.id == user_id).first()
                 if user:
                     db_notification = Notification(
-                        title=notification_data.title,
-                        message=notification_data.message,
+                        title=title,
+                        message=message,
                         is_global=False,
                         user_id=user_id,
                         read=False,

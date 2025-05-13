@@ -17,7 +17,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted } from 'vue'
+
+// 全局頭像URL緩存，用於減少重複請求
+const globalAvatarCache = new Map();
 
 const props = defineProps({
   username: {
@@ -36,10 +39,10 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
-  // 添加新的属性，控制是否禁止缓存
+  // 控制是否禁止緩存
   noCache: {
     type: Boolean,
-    default: true
+    default: false  // 改為默認啟用緩存
   }
 })
 
@@ -50,40 +53,69 @@ const userInitial = computed(() => {
   return props.username.charAt(0).toUpperCase()
 })
 
-// 生成一个随机的缓存破坏值
-const cacheBreaker = ref(Date.now())
+// 緩存破壞時間戳，每個應用生命週期只需要一個
+const globalCacheBreaker = ref(Date.now());
 
-// 格式化头像URL，确保包含完整的服务器地址，并添加时间戳防止缓存
+// 格式化頭像URL，確保包含完整的服務器地址，並添加時間戳防止緩存
 const formatAvatarUrl = (url: string) => {
   if (!url) return '';
   
-  // 处理基础URL
-  let formattedUrl = url;
+  // 生成一個可緩存的關鍵URL（沒有時間戳參數）
+  let baseUrl = url;
   
-  // 如果已经是完整URL，直接使用
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    formattedUrl = url;
-  } else {
-    // 获取API基础URL
+  // 如果已經是完整URL，直接使用
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    // 獲取API基礎URL
     const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
     
-    // 如果是相对路径，添加后端服务器地址
+    // 如果是相對路徑，添加後端服務器地址
     if (url.startsWith('/')) {
-      formattedUrl = `${apiBaseUrl}${url}`;
+      baseUrl = `${apiBaseUrl}${url}`;
     } else {
-      // 其他情况，假设是相对路径但没有开头的斜杠
-      formattedUrl = `${apiBaseUrl}/${url}`;
+      // 其他情況，假設是相對路徑但沒有開頭的斜杠
+      baseUrl = `${apiBaseUrl}/${url}`;
     }
   }
   
-  // 添加时间戳参数防止缓存 (只在启用 noCache 时)
+  // 檢查全局緩存中是否已有此URL
+  if (!props.noCache && globalAvatarCache.has(baseUrl)) {
+    return globalAvatarCache.get(baseUrl);
+  }
+  
+  // 需要添加時間戳時才添加（僅在noCache=true時）
+  let formattedUrl = baseUrl;
   if (props.noCache) {
-    const separator = formattedUrl.includes('?') ? '&' : '?';
-    formattedUrl = `${formattedUrl}${separator}_t=${cacheBreaker.value}`;
+    const separator = baseUrl.includes('?') ? '&' : '?';
+    formattedUrl = `${baseUrl}${separator}_t=${globalCacheBreaker.value}`;
+  }
+  
+  // 保存到緩存中
+  if (!props.noCache) {
+    globalAvatarCache.set(baseUrl, formattedUrl);
   }
   
   return formattedUrl;
 }
+
+// 組件掛載時清理過期的緩存項
+onMounted(() => {
+  // 防止緩存過大，每10分鐘清理一次
+  const CACHE_CLEANUP_INTERVAL = 10 * 60 * 1000; // 10分鐘
+  
+  const cleanup = () => {
+    // 緩存不超過100項
+    if (globalAvatarCache.size > 100) {
+      console.log('[頭像] 清理過大的頭像緩存', globalAvatarCache.size);
+      globalAvatarCache.clear();
+    }
+  };
+  
+  // 定期清理過大的緩存
+  const interval = setInterval(cleanup, CACHE_CLEANUP_INTERVAL);
+  
+  // 組件卸載時清除計時器
+  return () => clearInterval(interval);
+})
 </script>
 
 <style scoped>
@@ -94,7 +126,7 @@ const formatAvatarUrl = (url: string) => {
   overflow: hidden;
   border-radius: 50%;
   position: relative;
-  /* 确保组件始终保持正方形比例 */
+  /* 確保組件始終保持正方形比例 */
   aspect-ratio: 1/1;
 }
 
@@ -113,9 +145,9 @@ const formatAvatarUrl = (url: string) => {
   height: 100%;
   object-fit: cover;
   border-radius: 50%;
-  /* 移除可能限制GIF动画的属性 */
+  /* 移除可能限制GIF動畫的屬性 */
   image-rendering: auto;
-  transform: translateZ(0); /* 开启GPU加速，提升GIF性能 */
+  transform: translateZ(0); /* 開啟GPU加速，提升GIF性能 */
 }
 
 .avatar-placeholder {

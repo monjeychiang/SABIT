@@ -745,6 +745,7 @@
                     :username="userDetails.user_info.username"
                     :avatar-url="userDetails.user_info.avatar_url"
                     size="medium"
+                    :no-cache="false"
                   />
                   <h3 class="user-fullname">
                     {{ userDetails.user_info.full_name || userDetails.user_info.username }}

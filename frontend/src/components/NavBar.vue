@@ -93,6 +93,7 @@
               :username="username"
               :avatar-url="avatarUrl"
               size="medium"
+              :no-cache="false"
             />
             <span class="username">{{ fullName || username }}</span>
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">

@@ -85,16 +85,31 @@
           <div v-if="currentRoom && !currentRoom.is_member" class="not-member-container">
             <div class="not-member-message">
               <p>您尚未加入此聊天室，无法查看消息</p>
-              <button @click="handleJoinRoom(currentRoomId)" class="join-room-now-button">
-                加入此聊天室
+              <button @click="handleJoinRoom(currentRoomId)" class="join-room-now-button" :disabled="isLoadingInitialMessages">
+                <span v-if="isLoadingInitialMessages">
+                  <div class="button-loader"></div>
+                  正在加入...
+                </span>
+                <span v-else>加入此聊天室</span>
               </button>
             </div>
           </div>
           
           <!-- 聊天消息区域 - 仅成员可见 -->
           <div v-else class="chat-messages" ref="messagesContainer">
+            <!-- 加載動畫 - 初始載入消息時顯示 -->
+            <div v-if="isLoadingInitialMessages" class="messages-loading-overlay">
+              <div class="loader"></div>
+            </div>
+
+            <!-- 加載更多消息提示 - 滾動載入更多時顯示 -->
+            <div v-if="isLoadingMore && !isLoadingInitialMessages" class="loading-more-messages">
+              <div class="loading-spinner"></div>
+              <span>載入更多訊息...</span>
+            </div>
+            
             <!-- 欢迎消息 -->
-            <div class="message system" v-if="currentRoomMessages.length === 0">
+            <div class="message system" v-if="currentRoomMessages.length === 0 && !isLoadingInitialMessages">
               <div class="message-content">
                 <p>👋 歡迎來到 {{ getCurrentRoomName() }}！</p>
                 <span class="message-time">{{ formatTime(new Date()) }}</span>
@@ -130,7 +145,7 @@
                       :username="message.username"
                       :avatar-url="message.avatar" 
                       size="medium"
-                      :no-cache="true"
+                      :no-cache="false"
                     />
                   </div>
                   <div class="message-wrapper">
@@ -273,8 +288,12 @@
             v-if="!room.is_member" 
             class="join-button"
             @click.stop="handleJoinRoom(room.id)"
+            :disabled="isLoadingInitialMessages"
           >
-            加入
+            <span v-if="isLoadingInitialMessages && currentRoomId === room.id">
+              <div class="small-loader"></div>
+            </span>
+            <span v-else>加入</span>
           </button>
           <div v-else class="joined-indicator">已加入</div>
         </div>
@@ -509,7 +528,8 @@ const publicRooms = ref([]) // 公共聊天室列表
 const roomNameInput = ref(null) // 聊天室名称输入框引用
 const currentRoomAnnouncement = ref('') // 当前聊天室公告
 
-// 加載更多消息相關狀態
+// 消息加載相關狀態
+const isLoadingInitialMessages = ref(false); // 添加新狀態：初始加載消息狀態
 const isLoadingMore = ref(false);
 const scrollPosition = ref(null);
 const hasMoreMessagesToLoad = ref(true);
@@ -593,31 +613,41 @@ const getCurrentRoomName = () => {
 const selectRoom = async (roomId) => {
   if (currentRoomId.value === roomId) return
   
-  // 设置当前聊天室ID并加载消息
+  // 设置当前聊天室ID
   currentRoomId.value = roomId
   
-  // 加載聊天室消息
-  await chatroomStore.loadRoomMessages(roomId)
+  // 設置加載狀態
+  isLoadingInitialMessages.value = true;
   
-  // 标记该聊天室所有消息为已读
-  chatroomStore.markRoomAsRead(roomId)
-  
-  // 获取当前聊天室信息，包括公告
   try {
-    const response = await axios.get(`/api/v1/chatroom/rooms/${roomId}`)
-    if (response.data && response.data.announcement) {
-      currentRoomAnnouncement.value = response.data.announcement
-    } else {
+    // 加載聊天室消息
+    await chatroomStore.loadRoomMessages(roomId)
+    
+    // 标记该聊天室所有消息为已读
+    chatroomStore.markRoomAsRead(roomId)
+    
+    // 获取当前聊天室信息，包括公告
+    try {
+      const response = await axios.get(`/api/v1/chatroom/rooms/${roomId}`)
+      if (response.data && response.data.announcement) {
+        currentRoomAnnouncement.value = response.data.announcement
+      } else {
+        currentRoomAnnouncement.value = ''
+      }
+    } catch (error) {
+      console.error('获取聊天室详情失败:', error)
       currentRoomAnnouncement.value = ''
     }
   } catch (error) {
-    console.error('获取聊天室详情失败:', error)
-    currentRoomAnnouncement.value = ''
+    console.error('載入聊天室訊息失敗:', error)
+  } finally {
+    // 重置加載狀態
+    isLoadingInitialMessages.value = false;
+    
+    // 滚动到底部
+    await nextTick()
+    scrollToBottom()
   }
-  
-  // 滚动到底部
-  await nextTick()
-  scrollToBottom()
 }
 
 // 發送消息
@@ -705,22 +735,27 @@ const confirmDeleteRoom = () => {
   showDeleteConfirmModal.value = true
 }
 
-// 处理加入聊天室
+// 処理加入聊天室
 const handleJoinRoom = async (roomId) => {
   try {
+    // 設置加載狀態
+    isLoadingInitialMessages.value = true;
+    
     const success = await chatroomStore.joinRoom(roomId)
     if (success) {
-      // 如果模态框是打开的，关闭它
-      showJoinRoomModal.value = false
+      // 如果模態框是打開的，關閉它
+      showJoinRoomModal.value = false;
       
       // 刷新房间列表
-      await chatroomStore.fetchUserRooms()
+      await chatroomStore.fetchUserRooms();
       
-      // 选择刚加入的房间
-      selectRoom(roomId)
-      }
-    } catch (error) {
-    console.error('加入聊天室失败:', error)
+      // 選擇剛加入的房間 - 不需要再設置加載狀態，因為 selectRoom 已有處理
+      await selectRoom(roomId);
+    }
+  } catch (error) {
+    console.error('加入聊天室失敗:', error);
+  } finally {
+    isLoadingInitialMessages.value = false;
   }
 }
 
@@ -925,18 +960,28 @@ onMounted(async () => {
       
       // 如果有聊天室，選擇第一個
       if (chatroomStore.rooms.length > 0) {
-        selectRoom(chatroomStore.rooms[0].id)
+        isLoadingInitialMessages.value = true;
+        try {
+          await selectRoom(chatroomStore.rooms[0].id)
+        } finally {
+          isLoadingInitialMessages.value = false;
+        }
       }
     } else if (currentRoomId.value) {
       // 如果已有當前聊天室，加載其消息和公告
-      await chatroomStore.loadRoomMessages(currentRoomId.value)
+      isLoadingInitialMessages.value = true;
       try {
-        const response = await axios.get(`/api/v1/chatroom/rooms/${currentRoomId.value}`)
-        if (response.data && response.data.announcement) {
-          currentRoomAnnouncement.value = response.data.announcement
+        await chatroomStore.loadRoomMessages(currentRoomId.value)
+        try {
+          const response = await axios.get(`/api/v1/chatroom/rooms/${currentRoomId.value}`)
+          if (response.data && response.data.announcement) {
+            currentRoomAnnouncement.value = response.data.announcement
+          }
+        } catch (error) {
+          console.error('初始化時獲取聊天室詳情失敗:', error)
         }
-      } catch (error) {
-        console.error('初始化時獲取聊天室詳情失敗:', error)
+      } finally {
+        isLoadingInitialMessages.value = false;
       }
     }
   }
@@ -2913,5 +2958,105 @@ const handleMessagesScroll = async () => {
   max-width: 30px !important;
   max-height: 30px !important;
   aspect-ratio: 1/1;
+}
+
+/* 訊息加載動畫容器 */
+.messages-loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: rgba(255, 255, 255, 0.8);
+  z-index: 10;
+  backdrop-filter: blur(2px);
+}
+
+/* 深色模式樣式 */
+:root.dark .messages-loading-overlay,
+:root[data-theme='dark'] .messages-loading-overlay {
+  background-color: rgba(26, 26, 26, 0.8);
+}
+
+:root.dark .loading-text,
+:root[data-theme='dark'] .loading-text {
+  color: #aaaaaa;
+}
+
+/* 加載動畫 - 使用與登入頁面相同的三點加載動畫 */
+.loader {
+  width: 45px;
+  aspect-ratio: .75;
+  --c: no-repeat linear-gradient(var(--primary-color, #f0b90b) 0 0);
+  background: 
+    var(--c) 0%   50%,
+    var(--c) 50%  50%,
+    var(--c) 100% 50%;
+  animation: l7 1s infinite linear alternate;
+}
+
+@keyframes l7 {
+  0%  {background-size: 20% 50% ,20% 50% ,20% 50% }
+  20% {background-size: 20% 20% ,20% 50% ,20% 50% }
+  40% {background-size: 20% 100%,20% 20% ,20% 50% }
+  60% {background-size: 20% 50% ,20% 100%,20% 20% }
+  80% {background-size: 20% 50% ,20% 50% ,20% 100%}
+  100%{background-size: 20% 50% ,20% 50% ,20% 50% }
+}
+
+/* 加載文字樣式 */
+.loading-text {
+  margin-top: 20px;
+  font-size: 14px;
+  color: var(--text-secondary, #666666);
+}
+
+/* 改進加載更多消息的樣式 */
+.loading-more-messages {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  margin-bottom: 10px;
+  color: var(--text-secondary, #666666);
+  font-size: 12px;
+}
+
+.loading-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(0, 0, 0, 0.1);
+  border-top-color: var(--primary-color, #f0b90b);
+  border-radius: 50%;
+  margin-right: 8px;
+  animation: spin 0.8s linear infinite;
+}
+
+/* 添加按鈕加載動畫樣式 */
+.button-loader {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: white;
+  border-radius: 50%;
+  margin-right: 8px;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+}
+
+/* 添加小型加載器樣式 */
+.small-loader {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
 }
 </style> 

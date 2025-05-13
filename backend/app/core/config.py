@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7天有效期
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7  # 7天刷新令牌有效期
-    TWO_FACTOR_EXPIRE_MINUTES: int = 10  # 两因素认证码有效期
+    TWO_FACTOR_EXPIRE_MINUTES: int = 10  # 兩因素認證碼有效期
     
     # 加密設定：用於敏感資料加密的密鑰
     ENCRYPTION_KEY: str = os.getenv("ENCRYPTION_KEY", "your-encryption-key")
@@ -56,17 +56,17 @@ class Settings(BaseSettings):
     
     # Gemini API相關設定
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    GEMINI_SYSTEM_PROMPT: str = os.getenv("GEMINI_SYSTEM_PROMPT", "你是一个有帮助的AI助手，提供准确、有用的回答。")
-    GEMINI_MAX_MESSAGES_PER_SESSION: int = int(os.getenv("GEMINI_MAX_MESSAGES_PER_SESSION", "50"))  # 每个会话最大消息数
-    GEMINI_MAX_RESPONSE_TOKENS: int = int(os.getenv("GEMINI_MAX_RESPONSE_TOKENS", "1000"))  # 最大回复长度(token)
-    GEMINI_MAX_RESPONSE_CHARS: int = int(os.getenv("GEMINI_MAX_RESPONSE_CHARS", "4000"))  # 最大回复长度(字符)
+    GEMINI_SYSTEM_PROMPT: str = os.getenv("GEMINI_SYSTEM_PROMPT", "你是一個有幫助的AI助手，提供準確、有用的回答。")
+    GEMINI_MAX_MESSAGES_PER_SESSION: int = int(os.getenv("GEMINI_MAX_MESSAGES_PER_SESSION", "50"))  # 每個會話最大訊息數
+    GEMINI_MAX_RESPONSE_TOKENS: int = int(os.getenv("GEMINI_MAX_RESPONSE_TOKENS", "1000"))  # 最大回覆長度(token)
+    GEMINI_MAX_RESPONSE_CHARS: int = int(os.getenv("GEMINI_MAX_RESPONSE_CHARS", "4000"))  # 最大回覆長度(字符)
     
-    # 用户等级对应的聊天功能限制
-    # 每日消息限制：不同用户等级的每日可发送消息数量
+    # 用戶等級對應的聊天功能限制
+    # 每日訊息限制：不同用戶等級的每日可發送訊息數量
     DAILY_MESSAGE_LIMITS: Dict[str, int] = {
-        "admin": int(os.getenv("ADMIN_DAILY_MESSAGE_LIMIT", "-1")),  # 管理员无限制
-        "premium": int(os.getenv("PREMIUM_DAILY_MESSAGE_LIMIT", "100")),  # 高级用户每日100条
-        "regular": int(os.getenv("REGULAR_DAILY_MESSAGE_LIMIT", "20"))  # 普通用户每日20条
+        "admin": int(os.getenv("ADMIN_DAILY_MESSAGE_LIMIT", "-1")),  # 管理員無限制
+        "premium": int(os.getenv("PREMIUM_DAILY_MESSAGE_LIMIT", "100")),  # 高級用戶每日100條
+        "regular": int(os.getenv("REGULAR_DAILY_MESSAGE_LIMIT", "20"))  # 普通用戶每日20條
     }
     
     # 交易所設定：支援的交易所列表及其API速率限制
@@ -117,14 +117,14 @@ class Settings(BaseSettings):
     WS_RECONNECT_DELAY: int = 5      # 秒
     WS_MAX_RECONNECTS: int = 5
     
-    # WebSocket连接池配置 - 从环境变量读取
+    # WebSocket連接池配置 - 從環境變數讀取
     WS_MAX_GLOBAL_CONNECTIONS: int = int(os.getenv("WS_MAX_GLOBAL_CONNECTIONS", "1000"))
     WS_MAX_CONNECTIONS_PER_USER: int = int(os.getenv("WS_MAX_CONNECTIONS_PER_USER", "5"))
     WS_MAX_CONNECTIONS_PER_ROOM: int = int(os.getenv("WS_MAX_CONNECTIONS_PER_ROOM", "100"))
     WS_MESSAGE_RATE_LIMIT: int = int(os.getenv("WS_MESSAGE_RATE_LIMIT", "10"))
     WS_RATE_LIMIT_WINDOW: int = int(os.getenv("WS_RATE_LIMIT_WINDOW", "60"))
     
-    # WebSocket相关配置 - 已废弃，保留为向后兼容
+    # WebSocket相關配置 - 已棄用，保留為向後相容
     WEBSOCKET_MAX_CONNECTIONS: int = int(os.getenv("WS_MAX_GLOBAL_CONNECTIONS", "1000"))
     WEBSOCKET_MAX_CONNECTIONS_PER_USER: int = int(os.getenv("WS_MAX_CONNECTIONS_PER_USER", "5"))
     WEBSOCKET_MAX_CONNECTIONS_PER_ROOM: int = int(os.getenv("WS_MAX_CONNECTIONS_PER_ROOM", "100"))
@@ -141,15 +141,18 @@ class Settings(BaseSettings):
     REDIS_PASSWORD: Optional[str] = None
     REDIS_ENABLED: bool = os.getenv("REDIS_ENABLED", "false").lower() == "true"
     
-    # 节点标识
+    # 節點標識
     NODE_ID: str = None
+    
+    # 事件處理相關配置
+    LOGIN_EVENT_DELAY_SECONDS: int = int(os.getenv("LOGIN_EVENT_DELAY_SECONDS", "3"))
     
     @field_validator("REDIS_URL", mode="before")
     @classmethod
     def assemble_redis_url(cls, v: Optional[str], info) -> Optional[str]:
         if v:
             return v
-        # 获取values参数
+        # 獲取values參數
         values = info.data
         if values.get("REDIS_ENABLED", False):
             password_part = f":{values.get('REDIS_PASSWORD')}@" if values.get("REDIS_PASSWORD") else ""
@@ -161,7 +164,7 @@ class Settings(BaseSettings):
     def generate_node_id(cls, v: Optional[str]) -> str:
         if v:
             return v
-        # 生成一个唯一的节点ID，基于主机名和一个随机UUID
+        # 生成一個唯一的節點ID，基於主機名和一個隨機UUID
         hostname = socket.gethostname()
         random_id = str(uuid.uuid4())[:8]
         return f"{hostname}-{random_id}"
@@ -169,7 +172,7 @@ class Settings(BaseSettings):
     model_config = {
         "case_sensitive": True,  # 設定名稱大小寫敏感
         "env_file": ".env",      # 指定環境變數檔案位置
-        "extra": "ignore"        # 允许额外的输入（环境变量）
+        "extra": "ignore"        # 允許額外的輸入（環境變數）
     }
 
 # 創建全域設定實例，供整個應用程式使用

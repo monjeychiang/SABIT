@@ -301,13 +301,13 @@ export const useChatroomStore = defineStore('chatroom', {
       };
       
       console.log(`[Chat] 发送聊天室 ${roomId} 加入通知到WebSocket服务器`);
-      webSocketManager.send(WebSocketType.CHATROOM, message);
+      webSocketManager.send(WebSocketType.MAIN, message);
     },
     
     // 重新订阅到所有已加入的聊天室
     resubscribeToRooms() {
       // 确保WebSocket已连接
-      if (!webSocketManager.isConnected(WebSocketType.CHATROOM)) {
+      if (!webSocketManager.isConnected(WebSocketType.MAIN)) {
         console.log('[Chat] WebSocket未连接，无法重新订阅聊天室');
         return;
       }
@@ -335,6 +335,13 @@ export const useChatroomStore = defineStore('chatroom', {
       
       // 處理頭像URL：確保頭像URL是完整的
       let avatarUrl = data.avatar_url || '';
+      // 去除可能存在的時間戳參數，以便緩存可以生效
+      if (avatarUrl.includes('?_t=')) {
+        avatarUrl = avatarUrl.split('?_t=')[0];
+      } else if (avatarUrl.includes('&_t=')) {
+        avatarUrl = avatarUrl.split('&_t=')[0];
+      }
+      
       if (avatarUrl && !avatarUrl.startsWith('http')) {
         const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
         avatarUrl = avatarUrl.startsWith('/') 
@@ -564,6 +571,13 @@ export const useChatroomStore = defineStore('chatroom', {
             let avatarUrl = '';
             if (msg.user && msg.user.avatar_url) {
               avatarUrl = msg.user.avatar_url;
+              // 去除可能存在的時間戳參數，以便緩存可以生效
+              if (avatarUrl.includes('?_t=')) {
+                avatarUrl = avatarUrl.split('?_t=')[0];
+              } else if (avatarUrl.includes('&_t=')) {
+                avatarUrl = avatarUrl.split('&_t=')[0];
+              }
+              
               if (avatarUrl && !avatarUrl.startsWith('http')) {
                 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
                 avatarUrl = avatarUrl.startsWith('/') 

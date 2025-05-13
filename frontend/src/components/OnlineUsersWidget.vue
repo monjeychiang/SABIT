@@ -34,6 +34,7 @@
               :username="user.username"
               :avatar-url="user.avatar_url"
               size="small"
+              :no-cache="false"
             />
             <span class="status-indicator"></span>
           </div>

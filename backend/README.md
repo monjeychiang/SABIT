@@ -402,4 +402,96 @@ python compile_cython.py --clean --inplace --benchmark
 
 ### 降级机制
 
-如果由于某种原因Cython模块无法编译或加载，系统会自动降级使用原始Python实现，确保功能正常工作，但性能将回到优化前的水平。 
+如果由于某种原因Cython模块无法编译或加载，系统会自动降级使用原始Python实现，确保功能正常工作，但性能将回到优化前的水平。
+
+## 事件驅動通知系統
+
+系統實現了基於事件驅動的通知機制，能夠自動處理各種業務事件並發送通知給相關用戶。
+
+### 主要特點
+
+- **事件標準化**: 所有事件共享標準結構，便於處理和擴展
+- **模板化通知**: 使用預定義模板和變量替換生成清晰一致的通知內容
+- **實時推送**: 通過 WebSocket 實時推送通知到前端
+- **事件分類**: 支持交易事件、價格提醒、系統事件等多種事件類型
+- **權限控制**: 嚴格的權限控制確保只有授權用戶能發送事件
+
+### 事件類型
+
+系統支持的事件類型包括：
+
+- **交易事件**: 交易完成、創建、取消等
+- **價格提醒**: 當資產價格達到設定目標時
+- **系統事件**: 系統維護、更新等
+- **用戶操作**: 帳號登入、設置變更等
+- **帳戶更新**: 餘額變動、等級變更等
+
+### 使用方法
+
+#### 1. 發送交易完成事件
+
+```python
+# 交易完成後發送通知
+trade_event = TradeEvent(
+    event_type=EventType.TRADE_COMPLETED,
+    source="trade_service",
+    data={
+        "trade_details": "交易詳情...",
+        "amount": 1000.0,
+        "currency": "USDT"
+    },
+    user_ids=[user_id],  # 交易相關的用戶ID
+    trade_id=12345,
+    trade_amount=1000.0,
+    trade_status="completed"
+)
+
+# 發送到事件處理API
+async with httpx.AsyncClient() as client:
+    response = await client.post(
+        f"{API_BASE}/api/events/trade",
+        json=trade_event.dict(),
+        headers={"Authorization": f"Bearer {token}"}
+    )
+```
+
+#### 2. 發送系統事件
+
+```python
+# 系統維護通知
+system_event = SystemEvent(
+    source="system_admin",
+    data={
+        "message": "系統將於今晚22:00-23:00進行維護升級",
+        "duration": "1小時"
+    },
+    severity="中度",
+    component="交易引擎",
+    action_required=False
+)
+
+# 發送到事件處理API
+async with httpx.AsyncClient() as client:
+    response = await client.post(
+        f"{API_BASE}/api/events/system",
+        json=system_event.dict(),
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+```
+
+### 事件端點說明
+
+- **POST /api/events/process**: 通用事件處理端點（僅限管理員）
+- **POST /api/events/trade**: 處理交易相關事件
+- **POST /api/events/price-alert**: 處理價格提醒事件
+- **POST /api/events/system**: 處理系統事件（僅限管理員）
+
+### 事件到通知轉換流程
+
+1. 事件被提交到對應的API端點
+2. 事件管理器接收並處理事件
+3. 根據事件類型選擇對應的通知模板
+4. 從事件中提取變量並替換模板中的佔位符
+5. 創建通知記錄並存儲到數據庫
+6. 通過WebSocket實時推送通知到前端
+7. 前端接收通知並顯示給用戶 

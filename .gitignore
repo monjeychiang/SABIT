@@ -79,3 +79,5 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST 
+alembic/versions/
+alembic.ini
