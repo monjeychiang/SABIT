@@ -84,6 +84,11 @@ class MainWebSocketManager {
           this.state.reconnectAttempts = 0;
           this.state.lastPongTime = Date.now(); // 重置心跳時間
           this.startHeartbeat();
+          
+          // 觸發全局連接事件，通知所有組件
+          window.dispatchEvent(new Event('websocket:connected'));
+          console.log('[WebSocketManager] 觸發 websocket:connected 事件');
+          
           if (this.options.onConnect) this.options.onConnect();
           resolve(true);
         };
@@ -147,6 +152,11 @@ class MainWebSocketManager {
           clearTimeout(timeout);
           this.state.connected = false;
           this.stopHeartbeat();
+          
+          // 觸發全局斷開事件，通知所有組件
+          window.dispatchEvent(new Event('websocket:disconnected'));
+          console.log('[WebSocketManager] 觸發 websocket:disconnected 事件');
+          
           if (this.options.onDisconnect) this.options.onDisconnect();
           // 自動重連
           const authStore = useAuthStore();
