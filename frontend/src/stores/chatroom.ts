@@ -121,76 +121,97 @@ export const useChatroomStore = defineStore('chatroom', {
       // 加载已加入的聊天室列表
       this.fetchUserRooms();
       
+      // 設置聊天相關事件監聽器
+      this.setupEventListeners();
+      
       // 注意：不再直接连接WebSocket，由authService统一管理
       // WebSocket连接将在authService.initializeWebSockets()中处理
     },
     
-    // 处理WebSocket消息
-    handleWebSocketMessage(event: MessageEvent) {
-      try {
-        const data = JSON.parse(event.data);
-        console.debug('[Chat] 收到WebSocket消息:', data);
-
-        // 处理不同类型的消息
-        switch (data.type) {
-          case 'ping':
-            // 收到服务器ping，回复pong
-            this.sendPong();
-            break;
+    // 設置事件監聽器
+    setupEventListeners() {
+      // 監聽聊天消息事件（從主 WebSocket 轉發）
+      window.addEventListener('chat:message-received', (event: CustomEvent) => {
+        if (event.detail) {
+          const { messageId, roomId } = event.detail;
+          console.log(`[聊天] 收到聊天消息事件: ID=${messageId}, 聊天室=${roomId}`);
           
-          case 'pong':
-            // 收到服务器pong响应，不需要处理
-            break;
+          // 如果消息屬於當前聊天室，滾動到底部
+          if (roomId === this.currentRoomId) {
+            this.scrollToBottom();
+          }
+        }
+      });
+      
+      console.log('[聊天] 事件監聽器設置完成');
+    },
+    
+    // 处理WebSocket消息
+    handleWebSocketMessage(data: any) {
+      try {
+        console.debug('[聊天] 收到WebSocket消息:', JSON.stringify(data));
 
-          case 'message':
-            // 处理新消息 - 修改逻辑，确保消息数组总是被初始化
-            if (data.room_id) {
-              // 确保消息数组已经初始化
-              if (!this.messages[data.room_id]) {
-                this.messages[data.room_id] = [];
-                console.log(`[Chat] 为聊天室 ${data.room_id} 初始化消息数组`);
-              }
-              this.handleChatMessage(data);
+        // 處理不同類型的消息
+        const msgType = data.type || '';
+        
+        if (msgType === 'chat/message') {
+          // 處理聊天消息
+          console.log('[聊天] 收到聊天消息，完整數據:', JSON.stringify(data));
+          
+          if (data.room_id) {
+            // 確保消息數組已經初始化
+            if (!this.messages[data.room_id]) {
+              this.messages[data.room_id] = [];
+              console.log(`[聊天] 為聊天室 ${data.room_id} 初始化消息數組`);
             }
-            break;
-            
-          case 'join':
-          case 'leave':
-            // 用户加入/离开聊天室 - 同样确保消息数组已初始化
-            if (data.room_id) {
-              // 确保消息数组已经初始化
-              if (!this.messages[data.room_id]) {
-                this.messages[data.room_id] = [];
-                console.log(`[Chat] 为聊天室 ${data.room_id} 初始化消息数组`);
-              }
-              this.handleSystemMessage(data);
+            this.handleChatMessage(data);
+          } else {
+            console.error('[聊天] 收到的消息缺少 room_id 欄位:', data);
+          }
+        } else if (msgType === 'chat/join' || msgType === 'chat/leave') {
+          // 用户加入/離開聊天室
+          console.log(`[聊天] 收到用戶 ${data.user_id} ${msgType === 'chat/join' ? '加入' : '離開'} 聊天室 ${data.room_id} 的消息`);
+          
+          if (data.room_id) {
+            // 確保消息數組已經初始化
+            if (!this.messages[data.room_id]) {
+              this.messages[data.room_id] = [];
+              console.log(`[聊天] 為聊天室 ${data.room_id} 初始化消息數組`);
             }
-            break;
-            
-          case 'error':
-            // 错误消息 - 同样确保消息数组已初始化
-            if (data.room_id) {
-              // 确保消息数组已经初始化
-              if (!this.messages[data.room_id]) {
-                this.messages[data.room_id] = [];
-                console.log(`[Chat] 为聊天室 ${data.room_id} 初始化消息数组`);
-              }
-              this.handleErrorMessage(data);
-            } else {
-              console.error('[Chat] 收到错误消息:', data.content || data.message || '未知错误');
+            this.handleSystemMessage(data);
+          } else {
+            console.error('[聊天] 收到的系統消息缺少 room_id 欄位:', data);
+          }
+        } else if (msgType === 'chat/error') {
+          // 錯誤消息
+          console.error('[聊天] 收到錯誤消息:', data);
+          
+          if (data.room_id) {
+            // 確保消息數組已經初始化
+            if (!this.messages[data.room_id]) {
+              this.messages[data.room_id] = [];
+              console.log(`[聊天] 為聊天室 ${data.room_id} 初始化消息數組`);
             }
-            break;
-            
-          case 'user_status':
-            // 用户状态变化
-            this.handleUserStatusChange(data);
-            break;
-            
-          default:
-            console.log('收到未知类型的WebSocket消息:', data);
+            this.handleErrorMessage(data);
+          } else {
+            console.error('[聊天] 收到錯誤消息:', data.content || data.message || '未知錯誤');
+          }
+        } else if (msgType === 'user_status' || msgType === 'online/status') {
+          // 用户狀態變化
+          console.log('[聊天] 收到用戶狀態變化消息:', data);
+          this.handleUserStatusChange(data);
+        } else if (msgType === 'ping') {
+          // 收到ping，回復pong
+          console.log('[聊天] 收到 ping 消息，回復 pong');
+          this.sendPong();
+        } else if (msgType === 'pong') {
+          // 收到pong，不需處理
+          console.log('[聊天] 收到 pong 回覆');
+        } else {
+          console.log('[聊天] 收到未知類型的WebSocket消息:', msgType, data);
         }
       } catch (error) {
-        console.error('[Chat] 处理WebSocket消息错误:', error);
+        console.error('[聊天] 處理WebSocket消息錯誤:', error);
       }
     },
     
@@ -219,12 +240,12 @@ export const useChatroomStore = defineStore('chatroom', {
     
     // 发送pong响应
     sendPong() {
-      webSocketManager.send(WebSocketType.CHATROOM, { type: 'pong' });
+      webSocketManager.send({ type: 'pong' });
     },
     
     // 发送ping请求
     sendPing() {
-      webSocketManager.send(WebSocketType.CHATROOM, { type: 'ping' });
+      webSocketManager.send({ type: 'ping' });
     },
     
     // 发送聊天消息
@@ -232,12 +253,13 @@ export const useChatroomStore = defineStore('chatroom', {
       if (!this.currentRoomId) return false;
       
       const message = {
-        type: 'message',
+        type: 'chat/message',  // 修改為 'chat/message'，與後端預期一致
         room_id: this.currentRoomId,
         content: content
       };
       
-      return webSocketManager.send(WebSocketType.CHATROOM, message);
+      console.log('[聊天] 發送消息:', message);
+      return webSocketManager.send(message);  // 直接傳遞消息對象
     },
     
     // 兼容方法：提供与旧版API兼容的WebSocket连接方法
@@ -302,53 +324,92 @@ export const useChatroomStore = defineStore('chatroom', {
     handleChatMessage(data: ChatMessageData) {
       const roomId = data.room_id;
       
-      // 确保消息数组已经初始化
+      // 確保消息數組已經初始化
       if (!this.messages[roomId]) {
         this.messages[roomId] = [];
+        console.log(`[聊天] 為聊天室 ${roomId} 初始化消息數組`);
       }
       
-      // 将消息添加到对应聊天室的消息列表
-      this.messages[roomId].push({
-        id: data.message_id || `temp-${Date.now()}`,
+      // 添加時間戳：如果消息沒有帶時間戳，添加當前時間
+      const timestamp = data.timestamp || new Date().toISOString();
+      
+      // 處理頭像URL：確保頭像URL是完整的
+      let avatarUrl = data.avatar_url || '';
+      if (avatarUrl && !avatarUrl.startsWith('http')) {
+        const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+        avatarUrl = avatarUrl.startsWith('/') 
+          ? `${apiBaseUrl}${avatarUrl}` 
+          : `${apiBaseUrl}/${avatarUrl}`;
+      }
+      
+      // 檢查是否已經存在相同ID的消息，避免重複添加
+      const messageId = data.message_id || `temp-${Date.now()}`;
+      console.log(`[聊天] 處理消息: ID=${messageId}, 聊天室=${roomId}, 內容=${data.content}`, data);
+      
+      const existingMessageIndex = this.messages[roomId].findIndex(msg => msg.id === messageId);
+      
+      // 如果消息已存在，更新它；否則添加新消息
+      const message = {
+        id: messageId,
         content: data.content,
-        userId: data.user_id,
+        userId: data.user_id || data.userId, // 兼容兩種可能的屬性名
         username: data.username,
-        avatar: data.avatar_url,
-        timestamp: data.timestamp || new Date().toISOString(),
+        avatar: avatarUrl,
+        timestamp: timestamp,
         isSystem: false
-      });
+      };
       
-      // 如果该用户正在输入中，收到消息后移除输入状态
-      if (data.user_id && this.usersTyping[roomId] && this.usersTyping[roomId].has(data.user_id)) {
-        this.usersTyping[roomId].delete(data.user_id);
-      }
-      
-      // 如果消息属于当前聊天室，滚动到底部
-      if (roomId === this.currentRoomId) {
-        this.scrollToBottom();
-      }
-      
-      // 如果消息不是当前用户发送的，且不是在当前浏览的聊天室中，增加未读消息计数
-      const authStore = useAuthStore();
-      const currentUserId = authStore.user?.id;
-      
-      if (data.userId !== currentUserId && roomId !== this.currentRoomId) {
-        // 初始化该聊天室的未读消息计数（如果不存在）
-        if (typeof this.unreadMessagesByRoom[roomId] === 'undefined') {
-          this.unreadMessagesByRoom[roomId] = 0;
+      if (existingMessageIndex !== -1) {
+        // 更新現有消息
+        this.messages[roomId][existingMessageIndex] = message;
+        console.log(`[聊天] 更新聊天室 ${roomId} 中ID為 ${messageId} 的消息`);
+      } else {
+        // 添加新消息
+        console.log(`[聊天] 添加新消息到聊天室 ${roomId}: ${JSON.stringify(message)}`);
+        // 使用響應式API確保更新被檢測到
+        this.messages[roomId].push(message);
+        
+        // 創建一個新的消息對象引用，強制Vue檢測變化
+        this.messages = { ...this.messages };
+        
+        // 如果該用戶正在輸入中，收到消息後移除輸入狀態
+        if (data.user_id && this.usersTyping[roomId] && this.usersTyping[roomId].has(data.user_id)) {
+          this.usersTyping[roomId].delete(data.user_id);
         }
         
-        // 增加未读消息计数
-        this.unreadMessagesByRoom[roomId]++;
+        // 如果消息屬於當前聊天室，滾動到底部
+        if (roomId === this.currentRoomId) {
+          console.log(`[聊天] 是當前聊天室 ${roomId} 的消息，滾動到底部`);
+          this.scrollToBottom();
+        }
         
-        // 触发未读消息更新事件
-        window.dispatchEvent(new CustomEvent('chat:unread-updated', {
-          detail: { totalUnread: this.totalUnreadCount }
-        }));
+        // 如果消息不是當前用戶發送的，且不是在當前瀏覽的聊天室中，增加未讀消息計數
+        const authStore = useAuthStore();
+        const currentUserId = authStore.user?.id;
         
-        // 更新rooms数组中的hasNewMessages标志
-        this.updateRoomNewMessageStatus(roomId, true);
+        if (data.user_id !== currentUserId && roomId !== this.currentRoomId) {
+          // 初始化該聊天室的未讀消息計數（如果不存在）
+          if (typeof this.unreadMessagesByRoom[roomId] === 'undefined') {
+            this.unreadMessagesByRoom[roomId] = 0;
+          }
+          
+          // 增加未讀消息計數
+          this.unreadMessagesByRoom[roomId]++;
+          
+          // 觸發未讀消息更新事件
+          window.dispatchEvent(new CustomEvent('chat:unread-updated', {
+            detail: { totalUnread: this.totalUnreadCount }
+          }));
+          
+          // 更新rooms數組中的hasNewMessages標誌
+          this.updateRoomNewMessageStatus(roomId, true);
+        }
       }
+      
+      // 強制觸發UI更新
+      window.dispatchEvent(new CustomEvent('chat:message-received', {
+        detail: { messageId, roomId }
+      }));
     },
 
     // 处理系统消息（加入/离开聊天室）
@@ -482,40 +543,59 @@ export const useChatroomStore = defineStore('chatroom', {
       if (!roomId) return;
       
       try {
-        // 如果已有消息，不再重新加载
-        if (this.messages[roomId] && this.messages[roomId].length > 0) {
-          console.log(`已有聊天室 ${roomId} 的消息，不再重新加载`);
-          
-          // 进入聊天室时，清除未读消息计数
-          this.markRoomAsRead(roomId);
-          
-        return;
-      }
-      
         const apiBaseUrl = getApiBaseUrl();
-        const response = await axios.get(`${apiBaseUrl}/api/v1/chatroom/rooms/${roomId}/messages`);
+        // 改為獲取聊天室全部消息，移除分頁參數
+        const response = await axios.get(`${apiBaseUrl}/api/v1/chatroom/messages/${roomId}`);
+        
+        console.log('API返回的消息格式:', JSON.stringify(response.data[0] || {}).substring(0, 300));
         
         if (response.data) {
-          // 确保聊天室消息数组已初始化
-        if (!this.messages[roomId]) {
+          // 確保聊天室消息數組已初始化
+          if (!this.messages[roomId]) {
+            this.messages[roomId] = [];
+          }
+          
+          // 清空並重置消息數組
           this.messages[roomId] = [];
-        }
-        
-          // 更新聊天室消息
-          this.messages[roomId] = response.data;
           
-          console.log(`成功加载聊天室 ${roomId} 的消息，数量:`, response.data.length);
+          // 處理每條消息，根據API返回格式進行轉換
+          response.data.forEach((msg: any) => {
+            // 處理頭像URL
+            let avatarUrl = '';
+            if (msg.user && msg.user.avatar_url) {
+              avatarUrl = msg.user.avatar_url;
+              if (avatarUrl && !avatarUrl.startsWith('http')) {
+                const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+                avatarUrl = avatarUrl.startsWith('/') 
+                  ? `${apiBaseUrl}${avatarUrl}` 
+                  : `${apiBaseUrl}/${avatarUrl}`;
+              }
+            }
+            
+            // 將API返回的消息格式轉換為前端使用的格式
+            this.messages[roomId].push({
+              id: msg.id,
+              content: msg.content,
+              userId: msg.user_id,
+              username: msg.user ? msg.user.username : '未知用戶',
+              avatar: avatarUrl,
+              timestamp: msg.created_at,
+              isSystem: !!msg.is_system
+            });
+          });
           
-          // 进入聊天室时，清除未读消息计数
+          console.log(`成功加載聊天室 ${roomId} 的消息，數量:`, response.data.length);
+          
+          // 進入聊天室時，清除未讀消息計數
           this.markRoomAsRead(roomId);
           
-          // 在下次DOM更新后滚动到底部
+          // 在下次DOM更新後滾動到底部
           setTimeout(() => {
-          this.scrollToBottom();
+            this.scrollToBottom();
           }, 100);
         }
       } catch (error) {
-        console.error(`加载聊天室 ${roomId} 的消息失败:`, error);
+        console.error(`加載聊天室 ${roomId} 的消息失敗:`, error);
       }
     },
 
@@ -568,7 +648,7 @@ export const useChatroomStore = defineStore('chatroom', {
     async joinRoom(roomId: number) {
       const authStore = useAuthStore();
       if (!authStore.isAuthenticated) {
-        console.error('用户未登录，无法加入聊天室');
+        console.error('用户未登錄，無法加入聊天室');
         return;
       }
       
@@ -580,7 +660,7 @@ export const useChatroomStore = defineStore('chatroom', {
           }
         });
         
-        // 刷新用户的聊天室列表，确保获取最新的聊天室信息
+        // 刷新用户的聊天室列表，確保獲取最新的聊天室信息
         await this.fetchUserRooms();
         
         // 更新已加入的聊天室列表
@@ -588,29 +668,27 @@ export const useChatroomStore = defineStore('chatroom', {
           this.joinedRoomIds.push(roomId);
         }
         
-        // 更新当前选中的聊天室
+        // 更新當前選中的聊天室
         this.currentRoomId = roomId;
         
-        // 确保消息数组已初始化，即使loadRoomMessages失败也能接收消息
-        if (!this.messages[roomId]) {
-          this.messages[roomId] = [];
-          console.log(`[Chat] 为新加入的聊天室 ${roomId} 初始化消息数组`);
-        }
+        // 清空並重新初始化消息數組，確保每次加入聊天室時都會重新獲取最新消息
+        this.messages[roomId] = [];
+        console.log(`[Chat] 為聊天室 ${roomId} 重置消息數組`);
         
-        // 加载聊天室消息
+        // 加載聊天室消息
         try {
-        await this.loadRoomMessages(roomId);
+          await this.loadRoomMessages(roomId);
         } catch (error) {
-          console.error(`加载聊天室 ${roomId} 的消息失败:`, error);
-          // 即使加载消息失败，也能保证消息数组已初始化，可以接收新消息
+          console.error(`加載聊天室 ${roomId} 的消息失敗:`, error);
+          // 即使加載消息失敗，也能保證消息數組已初始化，可以接收新消息
         }
         
-        // 发送聊天室加入通知给WebSocket服务器
+        // 發送聊天室加入通知給WebSocket服務器
         this.sendJoinRoomNotification(roomId);
         
         return true;
       } catch (error) {
-        console.error('加入聊天室失败:', error);
+        console.error('加入聊天室失敗:', error);
         return false;
       }
     },

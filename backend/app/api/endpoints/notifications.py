@@ -18,6 +18,7 @@ from ...db.models import User, Notification, NotificationType
 from ...schemas.notification import NotificationCreate, NotificationResponse, NotificationUpdate, PaginatedNotifications
 from ...core.security import get_current_user, verify_token
 from ...api.endpoints.admin import get_current_admin_user
+from .chatroom import manager
 
 # 設置日誌記錄
 logger = logging.getLogger(__name__)
@@ -391,20 +392,13 @@ class NotificationConnectionManager:
 # 创建通知连接管理器实例
 notification_manager = NotificationConnectionManager()
 
-# 廣播新通知給用戶
+# 廣播新通知給用戶（改為呼叫主 WebSocket 管理器）
 async def broadcast_notification(notification: Notification, db: Session) -> None:
     """
     廣播新通知給用戶
-    
-    將新創建的通知通過WebSocket實時推送給相關用戶。
-    根據通知類型（全局或用戶特定）決定推送方式。
-    
-    參數:
-        notification: 要廣播的通知物件
-        db: 資料庫會話
+    將新創建的通知通過主 WebSocket 以 type: "notification" 推送給相關用戶。
     """
     try:
-        # 轉換通知模型為可序列化字典
         notification_data = {
             "id": notification.id,
             "title": notification.title,
@@ -415,20 +409,16 @@ async def broadcast_notification(notification: Notification, db: Session) -> Non
             "created_at": notification.created_at.isoformat(),
             "user_id": notification.user_id
         }
-        
         message = {
             "type": "notification",
             "notification": notification_data
         }
-        
-        # 根據通知類型決定廣播方式
+        # 這裡假設有一個全域 WebSocket 管理器，能夠推播到所有主連線
+        # 例如: main_ws_manager.broadcast_to_user(user_id, message)
         if notification.is_global:
-            # 全局通知廣播給所有連接的用戶
-            await notification_manager.broadcast_global(message)
+            await manager.broadcast_global(message)
         elif notification.user_id:
-            # 用戶特定通知只廣播給目標用戶
-            await notification_manager.broadcast_to_user(notification.user_id, message)
-    
+            await manager.broadcast_to_user(notification.user_id, message)
     except Exception as e:
         logger.error(f"廣播通知時出錯: {str(e)}")
 
@@ -501,130 +491,6 @@ async def create_and_broadcast_notification(
         raise
         
     return created_notifications
-
-# WebSocket通知訂閱端點
-@router.websocket("/ws")
-async def websocket_notifications(websocket: WebSocket):
-    """
-    通知WebSocket连接
-    
-    客户端通过此WebSocket连接接收实时通知
-    """
-    # 注意：不要在这里调用websocket.accept()，因为在notification_manager.connect()中已经调用了
-    user_id = None
-    connection_id = None
-    
-    try:
-        # 获取查询参数中的token
-        token = websocket.query_params.get("token")
-        
-        if not token:
-            # 注意：未接受连接前不能发送消息，所以这里我们先接受连接再发送错误
-            await websocket.accept()
-            await websocket.send_json({
-                "type": "error",
-                "message": "未提供认证令牌"
-            })
-            await websocket.close(code=1008)
-            return
-        
-        # 验证token
-        try:
-            # 使用现有验证函数验证token
-            payload = verify_token(token)
-            if not payload or "sub" not in payload:
-                await websocket.accept()
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "无效的认证令牌"
-                })
-                await websocket.close(code=1008)
-                return
-                
-            username = payload.get("sub")
-            
-            # 获取用户信息
-            db = next(get_db())
-            try:
-                user = db.query(User).filter(User.username == username).first()
-                
-                if not user:
-                    await websocket.accept()
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": "用户不存在"
-                    })
-                    await websocket.close(code=1008)
-                    return
-                    
-                user_id = user.id
-            finally:
-                db.close()
-            
-        except Exception as e:
-            logger.error(f"WebSocket认证失败: {str(e)}")
-            await websocket.accept()
-            await websocket.send_json({
-                "type": "error",
-                "message": "认证失败"
-            })
-            await websocket.close(code=1008)
-            return
-        
-        # 建立连接（内部会调用websocket.accept()）
-        connection_id = await notification_manager.connect(websocket, user_id)
-        
-        # 发送欢迎消息
-        await websocket.send_json({
-            "type": "connected",
-            "message": "已连接到通知系统",
-            "connection_id": connection_id
-        })
-        
-        # 接收消息
-        while True:
-            try:
-                # 接收消息
-                data = await websocket.receive_json()
-                
-                # 如果是ping消息，立即回复pong
-                if "type" in data and data["type"] == "ping":
-                    logger.debug(f"收到客户端ping消息，立即响应pong")
-                    await websocket.send_json({"type": "pong"})
-                    continue
-                    
-                # 处理其他类型的消息
-                message_type = data.get("type")
-                
-                if message_type == "heartbeat_ack":
-                    # 旧版心跳机制，兼容保留，不做处理
-                    logger.debug(f"收到客户端心跳确认")
-                    continue
-                
-                # 如果是其他未识别的消息类型，记录但不处理
-                logger.debug(f"收到未知类型的消息: {message_type}")
-                    
-            except WebSocketDisconnect:
-                logger.info(f"通知WebSocket客户端主动断开连接: {connection_id}")
-                break
-                
-            except json.JSONDecodeError:
-                logger.warning(f"接收到无效的JSON消息: {connection_id}")
-                continue
-                
-            except Exception as e:
-                logger.error(f"处理通知WebSocket消息时出错: {str(e)}")
-                break
-                
-    except Exception as e:
-        logger.error(f"通知WebSocket处理时发生异常: {str(e)}")
-        
-    finally:
-        # 关闭连接
-        if connection_id:
-            notification_manager.disconnect(websocket)
-            logger.info(f"通知WebSocket连接已关闭，用户ID: {user_id}，当前连接总数: {notification_manager.get_total_connections_count()}")
-            logger.info(f"通知WebSocket连接已清理: {connection_id}")
 
 @router.delete("/all", status_code=status.HTTP_200_OK)
 async def delete_all_notifications(

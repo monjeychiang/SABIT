@@ -67,12 +67,12 @@ export const useThemeStore = defineStore('theme', {
         // 基础颜色
         '--el-color-white': '#ffffff',
         '--el-color-black': '#000000',
-        '--el-color-primary-rgb': '59, 130, 246',
+        '--el-color-primary-rgb': '32, 32, 32',  // 改為深灰色
         '--el-color-success-rgb': '16, 185, 129',
         '--el-color-warning-rgb': '245, 158, 11',
         '--el-color-danger-rgb': '239, 68, 68',
         '--el-color-error-rgb': '239, 68, 68',
-        '--el-color-info-rgb': '147, 151, 184',
+        '--el-color-info-rgb': '128, 128, 128',  // 改為中灰色
 
         // 背景颜色
         '--el-bg-color': '#111827',
@@ -117,9 +117,9 @@ export const useThemeStore = defineStore('theme', {
         '--el-disabled-border-color': '#303030',
         
         // 覆盖我们自己的CSS变量
-        '--primary-color': '#3b82f6',
-        '--primary-dark': '#2563eb',
-        '--primary-light': '#60a5fa',
+        '--primary-color': '#444444',  // 改為深灰色
+        '--primary-dark': '#222222',   // 改為更深的灰色
+        '--primary-light': '#666666',  // 改為較淺的灰色
         '--background-color': '#111827',
         '--surface-color': '#1f2937',
         '--card-background': '#1f2937',
@@ -134,12 +134,12 @@ export const useThemeStore = defineStore('theme', {
         // 基础颜色
         '--el-color-white': '#ffffff',
         '--el-color-black': '#000000',
-        '--el-color-primary-rgb': '37, 99, 235',
+        '--el-color-primary-rgb': '64, 64, 64',  // 改為灰色
         '--el-color-success-rgb': '16, 185, 129',
         '--el-color-warning-rgb': '245, 158, 11',
         '--el-color-danger-rgb': '239, 68, 68',
         '--el-color-error-rgb': '239, 68, 68',
-        '--el-color-info-rgb': '114, 142, 171',
+        '--el-color-info-rgb': '160, 160, 160',  // 改為淺灰色
         
         // 背景颜色
         '--el-bg-color': '#ffffff',
@@ -184,9 +184,9 @@ export const useThemeStore = defineStore('theme', {
         '--el-disabled-border-color': '#e4e7ed',
         
         // 覆盖我们自己的CSS变量
-        '--primary-color': '#2563eb',
-        '--primary-dark': '#1d4ed8',
-        '--primary-light': '#3b82f6',
+        '--primary-color': '#333333',  // 改為灰色
+        '--primary-dark': '#111111',   // 改為黑色
+        '--primary-light': '#666666',  // 改為淺灰色
         '--background-color': '#f9fafb',
         '--surface-color': '#ffffff',
         '--card-background': '#ffffff',

@@ -193,6 +193,10 @@ app.include_router(chatroom.router, prefix="/api/v1/chatroom", tags=["聊天室"
 # 新增: 注册在线状态API路由
 app.include_router(online_status.router, prefix="/api/v1/online", tags=["在线状态"])  # 注册在线状态API路由
 
+# 新增: 導入和註冊主要WebSocket路由 (不加前綴，從根路徑訪問)
+from app.api.endpoints import ws_main
+app.include_router(ws_main.router, tags=["WebSocket"])  # 註冊主要WebSocket路由，從根路徑訪問
+
 # 导入和注册交易API路由
 #from app.api.endpoints import trading
 #app.include_router(trading.router, prefix="/api/v1/trading", tags=["交易"])  # 注册交易API路由

@@ -200,12 +200,12 @@ const formatTime = (timestamp) => {
 }
 
 .ai-avatar {
-  background: var(--primary-gradient, linear-gradient(135deg, #3b82f6, #2563eb));
+  background: var(--primary-gradient, linear-gradient(135deg, #444444, #333333));
   color: white;
 }
 
 .user-avatar {
-  background: var(--primary-gradient, linear-gradient(135deg, #3b82f6, #2563eb));
+  background: var(--primary-gradient, linear-gradient(135deg, #444444, #333333));
   color: white;
 }
 
@@ -218,7 +218,7 @@ const formatTime = (timestamp) => {
 }
 
 .user-sender {
-  color: var(--primary-color, #3b82f6);
+  color: var(--primary-color, #444444);
 }
 
 .ai-sender {
@@ -369,7 +369,7 @@ const formatTime = (timestamp) => {
 }
 
 .markdown-content :deep(blockquote) {
-  border-left: 4px solid var(--primary-color, #3b82f6);
+  border-left: 4px solid var(--primary-color, #444444);
   padding-left: 1em;
   margin: 1em 0;
   color: var(--text-secondary, #64748b);
@@ -379,13 +379,13 @@ const formatTime = (timestamp) => {
 }
 
 .markdown-content :deep(a) {
-  color: var(--primary-color, #3b82f6);
+  color: var(--primary-color, #444444);
   text-decoration: none;
-  border-bottom: 1px dashed var(--primary-light, #93c5fd);
+  border-bottom: 1px dashed var(--primary-light, #999999);
 }
 
 .markdown-content :deep(a:hover) {
-  border-bottom: 1px solid var(--primary-color, #3b82f6);
+  border-bottom: 1px solid var(--primary-color, #444444);
 }
 
 .markdown-content :deep(table) {
@@ -431,7 +431,7 @@ const formatTime = (timestamp) => {
 }
 
 .action-button:hover {
-  color: var(--primary-color, #3b82f6);
+  color: var(--primary-color, #444444);
 }
 
 .like-button .liked {

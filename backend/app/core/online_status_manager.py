@@ -99,10 +99,19 @@ class OnlineStatusManager:
             self.stats["cleanup_count"] += len(inactive_users)
             logger.info(f"清理了 {len(inactive_users)} 个不活跃连接")
     
-    async def connect_user(self, websocket: WebSocket, user_id: int):
+    async def connect_user(self, websocket: WebSocket, user_id: int, already_accepted: bool = False):
         """用户WebSocket连接处理"""
-        # 接受WebSocket连接
-        await websocket.accept()
+        # 只有當連接尚未被接受時才接受它
+        if not already_accepted:
+            try:
+                await websocket.accept()
+            except RuntimeError as e:
+                # 如果出現運行時錯誤（例如連接已經被接受），記錄警告但繼續處理
+                if "websocket.accept" in str(e):
+                    logger.warning(f"WebSocket 可能已經被接受: {str(e)}")
+                else:
+                    # 如果是其他運行時錯誤，則重新引發
+                    raise
         
         # 如果用户已有连接，先关闭旧连接
         if user_id in self.active_connections:

@@ -404,7 +404,7 @@ onUnmounted(() => {
         }
         
         &.active {
-          background-color: #4B4BFF;
+          background-color: #444444;
           color: white;
         }
       }
@@ -462,7 +462,7 @@ onUnmounted(() => {
           width: 10px;
           height: 10px;
           border-radius: 50%;
-          background-color: #4B4BFF;
+          background-color: #444444;
           top: 50%;
           transform: translate(-50%, -50%);
         }
@@ -499,7 +499,7 @@ onUnmounted(() => {
       position: absolute;
       width: 1px;
       height: calc(100% + 20px);
-      background-color: rgba(75, 75, 255, 0.5);
+      background-color: rgba(68, 68, 68, 0.5);
       bottom: 0;
       pointer-events: none;
       transition: left 0.2s ease;
@@ -512,8 +512,8 @@ onUnmounted(() => {
         width: 8px;
         height: 8px;
         border-radius: 50%;
-        background-color: #4B4BFF;
-        box-shadow: 0 0 0 3px rgba(75, 75, 255, 0.2);
+        background-color: #444444;
+        box-shadow: 0 0 0 3px rgba(68, 68, 68, 0.2);
       }
       
       .price-tag {
@@ -521,7 +521,7 @@ onUnmounted(() => {
         top: -40px;
         left: 50%;
         transform: translateX(-50%);
-        background-color: #4B4BFF;
+        background-color: #444444;
         color: white;
         padding: 5px 10px;
         border-radius: 5px;
@@ -538,7 +538,7 @@ onUnmounted(() => {
         top: -20px;
         left: 50%;
         transform: translateX(-50%);
-        background-color: rgba(75, 75, 255, 0.9);
+        background-color: rgba(68, 68, 68, 0.9);
         color: white;
         padding: 2px 6px;
         border-radius: 4px;

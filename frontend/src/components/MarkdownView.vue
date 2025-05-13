@@ -156,16 +156,16 @@ onUnmounted(() => {
 
 /* 链接样式 */
 :deep(a) {
-  color: #3b82f6;
+  color: #444444;
   text-decoration: none;
   font-weight: 500;
   transition: all 0.2s ease;
-  border-bottom: 1px solid rgba(59, 130, 246, 0.3);
+  border-bottom: 1px solid rgba(68, 68, 68, 0.3);
 }
 
 :deep(a:hover) {
-  color: #2563eb;
-  border-bottom-color: #2563eb;
+  color: #333333;
+  border-bottom-color: #333333;
 }
 
 /* 图片样式 */
@@ -178,7 +178,7 @@ onUnmounted(() => {
 
 /* 引用块样式 */
 :deep(blockquote) {
-  border-left: 4px solid #3b82f6;
+  border-left: 4px solid #444444;
   margin: 1em 0;
   padding: 0.5em 1em;
   background-color: #f8fafc;
@@ -307,18 +307,18 @@ onUnmounted(() => {
   }
 
   :deep(a) {
-    color: #60a5fa;
-    border-bottom-color: rgba(96, 165, 250, 0.3);
+    color: #666666;
+    border-bottom-color: rgba(102, 102, 102, 0.3);
   }
 
   :deep(a:hover) {
-    color: #93c5fd;
-    border-bottom-color: #93c5fd;
+    color: #999999;
+    border-bottom-color: #999999;
   }
 
   :deep(blockquote) {
     background-color: #1e293b;
-    border-left-color: #60a5fa;
+    border-left-color: #666666;
     color: #e2e8f0;
   }
 

@@ -14,13 +14,13 @@
       <template #header>
         <div class="user-header">
           <div class="avatar">
-            <img v-if="user.avatar_url" :src="user.avatar_url" alt="用户头像" />
+            <img v-if="user.avatar" :src="user.avatar" alt="用户头像" />
             <n-avatar v-else :size="64">{{ user.username.charAt(0).toUpperCase() }}</n-avatar>
           </div>
           <div class="user-info">
             <h3>{{ user.username }}</h3>
             <p v-if="user.email">{{ user.email }}</p>
-            <n-tag v-if="user.is_admin" type="success">管理员</n-tag>
+            <n-tag v-if="user.role === 'admin'" type="success">管理员</n-tag>
             <n-tag v-else type="info">用户</n-tag>
           </div>
         </div>
@@ -29,19 +29,19 @@
       <n-descriptions bordered>
         <n-descriptions-item label="ID">{{ user.id }}</n-descriptions-item>
         <n-descriptions-item label="账号状态">
-          {{ user.is_active ? '正常' : '已禁用' }}
+          {{ user.status === 'active' ? '正常' : '已禁用' }}
         </n-descriptions-item>
         <n-descriptions-item label="账号验证">
-          {{ user.is_verified ? '已验证' : '未验证' }}
+          {{ user.verified ? '已验证' : '未验证' }}
         </n-descriptions-item>
         <n-descriptions-item label="注册时间">
-          {{ formatDate(user.created_at) }}
+          {{ formatDate(user.createdAt) }}
         </n-descriptions-item>
         <n-descriptions-item v-if="user.phone" label="电话">
           {{ user.phone }}
         </n-descriptions-item>
-        <n-descriptions-item v-if="user.referral_code" label="推荐码">
-          {{ user.referral_code }}
+        <n-descriptions-item v-if="user.referralCode" label="推荐码">
+          {{ user.referralCode }}
         </n-descriptions-item>
       </n-descriptions>
       
@@ -80,15 +80,17 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { useUserStore } from '@/stores/user'
 import { format } from 'date-fns'
 
-// 获取Auth Store
+// 获取Auth Store 和 User Store
 const authStore = useAuthStore()
+const userStore = useUserStore()
 
 // 用户数据
-const user = computed(() => authStore.user)
-const loading = computed(() => authStore.loading)
-const error = computed(() => authStore.error)
+const user = computed(() => userStore.user)
+const loading = computed(() => userStore.isUserLoading)
+const error = computed(() => userStore.userError)
 
 // 缓存相关状态
 const lastFetchTime = ref(0)
@@ -115,7 +117,7 @@ const loadUserData = async (forceRefresh = false) => {
     fetchCount.value++
     
     // 获取用户数据
-    await authStore.getUserProfile(forceRefresh)
+    await userStore.getUserData(forceRefresh)
     
     // 记录获取时间
     lastFetchTime.value = Date.now()
@@ -159,7 +161,7 @@ const updateDebugInfo = (info) => {
 // 更新缓存时间
 const updateCacheTime = (seconds) => {
   cacheTime.value = seconds
-  authStore.userCacheDuration = seconds * 1000
+  userStore.cacheDuration = seconds * 1000
   
   updateDebugInfo({
     cacheTimeUpdated: true,

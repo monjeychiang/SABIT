@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useUserStore } from '@/stores/user'
 
 // 定義路由配置
 export const routes: RouteRecordRaw[] = [
@@ -144,6 +145,7 @@ const router = createRouter({
 // 全局前置守衛
 router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
+  const userStore = useUserStore()
   
   // 只檢查管理員頁面的權限
   if (to.meta.requiresAdmin) {
@@ -153,7 +155,7 @@ router.beforeEach(async (to, from, next) => {
       return
     }
     
-    if (!authStore.isAdmin) {
+    if (!userStore.isAdmin) {
       window.dispatchEvent(new CustomEvent('show-toast', { 
         detail: { 
           type: 'error',

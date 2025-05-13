@@ -1302,8 +1302,8 @@ body.dark-theme .chat-panel::-webkit-scrollbar-thumb:hover {
 
 /* 覆盖ElementPlus组件的样式，确保适应深色模式 */
 body.dark-theme :deep(.el-button) {
-  --el-button-hover-text-color: #60a5fa;
-  --el-button-hover-bg-color: rgba(96, 165, 250, 0.1);
+  --el-button-hover-text-color: #666666;
+  --el-button-hover-bg-color: rgba(102, 102, 102, 0.1);
 }
 
 body.dark-theme :deep(.el-input__inner) {
@@ -1317,7 +1317,7 @@ body.dark-theme :deep(.el-input__wrapper) {
 }
 
 body.dark-theme :deep(.el-input__wrapper.is-focus) {
-  box-shadow: 0 0 0 1px var(--primary-color, #3b82f6) inset;
+  box-shadow: 0 0 0 1px var(--primary-color, #444444) inset;
 }
 
 /* 深色模式下对话框样式 */

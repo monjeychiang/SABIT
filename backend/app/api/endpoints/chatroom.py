@@ -16,6 +16,11 @@ from ...schemas.chatroom import (
 )
 from ...core.security import get_current_user, verify_token_ws
 from ...api.endpoints.admin import get_current_admin_user
+from ...core.main_ws_manager import main_ws_manager
+
+# 設置聊天室訊息數量上限
+MAX_MESSAGES_PER_ROOM = 1000  # 每個聊天室最多保留1000條訊息
+DELETE_MESSAGES_COUNT = 500   # 超過上限時刪除最舊的500條訊息
 
 # 设置日志记录器
 logger = logging.getLogger(__name__)
@@ -35,9 +40,19 @@ class ConnectionManager:
         # 用户状态记录
         self.user_status: Dict[int, Dict[str, Any]] = {}
         
-    async def connect(self, websocket: WebSocket, user_id: int):
+    async def connect(self, websocket: WebSocket, user_id: int, already_accepted: bool = False):
         """用户连接 WebSocket"""
-        await websocket.accept()
+        # 只有當連接尚未被接受時才接受它
+        if not already_accepted:
+            try:
+                await websocket.accept()
+            except RuntimeError as e:
+                # 如果出現運行時錯誤（例如連接已經被接受），記錄警告但繼續處理
+                if "websocket.accept" in str(e):
+                    logger.warning(f"WebSocket 可能已經被接受: {str(e)}")
+                else:
+                    # 如果是其他運行時錯誤，則重新引發
+                    raise
         
         # 存储WebSocket连接
         self.active_connections[user_id] = websocket
@@ -117,19 +132,43 @@ class ConnectionManager:
         logger.info(f"用户 {user_id} 离开聊天室 {room_id}, 该聊天室剩余成员 {len(self.room_members.get(room_id, set()))}")
     
     async def broadcast_to_room(self, message: Dict[str, Any], room_id: int, exclude_user_id: Optional[int] = None):
-        """向聊天室的所有在线成员广播消息"""
+        """向聊天室的所有在線成員廣播消息"""
         if room_id not in self.room_members:
+            logger.warning(f"[ChatroomWS] 廣播失敗: 聊天室 {room_id} 不存在於記憶體中")
             return
             
-        for user_id in self.room_members[room_id]:
+        room_members = list(self.room_members[room_id])
+        broadcast_count = 0
+        logger.debug(f"[ChatroomWS] 開始廣播消息到聊天室 {room_id}, 成員列表: {room_members}, 排除用戶: {exclude_user_id}")
+        
+        for user_id in room_members:
             if exclude_user_id is not None and user_id == exclude_user_id:
+                logger.debug(f"[ChatroomWS] 排除用戶 {user_id} 不發送消息")
                 continue
                 
+            # 首先嘗試通過聊天室 WebSocket 連接發送
+            ws_sent = False
             if user_id in self.active_connections:
                 try:
                     await self.active_connections[user_id].send_json(message)
+                    broadcast_count += 1
+                    ws_sent = True
+                    logger.debug(f"[ChatroomWS] 通過聊天室管理器成功廣播消息給用戶 {user_id}")
                 except Exception as e:
-                    logger.error(f"向用户 {user_id} 广播消息失败: {str(e)}")
+                    logger.error(f"[ChatroomWS] 通過聊天室管理器向用户 {user_id} 广播消息失败: {str(e)}")
+            
+            # 如果通過聊天室 WebSocket 失敗，嘗試通過主 WebSocket 發送
+            if not ws_sent:
+                try:
+                    # 使用主 WebSocket 管理器發送消息 (如果用戶是通過主 WebSocket 連接的)
+                    await main_ws_manager.send_to_user(user_id, message)
+                    broadcast_count += 1
+                    logger.debug(f"[ChatroomWS] 通過主 WebSocket 管理器成功廣播消息給用戶 {user_id}")
+                except Exception as e:
+                    logger.error(f"[ChatroomWS] 通過主 WebSocket 管理器向用户 {user_id} 广播消息失败: {str(e)}")
+                    logger.debug(f"[ChatroomWS] 用戶 {user_id} 可能真的離線，無法接收消息")
+        
+        logger.debug(f"[ChatroomWS] 廣播完成: 聊天室 {room_id}, 成功發送給 {broadcast_count}/{len(room_members)} 名用戶")
     
     async def send_personal_message(self, message: Dict[str, Any], user_id: int):
         """向特定用户发送消息"""
@@ -770,290 +809,121 @@ async def get_room_members(
             detail="获取聊天室成员失败"
         )
 
-# WebSocket路由
-@router.websocket("/ws/user/{token}")
-async def websocket_endpoint(
-    websocket: WebSocket, 
-    token: str,
+@router.get("/messages/{room_id}", response_model=List[ChatRoomMessageResponse])
+async def get_chat_messages(
+    room_id: int = Path(..., ge=1),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """WebSocket连接处理 - 每用户一个连接"""
-    # 验证Token
-    user = await verify_token_ws(token, db)
-    if not user:
-            await websocket.close(code=1008)  # Policy Violation
-            return
+    """
+    獲取聊天室的歷史消息
     
-    # 接受WebSocket连接
+    返回指定聊天室的消息列表，原本支持分頁，現在返回所有消息
+    
+    參數:
+        room_id: 聊天室ID
+        skip: 已棄用 (保留參數但不使用)
+        limit: 已棄用 (保留參數但不使用)
+        
+    返回:
+        聊天消息列表
+    """
     try:
-        # 建立WebSocket连接
-        await manager.connect(websocket, user.id)
+        # 查詢聊天室
+        room = db.query(ChatRoom).filter(ChatRoom.id == room_id).first()
+        if not room:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="聊天室不存在"
+            )
+            
+        # 檢查用户是否有權限查看消息
+        # 公開聊天室或者用户是聊天室成員可以查看消息
+        is_member = db.query(ChatRoomMember).filter(
+            ChatRoomMember.room_id == room_id,
+            ChatRoomMember.user_id == current_user.id
+        ).first() is not None
         
-        # 从数据库获取用户加入的聊天室
-        user_rooms = (
-            db.query(ChatRoomMember.room_id)
-            .filter(ChatRoomMember.user_id == user.id)
-            .all()
+        if not room.is_public and not is_member and not current_user.is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="您沒有權限查看此聊天室的消息"
+            )
+            
+        # 檢查並清理超過上限的訊息
+        await cleanup_messages(room_id, db)
+            
+        # 查詢消息，按時間順序返回，過濾掉系統消息
+        # 移除 limit 和 offset，返回所有消息
+        messages = db.query(ChatRoomMessage).filter(
+            ChatRoomMessage.room_id == room_id,
+            ChatRoomMessage.is_system == False  # 過濾掉系統消息
+        ).order_by(
+            ChatRoomMessage.created_at.asc()
+        ).all()
+        
+        # 構建響應
+        result = []
+        for message in messages:
+            message_response = ChatRoomMessageResponse.from_orm(message)
+            if message.user:
+                message_response.user = UserBasic.from_orm(message.user)
+            result.append(message_response)
+            
+        # 更新用户最後讀取時間
+        if is_member:
+            member = db.query(ChatRoomMember).filter(
+                ChatRoomMember.room_id == room_id,
+                ChatRoomMember.user_id == current_user.id
+            ).first()
+            
+            member.last_read_at = datetime.now()
+            db.commit()
+            
+        return result
+        
+    except SQLAlchemyError as e:
+        logger.error(f"獲取聊天室消息失敗: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="獲取聊天室消息失敗"
         )
-        room_ids = [room[0] for room in user_rooms]
+
+# 檢查並刪除多餘的聊天室訊息
+async def cleanup_messages(room_id: int, db: Session):
+    """
+    檢查聊天室訊息數量，如果超過上限則刪除最舊的訊息
+    
+    參數:
+        room_id: 聊天室ID
+        db: 資料庫會話
+    """
+    try:
+        # 獲取聊天室訊息總數
+        message_count = db.query(ChatRoomMessage).filter(
+            ChatRoomMessage.room_id == room_id
+        ).count()
         
-        # 同步数据库中的聊天室到连接管理器
-        manager.sync_db_rooms(user.id, room_ids)
-        
-        # 告诉当前用户已成功连接，并发送初始信息
-        welcome_message = {
-            "type": "connected",
-            "user_id": user.id,
-            "content": f"您已连接到聊天系统",
-            "room_ids": room_ids,
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        await manager.send_personal_message(welcome_message, user.id)
-        
-        # 接收消息循环
-        while True:
-            try:
-                # 接收消息
-                data = await websocket.receive_text()
-                message_data = json.loads(data)
-                
-                # 验证消息格式
-                if "type" not in message_data:
-                    continue
-                
-                # 处理心跳消息 - 不需要room_id
-                if message_data["type"] == "ping":
-                    logger.debug(f"收到用户 {user.id} 的ping消息")
-                    pong_message = {
-                        "type": "pong"
-                    }
-                    await websocket.send_json(pong_message)
-                    continue
-                
-                # 其他消息需要包含room_id
-                if "room_id" not in message_data:
-                    continue
-                    
-                room_id = int(message_data["room_id"])
-                
-                # 检查用户是否有权在此聊天室发消息
-                if not manager.is_user_in_room(user.id, room_id):
-                    # 查询数据库确认用户是否是聊天室成员
-                    member = (
-                        db.query(ChatRoomMember)
-                        .filter(
-                            ChatRoomMember.room_id == room_id,
-                            ChatRoomMember.user_id == user.id
-                        )
-                        .first()
-                    )
-                    
-                    if not member:
-                        # 用户不是此聊天室成员，发送错误消息
-                        error_message = {
-                            "type": "error",
-                            "room_id": room_id,
-                            "content": "您不是此聊天室成员，无法发送消息",
-                            "timestamp": datetime.now().isoformat()
-                        }
-                        await manager.send_personal_message(error_message, user.id)
-                        continue
-                    else:
-                        # 用户是成员但未在manager中注册，添加用户到房间
-                        manager.add_user_to_room(user.id, room_id)
-                    
-                # 处理不同类型的消息
-                if message_data["type"] == "message":
-                    # 处理聊天消息
-                    if "content" not in message_data or not message_data["content"].strip():
-                        continue
-                        
-                    # 创建消息记录
-                    new_message = ChatRoomMessage(
-                        room_id=room_id,
-                        user_id=user.id,
-                        content=message_data["content"],
-                        is_system=False
-                    )
-                    
-                    db.add(new_message)
-                    db.commit()
-                    db.refresh(new_message)
-                    
-                    # 获取房间信息
-                    room = db.query(ChatRoom).filter(ChatRoom.id == room_id).first()
-                    if not room:
-                        continue
-                    
-                    # 更新用户最后阅读时间
-                    member = (
-                        db.query(ChatRoomMember)
-                        .filter(
-                            ChatRoomMember.room_id == room_id,
-                            ChatRoomMember.user_id == user.id
-                        )
-                        .first()
-                    )
-                    if member:
-                        member.last_read_at = datetime.now()
-                        db.commit()
-                    
-                    # 广播消息
-                    broadcast_message = {
-                        "type": "message",
-                        "message_id": new_message.id,
-                        "room_id": room_id,
-                        "user_id": user.id,
-                        "username": user.username,
-                        "avatar_url": user.avatar_url,
-                        "content": new_message.content,
-                        "timestamp": new_message.created_at.isoformat()
-                    }
-                    
-                    await manager.broadcast_to_room(broadcast_message, room_id)
-                    
-                elif message_data["type"] == "typing":
-                    # 处理正在输入状态
-                    typing_message = {
-                        "type": "typing",
-                        "room_id": room_id,
-                        "user_id": user.id,
-                        "username": user.username,
-                        "timestamp": datetime.now().isoformat()
-                    }
-                    
-                    await manager.broadcast_to_room(typing_message, room_id, exclude_user_id=user.id)
-                
-                elif message_data["type"] == "join_room":
-                    # 用户请求加入聊天室
-                    # 检查用户是否有权限加入
-                    room = db.query(ChatRoom).filter(ChatRoom.id == room_id).first()
-                    if not room:
-                        error_message = {
-                            "type": "error",
-                            "content": "聊天室不存在",
-                            "timestamp": datetime.now().isoformat()
-                        }
-                        await manager.send_personal_message(error_message, user.id)
-                        continue
-                    
-                    # 检查是否公开聊天室或用户是管理员
-                    if not room.is_public and not user.is_admin:
-                        error_message = {
-                            "type": "error",
-                            "room_id": room_id,
-                            "content": "该聊天室是私有的，需要邀请才能加入",
-                            "timestamp": datetime.now().isoformat()
-                        }
-                        await manager.send_personal_message(error_message, user.id)
-                        continue
-                    
-                    # 检查是否已经是成员
-                    existing_member = (
-                        db.query(ChatRoomMember)
-                        .filter(
-                            ChatRoomMember.room_id == room_id,
-                            ChatRoomMember.user_id == user.id
-                        )
-                        .first()
-                    )
-                    
-                    if not existing_member:
-                        # 添加成员
-                        new_member = ChatRoomMember(
-                            room_id=room_id,
-                            user_id=user.id,
-                            is_admin=False
-                        )
-                        
-                        db.add(new_member)
-                        
-                        # 添加系统消息
-                        system_message = ChatRoomMessage(
-                            room_id=room_id,
-                            user_id=None,
-                            content=f"{user.username} 加入了聊天室",
-                            is_system=True
-                        )
-                        
-                        db.add(system_message)
-                        db.commit()
-                    
-                    # 更新连接管理器
-                    manager.add_user_to_room(user.id, room_id)
-                    
-                    # 通知聊天室所有成员
-                    join_message = {
-                        "type": "join",
-                        "room_id": room_id,
-                        "user_id": user.id,
-                        "username": user.username,
-                        "avatar_url": user.avatar_url,
-                        "content": f"{user.username} 加入了聊天室",
-                        "timestamp": datetime.now().isoformat()
-                    }
-                    
-                    await manager.broadcast_to_room(join_message, room_id)
-                    
-                elif message_data["type"] == "leave_room":
-                    # 用户请求离开聊天室
-                    # 检查用户是否在该聊天室
-                    member = (
-                        db.query(ChatRoomMember)
-                        .filter(
-                            ChatRoomMember.room_id == room_id,
-                            ChatRoomMember.user_id == user.id
-                        )
-                        .first()
-                    )
-                    
-                    if member:
-                        # 从数据库移除
-                        db.delete(member)
-                        
-                        # 添加系统消息
-                        system_message = ChatRoomMessage(
-                            room_id=room_id,
-                            user_id=None,
-                            content=f"{user.username} 离开了聊天室",
-                            is_system=True
-                        )
-                        
-                        db.add(system_message)
-                        db.commit()
-                        
-                        # 更新连接管理器
-                        manager.remove_user_from_room(user.id, room_id)
-                        
-                        # 通知聊天室所有成员
-                        leave_message = {
-                            "type": "leave",
-                            "room_id": room_id,
-                            "user_id": user.id,
-                            "username": user.username,
-                            "content": f"{user.username} 离开了聊天室",
-                            "timestamp": datetime.now().isoformat()
-                        }
-                        
-                        await manager.broadcast_to_room(leave_message, room_id)
-                    
-            except WebSocketDisconnect:
-                break
-            except json.JSONDecodeError:
-                # 忽略无效的JSON
-                continue
-            except Exception as e:
-                logger.error(f"处理WebSocket消息失败: {str(e)}")
-                break
-                
-    except WebSocketDisconnect:
-        # 处理连接断开
-        manager.disconnect(user.id)
-        
-        # 通知所有相关聊天室的其他用户
-        await manager.broadcast_user_status_change(user.id, False)
-        
+        # 如果訊息數量超過上限，刪除最舊的訊息
+        if message_count > MAX_MESSAGES_PER_ROOM:
+            # 獲取要刪除的訊息ID
+            messages_to_delete = db.query(ChatRoomMessage).filter(
+                ChatRoomMessage.room_id == room_id
+            ).order_by(
+                ChatRoomMessage.created_at.asc()
+            ).limit(DELETE_MESSAGES_COUNT).all()
+            
+            message_ids = [message.id for message in messages_to_delete]
+            
+            # 刪除這些訊息
+            if message_ids:
+                db.query(ChatRoomMessage).filter(
+                    ChatRoomMessage.id.in_(message_ids)
+                ).delete(synchronize_session=False)
+                db.commit()
+                logger.info(f"已從聊天室 {room_id} 刪除 {len(message_ids)} 條最舊訊息，目前共有 {message_count - len(message_ids)} 條訊息")
     except Exception as e:
-        logger.error(f"WebSocket处理失败: {str(e)}")
-        manager.disconnect(user.id) 
+        logger.error(f"清理聊天室訊息時出錯: {str(e)}")
+        # 不拋出異常，讓主要功能繼續執行

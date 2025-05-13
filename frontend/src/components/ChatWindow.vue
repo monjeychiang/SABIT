@@ -93,39 +93,69 @@
           
           <!-- 聊天消息区域 - 仅成员可见 -->
           <div v-else class="chat-messages" ref="messagesContainer">
-          <!-- 欢迎消息 -->
+            <!-- 欢迎消息 -->
             <div class="message system" v-if="currentRoomMessages.length === 0">
-            <div class="message-content">
+              <div class="message-content">
                 <p>👋 歡迎來到 {{ getCurrentRoomName() }}！</p>
                 <span class="message-time">{{ formatTime(new Date()) }}</span>
-            </div>
-          </div>
-          
-          <!-- 消息列表 -->
-          <div 
-              v-for="(message, index) in currentRoomMessages" 
-            :key="index" 
-            class="message" 
-            :class="{ 'user': message.type === 'user', 'system': message.type === 'system', 'other': message.type === 'other' }"
-          >
-              <!-- 只有他人消息才显示头像，系统消息不显示头像 -->
-              <div class="message-avatar" v-if="message.type === 'other'">
-                <img :src="message.avatar || 'https://via.placeholder.com/40'" alt="avatar">
               </div>
-              <div class="message-wrapper">
-                <!-- 系统消息或他人消息才显示用户名 -->
-                <div class="message-header" v-if="message.type === 'other' || message.type === 'system'">
-                  <span class="message-username" :class="{ 'system-username': message.type === 'system' }">{{ message.username || '系統消息' }}</span>
+            </div>
+            
+            <!-- 消息列表 - 修改後的渲染邏輯，處理連續消息 -->
+            <template v-for="(message, index) in groupedMessages" :key="message.id || index">
+              <!-- 系统消息 -->
+              <div v-if="message.type === 'system'" class="message system">
+                <div class="message-content system-content">
+                  <p>{{ message.text }}</p>
                   <span class="message-time">{{ formatTime(message.time) }}</span>
                 </div>
-            <div class="message-content" :class="{ 'system-content': message.type === 'system' }">
-              <p>{{ message.text }}</p>
-                  <!-- 自己发送的消息在内容下方显示时间 -->
-                  <span class="message-time" v-if="message.type === 'user'">{{ formatTime(message.time) }}</span>
               </div>
-            </div>
+              
+              <!-- 用户自己的消息 -->
+              <div v-else-if="message.type === 'user'" class="message user">
+                <div class="message-wrapper">
+                  <div class="message-content">
+                    <p>{{ message.text }}</p>
+                    <span class="message-time">{{ formatTime(message.time) }}</span>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- 他人消息 - 带分组逻辑 -->
+              <div v-else class="message other" :class="{'consecutive': message.isConsecutive}">
+                <!-- 只有不是连续消息时才显示头像和用户名 -->
+                <template v-if="!message.isConsecutive">
+                  <div class="message-avatar">
+                    <UserAvatar 
+                      :username="message.username"
+                      :avatar-url="message.avatar" 
+                      size="medium"
+                      :no-cache="true"
+                    />
+                  </div>
+                  <div class="message-wrapper">
+                    <div class="message-header">
+                      <span class="message-username">{{ message.username }}</span>
+                      <span class="message-time">{{ formatTime(message.time) }}</span>
+                    </div>
+                    <div class="message-content">
+                      <p>{{ message.text }}</p>
+                    </div>
+                  </div>
+                </template>
+                
+                <!-- 连续消息只显示内容 -->
+                <template v-else>
+                  <div class="message-avatar invisible"></div>
+                  <div class="message-wrapper consecutive-wrapper">
+                    <div class="message-content consecutive-content">
+                      <p>{{ message.text }}</p>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </template>
           </div>
-        </div>
         
           <!-- 聊天输入区域 - 仅成员可见 -->
           <div v-if="currentRoom && currentRoom.is_member" class="chat-input-area">
@@ -445,6 +475,7 @@ import { useUserStore } from '@/stores/user'
 import { useChatroomStore } from '@/stores/chatroom'
 import { useAuthStore } from '@/stores/auth' // 添加引入auth store
 import axios from 'axios'
+import UserAvatar from '@/components/UserAvatar.vue' // 確保正確導入頭像組件
 
 // 获取用户store和聊天store
 const userStore = useUserStore()
@@ -477,6 +508,11 @@ const isLoadingPublicRooms = ref(false) // 是否正在加载公共聊天室
 const publicRooms = ref([]) // 公共聊天室列表
 const roomNameInput = ref(null) // 聊天室名称输入框引用
 const currentRoomAnnouncement = ref('') // 当前聊天室公告
+
+// 加載更多消息相關狀態
+const isLoadingMore = ref(false);
+const scrollPosition = ref(null);
+const hasMoreMessagesToLoad = ref(true);
 
 // 聊天室管理相关状态
 const showRoomManagementModal = ref(false) // 是否显示聊天室管理模态框
@@ -559,6 +595,8 @@ const selectRoom = async (roomId) => {
   
   // 设置当前聊天室ID并加载消息
   currentRoomId.value = roomId
+  
+  // 加載聊天室消息
   await chatroomStore.loadRoomMessages(roomId)
   
   // 标记该聊天室所有消息为已读
@@ -582,15 +620,18 @@ const selectRoom = async (roomId) => {
   scrollToBottom()
 }
 
-// 发送消息
+// 發送消息
 const sendMessage = () => {
   const content = inputMessage.value.trim()
   if (!content || !currentRoomId.value) return
   
-  // 使用chatroomStore发送消息
-  chatroomStore.sendChatMessage(content)
+  // 使用chatroomStore發送消息
+  console.log(`[UI] 發送消息到聊天室 ${currentRoomId.value}:`, content);
   
-  // 清空输入框
+  const result = chatroomStore.sendChatMessage(content)
+  console.log(`[UI] 消息發送結果:`, result);
+  
+  // 清空輸入框
   inputMessage.value = ''
 }
 
@@ -787,23 +828,43 @@ const saveRoomSettings = async () => {
 }
 
 // 格式化时间
-const formatTime = (dateString) => {
-  if (!dateString) return ''
+const formatTime = (timestamp) => {
+  if (!timestamp) return '';
   
-  const date = new Date(dateString)
-  const now = new Date()
-  const diffMs = now - date
-  const diffMins = Math.floor(diffMs / 60000)
-  const diffHours = Math.floor(diffMins / 60)
-  const diffDays = Math.floor(diffHours / 24)
+  const date = new Date(timestamp);
+  if (isNaN(date.getTime())) {
+    return '';
+  }
   
-  if (diffMins < 1) return '刚刚'
-  if (diffMins < 60) return `${diffMins}分钟前`
-  if (diffHours < 24) return `${diffHours}小时前`
-  if (diffDays < 7) return `${diffDays}天前`
+  const now = new Date();
+  const diffMs = now - date;
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
   
-  return date.toLocaleDateString()
-}
+  // 刚刚 - 1分钟内
+  if (diffMins < 1) {
+    return '剛剛';
+  }
+  
+  // xx分钟前 - 1小时内
+  if (diffMins < 60) {
+    return `${diffMins}分鐘前`;
+  }
+  
+  // 今天 HH:MM - 24小时内
+  if (diffDays < 1) {
+    return `今天 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+  }
+  
+  // 昨天 HH:MM - 48小时内
+  if (diffDays === 1) {
+    return `昨天 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+  }
+  
+  // YYYY-MM-DD HH:MM - 其他时间
+  return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+};
 
 // 上下文菜单
 const contextMenu = reactive({
@@ -843,20 +904,31 @@ watch(currentRoomMessages, () => {
   })
 })
 
-// 组件挂载时执行
+// 定義處理新消息事件的函數
+const handleNewMessage = (event) => {
+  console.log('[ChatWindow] 收到新消息事件，更新UI', event.detail || {});
+  // 強制下一個tick更新UI
+  nextTick(() => {
+    scrollToBottom();
+    // 可以嘗試額外的強制更新方法
+    forceUpdate();
+  });
+};
+
+// 組件掛載時執行
 onMounted(async () => {
   // 初始化聊天室列表
   if (userStore.isAuthenticated) {
-    // 只在用户首次打开聊天窗口且尚未加载聊天室列表时加载
+    // 只在用戶首次打開聊天窗口且尚未加載聊天室列表時加載
     if (chatroomStore.rooms.length === 0) {
       await chatroomStore.fetchUserRooms()
       
-      // 如果有聊天室，选择第一个
+      // 如果有聊天室，選擇第一個
       if (chatroomStore.rooms.length > 0) {
         selectRoom(chatroomStore.rooms[0].id)
       }
     } else if (currentRoomId.value) {
-      // 如果已有当前聊天室，加载其消息和公告
+      // 如果已有當前聊天室，加載其消息和公告
       await chatroomStore.loadRoomMessages(currentRoomId.value)
       try {
         const response = await axios.get(`/api/v1/chatroom/rooms/${currentRoomId.value}`)
@@ -864,15 +936,18 @@ onMounted(async () => {
           currentRoomAnnouncement.value = response.data.announcement
         }
       } catch (error) {
-        console.error('初始化时获取聊天室详情失败:', error)
+        console.error('初始化時獲取聊天室詳情失敗:', error)
       }
     }
   }
   
-  // 处理点击外部关闭上下文菜单
+  // 註冊事件監聽器
+  window.addEventListener('chat:message-received', handleNewMessage);
+  
+  // 處理點擊外部關閉上下文菜單
   document.addEventListener('click', (event) => {
     if (contextMenu.show) {
-      // 修正选择器，使用正确的类名
+      // 修正選擇器，使用正確的類名
       const isClickInside = event.target.closest('.context-menu')
       if (!isClickInside) {
         closeContextMenu()
@@ -881,28 +956,34 @@ onMounted(async () => {
   })
 })
 
+// 強制更新函數
+const forceUpdate = () => {
+  if (messagesContainer.value) {
+    // 嘗試觸發DOM重繪
+    const currentScrollTop = messagesContainer.value.scrollTop;
+    const currentScrollHeight = messagesContainer.value.scrollHeight;
+    
+    // 設置滾動位置，確保內容可見
+    setTimeout(() => {
+      messagesContainer.value.scrollTop = currentScrollHeight;
+    }, 10);
+  }
+};
+
 // 组件卸载时执行
 onUnmounted(() => {
   // 移除事件监听器
-  document.removeEventListener('click', closeContextMenu)
+  document.removeEventListener('click', closeContextMenu);
+  
+  // 確保移除正確的消息事件處理函數
+  // window.removeEventListener('chat:message-received', () => {}); // 這是錯誤的寫法
+  window.removeEventListener('chat:message-received', handleNewMessage);
 })
 
-// 计算属性：判断当前用户是否为管理员（结合两个store的判断）
+// 计算属性：判断当前用户是否为管理员
 const isUserAdmin = computed(() => {
-  // 先从auth store检查管理员状态
-  if (authStore.user && authStore.user.is_admin) {
-    return true
-  }
-  // 再从user store检查管理员状态
-  if (userStore.user && userStore.user.is_admin) {
-    return true
-  }
-  // 如果user store有role属性且为admin
-  if (userStore.user && userStore.user.role === 'admin') {
-    return true
-  }
-  
-  return false
+  // 使用 userStore 的 isAdmin 計算屬性
+  return userStore.isAdmin
 })
 
 // 修复 showContextMenu 计算属性
@@ -1037,6 +1118,86 @@ const openEmptyContextMenu = (event) => {
     document.addEventListener('click', closeContextMenu, { once: true })
   }
 }
+
+// 计算属性：分组后的消息
+const groupedMessages = computed(() => {
+  // 将消息分组，处理连续消息
+  const messages = currentRoomMessages.value || [];
+  const grouped = [];
+  
+  // 设置连续消息的最大时间间隔(毫秒)
+  const MAX_TIME_DIFF = 5 * 60 * 1000; // 5分钟
+  
+  messages.forEach((message, index) => {
+    // 克隆消息对象，避免修改原始数据
+    const clonedMessage = { ...message };
+    
+    // 判断是否为连续消息
+    if (index > 0) {
+      const prevMessage = messages[index - 1];
+      const isSameUser = prevMessage.userId === message.userId && prevMessage.type === message.type;
+      let prevTime = new Date(prevMessage.time).getTime();
+      let currTime = new Date(message.time).getTime();
+      
+      // 如果时间解析失败，使用当前时间
+      if (isNaN(prevTime) || isNaN(currTime)) {
+        console.warn('消息时间格式解析错误，使用默认值', prevMessage.time, message.time);
+        prevTime = Date.now() - 1000;
+        currTime = Date.now();
+      }
+      
+      const isCloseInTime = (currTime - prevTime) < MAX_TIME_DIFF;
+      
+      // 如果是同一用户在短时间内的连续消息，标记为连续消息
+      clonedMessage.isConsecutive = isSameUser && isCloseInTime && message.type === 'other';
+    } else {
+      clonedMessage.isConsecutive = false;
+    }
+    
+    grouped.push(clonedMessage);
+  });
+  
+  return grouped;
+});
+
+// 處理消息容器滾動事件，用於檢測是否需要加載更多歷史消息
+const handleMessagesScroll = async () => {
+  if (!messagesContainer.value) return;
+  
+  // 當滾動到頂部時加載更多消息
+  // 滾動位置小於50px時觸發加載
+  if (messagesContainer.value.scrollTop < 50 && !isLoadingMore.value && hasMoreMessagesToLoad.value && currentRoomId.value) {
+    // 保存當前捲動位置和高度
+    const oldScrollHeight = messagesContainer.value.scrollHeight;
+    
+    // 設置加載狀態
+    isLoadingMore.value = true;
+    
+    try {
+      // 調用store方法加載更多消息
+      const hasMore = await chatroomStore.loadMoreMessages(currentRoomId.value);
+      
+      // 更新是否還有更多消息可加載
+      hasMoreMessagesToLoad.value = hasMore;
+      
+      // 加載完成後恢復滾動位置
+      await nextTick();
+      if (messagesContainer.value) {
+        // 計算新增內容的高度差
+        const newScrollHeight = messagesContainer.value.scrollHeight;
+        const heightDiff = newScrollHeight - oldScrollHeight;
+        
+        // 設置滾動位置，保持用戶查看的位置不變
+        messagesContainer.value.scrollTop = heightDiff + 50;
+      }
+    } catch (error) {
+      console.error('加載更多消息失敗:', error);
+    } finally {
+      // 重置加載狀態
+      isLoadingMore.value = false;
+    }
+  }
+};
 </script>
 
 <style scoped>
@@ -1278,6 +1439,31 @@ const openEmptyContextMenu = (event) => {
   background-color: var(--chat-bg, #ffffff);
 }
 
+.loading-more-messages {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  margin-bottom: 10px;
+  color: var(--text-secondary, #666666);
+  font-size: 12px;
+}
+
+.loading-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(0, 0, 0, 0.1);
+  border-top-color: var(--primary-color, #f0b90b);
+  border-radius: 50%;
+  margin-right: 8px;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
 .message {
   display: flex;
   margin-bottom: 5px;
@@ -1292,10 +1478,12 @@ const openEmptyContextMenu = (event) => {
   flex-shrink: 0;
 }
 
-.message-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+.message-avatar :deep(.user-avatar-component) {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  aspect-ratio: 1/1;
 }
 
 .message-wrapper {
@@ -2662,5 +2850,68 @@ const openEmptyContextMenu = (event) => {
 :root.dark .confirm-message,
 :root[data-theme='dark'] .confirm-message {
   color: var(--dark-text-color, #e0e0e0);
+}
+
+/* 添加連續消息相關樣式 */
+.message.other.consecutive {
+  margin-top: 2px;
+}
+
+.message-avatar.invisible {
+  visibility: hidden;
+  width: 30px;
+  height: 30px;
+  margin-right: 10px;
+  flex-shrink: 0;
+}
+
+.consecutive-wrapper {
+  margin-top: 2px;
+}
+
+.consecutive-content {
+  margin-top: 0;
+  border-top-left-radius: 6px;
+}
+
+/* 修改聊天訊息感知間距，使連續消息看起來更加緊湊 */
+.message {
+  display: flex;
+  margin-bottom: 5px;
+}
+
+.message.system {
+  margin-bottom: 10px;
+  padding-left: 40px; /* 為系統消息添加左側間距，與有頭像的消息對齊 */
+}
+
+/* 優化GIF頭像顯示 */
+.message-avatar img,
+.message-avatar :deep(.avatar-image) {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: auto;
+  transform: translateZ(0); /* 開啟GPU加速 */
+}
+
+/* 確保頭像組件正確顯示 */
+.message-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  overflow: hidden;
+  margin-right: 10px;
+  flex-shrink: 0;
+}
+
+.message-avatar :deep(.user-avatar-component) {
+  width: 30px !important;
+  height: 30px !important;
+  min-width: 30px !important;
+  min-height: 30px !important;
+  max-width: 30px !important;
+  max-height: 30px !important;
+  aspect-ratio: 1/1;
 }
 </style> 

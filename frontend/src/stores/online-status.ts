@@ -61,13 +61,27 @@ export const useOnlineStatusStore = defineStore('onlineStatus', {
       
       console.log('初始化在线状态管理系统...');
       
-      // 注意：不再直接连接WebSocket，由authService统一管理
-      // WebSocket连接将在authService.initializeWebSockets()中处理
+      // 註冊在線狀態事件監聽器，接收來自主 WebSocket 的在線狀態變更
+      this.setupEventListeners();
       
-      // 设置定期刷新在线状态
+      // 設置定期刷新在線狀態
       this.startPeriodicRefresh();
       
       console.log('在线状态管理系统初始化完成');
+    },
+    
+    // 設置事件監聽器
+    setupEventListeners() {
+      // 監聽用戶狀態變化事件 (從主 WebSocket 轉發)
+      window.addEventListener('online:user-status-changed', (event: CustomEvent) => {
+        if (event.detail) {
+          const { userId, isOnline } = event.detail;
+          console.log(`[Online] 收到用戶狀態變化事件: 用戶 ${userId} 狀態變為 ${isOnline ? '在線' : '離線'}`);
+          this.updateUserStatus(userId, isOnline);
+        }
+      });
+      
+      console.log('[Online] 事件監聽器設置完成');
     },
     
     // 处理WebSocket消息

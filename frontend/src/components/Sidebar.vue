@@ -107,6 +107,7 @@
 import { computed, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import { useUserStore } from '@/stores/user';
 
 const props = defineProps({
   isCollapsed: {
@@ -128,9 +129,10 @@ const emit = defineEmits(['close-mobile-sidebar']);
 const route = useRoute();
 const router = useRouter();
 const authStore = useAuthStore();
+const userStore = useUserStore();
 
 // 計算屬性：是否為管理員
-const isAdmin = computed(() => authStore.isAdmin);
+const isAdmin = computed(() => userStore.isAdmin);
 
 // 检查当前路由是否激活
 const isActiveRoute = (path) => {

@@ -1,16 +1,12 @@
-import { ref, computed } from 'vue';
-import { getTokenManager } from '@/services/tokenService';
+import { ref } from 'vue';
 import { useAuthStore } from '@/stores/auth';
 
-// WebSocket连接类型枚举
+// 單一主WebSocket連線類型
 export enum WebSocketType {
-  NOTIFICATION = 'notification',
-  CHATROOM = 'chatroom',
-  ONLINE_STATUS = 'onlineStatus',
-  MARKET_DATA = 'marketData'
+  MAIN = 'main'
 }
 
-// WebSocket连接状态
+// WebSocket狀態
 interface WebSocketState {
   socket: WebSocket | null;
   connected: boolean;
@@ -18,288 +14,219 @@ interface WebSocketState {
   heartbeatTimer: number | null;
 }
 
-// WebSocket配置选项
-interface WebSocketOptions {
-  heartbeatInterval?: number; // 心跳间隔(毫秒)
-  reconnectDelay?: number;    // 初始重连延迟(毫秒)
-  maxReconnectAttempts?: number; // 最大重连次数
-  reconnectFactor?: number;   // 重连延迟增长因子
-  maxReconnectDelay?: number; // 最大重连延迟(毫秒)
-  onMessage?: (event: MessageEvent) => void; // 消息处理回调
-  onConnect?: () => void;     // 连接成功回调
-  onDisconnect?: () => void;  // 断开连接回调
+// 主WebSocket配置
+interface MainWebSocketOptions {
+  heartbeatInterval?: number;
+  reconnectDelay?: number;
+  maxReconnectAttempts?: number;
+  reconnectFactor?: number;
+  maxReconnectDelay?: number;
+  onMessage?: (data: any) => void;
+  onConnect?: () => void;
+  onDisconnect?: () => void;
 }
 
-class WebSocketManager {
-  private connections: Map<WebSocketType, WebSocketState> = new Map();
-  private options: Map<WebSocketType, WebSocketOptions> = new Map();
+class MainWebSocketManager {
+  private state: WebSocketState = {
+    socket: null,
+    connected: false,
+    reconnectAttempts: 0,
+    heartbeatTimer: null
+  };
+  private options: MainWebSocketOptions = {};
   private isInitialized = ref(false);
-  
-  // 构建WebSocket URL
-  private buildWebSocketUrl(type: WebSocketType): string {
+
+  // 註冊主WebSocket處理器
+  public register(options: MainWebSocketOptions): void {
+    this.options = {
+      heartbeatInterval: 30000,
+      reconnectDelay: 1000,
+      maxReconnectAttempts: 10,
+      reconnectFactor: 1.5,
+      maxReconnectDelay: 30000,
+      ...options
+    };
+  }
+
+  // 構建主WebSocket URL
+  private buildWebSocketUrl(): string {
     const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
     const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const wsBaseUrl = baseUrl.replace(/^https?:\/\//, `${wsProtocol}://`);
-    
-    // 直接从authStore获取授权令牌
     const authStore = useAuthStore();
     const token = authStore.token || '';
     
-    // 根据不同类型构建不同的URL
-    switch (type) {
-      case WebSocketType.NOTIFICATION:
-        return `${wsBaseUrl}/api/v1/notifications/ws?token=${token}`;
-      case WebSocketType.CHATROOM:
-        return `${wsBaseUrl}/api/v1/chatroom/ws/user/${token}`;
-      case WebSocketType.ONLINE_STATUS:
-        return `${wsBaseUrl}/api/v1/online/ws/status/${token}`;
-      case WebSocketType.MARKET_DATA:
-        return `${wsBaseUrl}/api/v1/markets/ws/all`;
-      default:
-        throw new Error(`未支持的WebSocket类型: ${type}`);
-    }
+    // 修正URL，匹配後端路由
+    return `${wsBaseUrl}/ws/main?token=${token}`;
   }
-  
-  // 注册WebSocket连接
-  public register(type: WebSocketType, options: WebSocketOptions): void {
-    if (!this.connections.has(type)) {
-      this.connections.set(type, {
-        socket: null,
-        connected: false,
-        reconnectAttempts: 0,
-        heartbeatTimer: null
-      });
-      
-      this.options.set(type, {
-        heartbeatInterval: 30000,  // 默认30秒
-        reconnectDelay: 1000,      // 默认1秒
-        maxReconnectAttempts: 10,  // 默认最多10次
-        reconnectFactor: 1.5,      // 默认1.5倍增长
-        maxReconnectDelay: 30000,  // 默认最大30秒
-        ...options
-      });
+
+  // 連線主WebSocket
+  public async connect(): Promise<boolean> {
+    if (this.state.socket && this.state.socket.readyState !== WebSocket.CLOSED) {
+      this.disconnect();
     }
-  }
-  
-  // 连接指定类型的WebSocket
-  public async connect(type: WebSocketType): Promise<boolean> {
-    if (!this.connections.has(type)) {
-      console.error(`未注册的WebSocket类型: ${type}`);
-      return false;
-    }
-    
-    const state = this.connections.get(type)!;
-    const options = this.options.get(type)!;
-    
-    // 如果已连接，先关闭
-    if (state.socket && state.socket.readyState !== WebSocket.CLOSED) {
-      this.disconnect(type);
-    }
-    
     try {
-      const url = this.buildWebSocketUrl(type);
-      console.log(`[WebSocketManager] 正在连接 ${type} WebSocket: ${url}`);
-      
+      const url = this.buildWebSocketUrl();
       const socket = new WebSocket(url);
-      state.socket = socket;
-      
+      this.state.socket = socket;
       return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
-          reject(new Error('WebSocket连接超时'));
-        }, 10000); // 10秒连接超时
-        
+          reject(new Error('WebSocket連線逾時'));
+        }, 10000);
         socket.onopen = () => {
           clearTimeout(timeout);
-          console.log(`[WebSocketManager] ${type} WebSocket连接成功`);
-          state.connected = true;
-          state.reconnectAttempts = 0;
-          this.startHeartbeat(type);
-          
-          // 调用连接成功回调
-          if (options.onConnect) {
-            options.onConnect();
-          }
-          
+          this.state.connected = true;
+          this.state.reconnectAttempts = 0;
+          this.startHeartbeat();
+          if (this.options.onConnect) this.options.onConnect();
           resolve(true);
         };
-        
         socket.onmessage = (event) => {
-          // 处理消息
-          if (options.onMessage) {
-            options.onMessage(event);
+          try {
+            const data = JSON.parse(event.data);
+            
+            // 增強日誌以便追蹤
+            const type = data.type || '';
+            console.debug(`[WS:Main] 收到WebSocket消息: 類型=${type}`, data);
+            
+            // 處理心跳消息
+            if (type === 'ping') {
+              this.send({ type: 'pong' });
+              return;
+            } else if (type === 'pong') {
+              // 心跳回應，不需處理
+              return;
+            }
+            
+            // 處理在線狀態相關消息
+            if (type === 'user_status' || type === 'online_status') {
+              console.log('[WS:Main] 收到在線狀態消息:', data);
+              // 這裡可以發布一個在線狀態事件
+              window.dispatchEvent(new CustomEvent('online:user-status-changed', {
+                detail: { 
+                  userId: data.user_id, 
+                  isOnline: data.is_online 
+                }
+              }));
+            }
+            
+            // 處理聊天相關消息
+            if (type.startsWith('chat/')) {
+              console.log('[WS:Main] 收到聊天消息:', data);
+              // 確保聊天訊息能被正確觸發UI更新
+              window.dispatchEvent(new CustomEvent('chat:message-received', {
+                detail: { 
+                  messageId: data.message_id,
+                  roomId: data.room_id
+                }
+              }));
+            }
+            
+            // 調用註冊的消息處理器
+            if (this.options.onMessage) {
+              this.options.onMessage(data);
+            }
+          } catch (e) {
+            console.error('[WS:Main] 處理WebSocket消息時出錯:', e);
           }
         };
-        
         socket.onerror = (event) => {
-          console.error(`[WebSocketManager] ${type} WebSocket错误:`, event);
+          console.error('[WS:Main] WebSocket錯誤:', event);
         };
-        
         socket.onclose = (event) => {
           clearTimeout(timeout);
-          console.log(`[WebSocketManager] ${type} WebSocket连接关闭: ${event.code}, ${event.reason}`);
-          state.connected = false;
-          this.stopHeartbeat(type);
-          
-          // 调用断开连接回调
-          if (options.onDisconnect) {
-            options.onDisconnect();
-          }
-          
-          // 如果不是正常关闭且用户已认证，尝试重连
+          this.state.connected = false;
+          this.stopHeartbeat();
+          if (this.options.onDisconnect) this.options.onDisconnect();
+          // 自動重連
           const authStore = useAuthStore();
           if (event.code !== 1000 && authStore.isAuthenticated) {
-            this.attemptReconnect(type);
+            this.attemptReconnect();
           } else {
-            reject(new Error(`WebSocket连接关闭: ${event.code}`));
+            reject(new Error(`WebSocket關閉: ${event.code}`));
           }
         };
       });
     } catch (error) {
-      console.error(`[WebSocketManager] ${type} WebSocket连接失败:`, error);
       return false;
     }
   }
-  
-  // 断开指定类型的WebSocket
-  public disconnect(type: WebSocketType): void {
-    const state = this.connections.get(type);
-    if (!state) return;
-    
-    this.stopHeartbeat(type);
-    
-    if (state.socket) {
+
+  // 斷開主WebSocket
+  public disconnect(): void {
+    this.stopHeartbeat();
+    if (this.state.socket) {
       try {
-        // 发送关闭消息
-        if (state.socket.readyState === WebSocket.OPEN) {
-          state.socket.send(JSON.stringify({ type: 'close' }));
+        if (this.state.socket.readyState === WebSocket.OPEN) {
+          this.state.socket.send(JSON.stringify({ type: 'close' }));
         }
-        
-        // 正常关闭连接
-        state.socket.close(1000, '用户主动关闭');
-      } catch (error) {
-        console.error(`[WebSocketManager] 关闭 ${type} WebSocket出错:`, error);
-      }
-      
-      state.socket = null;
-      state.connected = false;
+        this.state.socket.close(1000, '用戶主動關閉');
+      } catch {}
+      this.state.socket = null;
+      this.state.connected = false;
     }
   }
-  
-  // 断开所有WebSocket连接
-  public disconnectAll(): void {
-    for (const type of this.connections.keys()) {
-      this.disconnect(type);
-    }
-  }
-  
-  // 连接所有注册的WebSocket
+
+  // 連線
   public async connectAll(): Promise<boolean> {
-    let allSuccess = true;
-    
-    for (const type of this.connections.keys()) {
-      try {
-        const success = await this.connect(type);
-        if (!success) {
-          allSuccess = false;
-        }
-      } catch (error) {
-        console.error(`[WebSocketManager] 连接 ${type} WebSocket失败:`, error);
-        allSuccess = false;
-      }
-    }
-    
-    this.isInitialized.value = true;
-    return allSuccess;
+    return this.connect();
   }
-  
-  // 发送消息
-  public send(type: WebSocketType, message: any): boolean {
-    const state = this.connections.get(type);
-    if (!state || !state.socket || state.socket.readyState !== WebSocket.OPEN) {
-      console.error(`[WebSocketManager] 无法发送消息: ${type} WebSocket未连接`);
+  // 斷開
+  public disconnectAll(): void {
+    this.disconnect();
+  }
+
+  // 發送消息
+  public send(message: any): boolean {
+    if (!this.state.socket || this.state.socket.readyState !== WebSocket.OPEN) {
+      console.warn('[WebSocket] 嘗試發送消息，但連接未打開');
       return false;
     }
-    
     try {
       const data = typeof message === 'string' ? message : JSON.stringify(message);
-      state.socket.send(data);
+      console.log('[WebSocket] 發送消息:', typeof message === 'string' ? message : JSON.parse(data));
+      this.state.socket.send(data);
       return true;
     } catch (error) {
-      console.error(`[WebSocketManager] 发送消息到 ${type} WebSocket失败:`, error);
+      console.error('[WebSocket] 發送消息失敗:', error);
       return false;
     }
   }
-  
-  // 启动心跳
-  private startHeartbeat(type: WebSocketType): void {
-    const state = this.connections.get(type);
-    const options = this.options.get(type);
-    if (!state || !options) return;
-    
-    this.stopHeartbeat(type);
-    
-    state.heartbeatTimer = window.setInterval(() => {
-      if (state.socket && state.socket.readyState === WebSocket.OPEN) {
-        state.socket.send(JSON.stringify({ type: 'ping' }));
+
+  // 啟動心跳
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    if (!this.options.heartbeatInterval) return;
+    this.state.heartbeatTimer = window.setInterval(() => {
+      if (this.state.socket && this.state.socket.readyState === WebSocket.OPEN) {
+        this.state.socket.send(JSON.stringify({ type: 'ping' }));
       }
-    }, options.heartbeatInterval);
+    }, this.options.heartbeatInterval);
   }
-  
-  // 停止心跳
-  private stopHeartbeat(type: WebSocketType): void {
-    const state = this.connections.get(type);
-    if (!state) return;
-    
-    if (state.heartbeatTimer) {
-      clearInterval(state.heartbeatTimer);
-      state.heartbeatTimer = null;
+  private stopHeartbeat(): void {
+    if (this.state.heartbeatTimer) {
+      clearInterval(this.state.heartbeatTimer);
+      this.state.heartbeatTimer = null;
     }
   }
-  
-  // 尝试重连
-  private attemptReconnect(type: WebSocketType): void {
-    const state = this.connections.get(type);
-    const options = this.options.get(type);
-    if (!state || !options) return;
-    
-    if (state.reconnectAttempts >= options.maxReconnectAttempts!) {
-      console.log(`[WebSocketManager] ${type} WebSocket已达到最大重连次数，停止重连`);
-      return;
-    }
-    
-    // 计算延迟时间
+  private attemptReconnect(): void {
+    if (this.state.reconnectAttempts >= (this.options.maxReconnectAttempts || 10)) return;
     const delay = Math.min(
-      options.reconnectDelay! * Math.pow(options.reconnectFactor!, state.reconnectAttempts),
-      options.maxReconnectDelay!
+      (this.options.reconnectDelay || 1000) * Math.pow(this.options.reconnectFactor || 1.5, this.state.reconnectAttempts),
+      this.options.maxReconnectDelay || 30000
     );
-    
-    console.log(`[WebSocketManager] ${type} WebSocket将在${delay}ms后尝试重连 (${state.reconnectAttempts + 1}/${options.maxReconnectAttempts})`);
-    
-    state.reconnectAttempts++;
-    
     setTimeout(() => {
-      const authStore = useAuthStore();
-      if (!state.connected && authStore.isAuthenticated) {
-        this.connect(type).catch(error => {
-          console.error(`[WebSocketManager] ${type} WebSocket重连失败:`, error);
-        });
-      }
+      this.state.reconnectAttempts++;
+      this.connect();
     }, delay);
   }
-  
-  // 返回连接状态
-  public isConnected(type: WebSocketType): boolean {
-    const state = this.connections.get(type);
-    return state ? state.connected : false;
+  public isConnected(): boolean {
+    return this.state.connected;
   }
-  
-  // 返回初始化状态
   public get initialized() {
-    return computed(() => this.isInitialized.value);
+    return this.isInitialized.value;
   }
 }
 
-// 创建单例
-const webSocketManager = new WebSocketManager();
-
-export default webSocketManager; 
+const mainWebSocketManager = new MainWebSocketManager();
+export default mainWebSocketManager; 

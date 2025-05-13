@@ -846,7 +846,8 @@ async def websocket_all_prices(
                     try:
                         data = json.loads(text)
                         if data.get("type") == "ping":
-                            # 客户端发送的心跳
+                            # 记录 ping 消息
+                            logger.debug(f"PING - conn:{connection_id}")
                             await websocket.send_json({
                                 "type": "pong",
                                 "timestamp": datetime.now().isoformat()

@@ -449,6 +449,7 @@ import { UserOutlined, LogoutOutlined } from '@ant-design/icons-vue';
 import { useNotificationStore, NotificationType, NotificationStyles } from '@/stores/notification.ts';
 import { useChatroomStore } from '@/stores/chatroom';
 import { useAuthStore } from '@/stores/auth';
+import { useUserStore } from '@/stores/user';
 import { useThemeStore } from '@/stores/theme';
 import UserAvatar from '@/components/UserAvatar.vue';
 import authService from '@/services/authService';
@@ -456,6 +457,7 @@ import authService from '@/services/authService';
 const notificationStore = useNotificationStore();
 const chatroomStore = useChatroomStore();
 const authStore = useAuthStore();
+const userStore = useUserStore();
 const themeStore = useThemeStore();
 
 const renderIcon = (icon) => {
@@ -510,6 +512,16 @@ const userTag = ref('regular');
 const avatarUrl = ref('');
 const fullName = ref('');
 const oauthProvider = ref('');
+
+// 推薦碼相關狀態變數
+const showReferralModal = ref(false);
+const loadingReferralData = ref(false);
+const referralData = ref({
+  referralCode: '',
+  referrerInfo: null,
+  referralsList: []
+});
+const codeCopied = ref(false);
 
 onMounted(async () => {
   themeStore.initTheme();
@@ -1112,33 +1124,19 @@ const getUserTagName = (tag) => {
   }
 };
 
-// 修改 loadUserData 函數，使用 auth store 中的用戶數據
+// 載入用戶數據
 const loadUserData = async (retryCount = 3) => {
   try {
-    if (!authStore.isAuthenticated) return;
+    // 嘗試獲取用戶數據
+    await userStore.getUserData();
     
-    // 如果 auth store 中已有用戶數據，直接使用
-    if (authStore.user) {
-      username.value = authStore.user.username;
-      email.value = authStore.user.email;
-      userTag.value = authStore.user.user_tag || 'regular';
-      avatarUrl.value = authStore.user.avatar_url || '';
-      fullName.value = authStore.user.full_name || '';
-      oauthProvider.value = authStore.user.oauth_provider || '';
-      console.log('用戶數據已從 auth store 更新');
-      return;
-    }
-    
-    // 否則，嘗試獲取用戶數據
-    await authStore.getUserProfile();
-    
-    if (authStore.user) {
-      username.value = authStore.user.username;
-      email.value = authStore.user.email;
-      userTag.value = authStore.user.user_tag || 'regular';
-      avatarUrl.value = authStore.user.avatar_url || '';
-      fullName.value = authStore.user.full_name || '';
-      oauthProvider.value = authStore.user.oauth_provider || '';
+    if (userStore.user) {
+      username.value = userStore.user.username;
+      email.value = userStore.user.email;
+      userTag.value = userStore.user.role || 'regular';
+      avatarUrl.value = userStore.user.avatar || '';
+      fullName.value = userStore.user.fullName || '';
+      oauthProvider.value = userStore.user.oauthProvider || '';
       console.log('用戶數據已通過 API 更新');
     }
   } catch (error) {
@@ -1150,32 +1148,6 @@ const loadUserData = async (retryCount = 3) => {
   }
 };
 
-// 推薦碼相關
-const showReferralModal = ref(false);
-const loadingReferralData = ref(false);
-const referralData = ref({
-  referralCode: '',
-  referrerInfo: null,
-  referralsList: []
-});
-const codeCopied = ref(false);
-
-// 複製推薦碼到剪貼板
-const copyReferralCode = () => {
-  if (!referralData.value.referralCode) return;
-  
-  navigator.clipboard.writeText(referralData.value.referralCode)
-    .then(() => {
-      codeCopied.value = true;
-      setTimeout(() => {
-        codeCopied.value = false;
-      }, 2000);
-    })
-    .catch(err => {
-      console.error('複製失敗:', err);
-    });
-};
-
 // 載入推薦碼和邀請人信息
 const loadReferralData = async (forceRefresh = false) => {
   if (!authStore.isAuthenticated) return;
@@ -1184,21 +1156,24 @@ const loadReferralData = async (forceRefresh = false) => {
   try {
     console.log('開始加載推薦碼和邀請人信息...');
     
-    // 使用authStore.getUserProfile获取用户信息，并指定是否强制刷新
-    const userData = await authStore.getUserProfile(forceRefresh);
+    // 使用 userStore.getUserData 獲取用戶信息，包含推薦碼
+    const userData = await userStore.getUserData(forceRefresh);
     
     if (userData) {
       console.log('成功獲取用戶信息:', JSON.stringify(userData));
-      console.log('推薦碼:', userData.referral_code);
-      console.log('推薦人ID:', userData.referrer_id);
-      referralData.value.referralCode = userData.referral_code || '';
+      
+      // 從用戶數據中直接獲取推薦碼
+      referralData.value.referralCode = userData.referralCode || '';
+      console.log('推薦碼:', referralData.value.referralCode);
       
       // 如果有推薦人ID，則嘗試獲取推薦人信息
-      if (userData.referrer_id) {
-        console.log(`檢測到推薦人ID: ${userData.referrer_id}，正在獲取推薦人信息...`);
+      if (userData.referrerId) {
+        const referrerId = userData.referrerId;
+        console.log(`檢測到推薦人ID: ${referrerId}，正在獲取推薦人信息...`);
+        
         try {
           // 使用修改後的用戶信息API路徑
-          const referrerUrl = `/api/v1/users/user-info/${userData.referrer_id}`;
+          const referrerUrl = `/api/v1/users/user-info/${referrerId}`;
           console.log(`調用推薦人API: ${referrerUrl}`);
           
           const referrerResponse = await axios.get(referrerUrl, {
@@ -1212,7 +1187,7 @@ const loadReferralData = async (forceRefresh = false) => {
           if (referrerResponse.data) {
             referralData.value.referrerInfo = {
               username: referrerResponse.data.username,
-              inviteDate: userData.created_at // 使用當前用戶的創建時間作為被邀請時間
+              inviteDate: userData.createdAt // 使用當前用戶的創建時間作為被邀請時間
             };
             console.log('設置推薦人信息成功:', JSON.stringify(referralData.value.referrerInfo));
           }
@@ -1269,6 +1244,22 @@ const loadReferralData = async (forceRefresh = false) => {
   } finally {
     loadingReferralData.value = false;
   }
+};
+
+// 複製推薦碼到剪貼板
+const copyReferralCode = () => {
+  if (!referralData.value.referralCode) return;
+  
+  navigator.clipboard.writeText(referralData.value.referralCode)
+    .then(() => {
+      codeCopied.value = true;
+      setTimeout(() => {
+        codeCopied.value = false;
+      }, 2000);
+    })
+    .catch(err => {
+      console.error('複製失敗:', err);
+    });
 };
 
 // 當推薦碼模態框顯示時載入數據
@@ -1520,7 +1511,7 @@ const formatDate = (dateString) => {
 }
 
 .notification-item[data-type="info"] {
-  border-left-color: #1677ff;
+  border-left-color: #444444; /* 修改藍色為灰色 */
 }
 
 .notification-item[data-type="success"] {

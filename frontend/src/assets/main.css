@@ -3,17 +3,17 @@
 /* Default theme variables */
 :root {
   /* 主要颜色 - 使用更现代的蓝色调 */
-  --primary-color: #2563eb;
-  --primary-dark: #1d4ed8;
-  --primary-light: #3b82f6;
-  --primary-gradient: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%);
+  --primary-color: #333333;
+  --primary-dark: #222222;
+  --primary-light: #444444;
+  --primary-gradient: linear-gradient(135deg, #333333 0%, #444444 100%);
   
   /* 辅助颜色 - 使用更柔和的色调 */
   --secondary-color: #10b981;
   --accent-color: #f59e0b;
   --danger-color: #ef4444;
   --warning-color: #f59e0b;
-  --info-color: #3b82f6;
+  --info-color: #444444;
   --success-color: #10b981;
   
   /* 文本颜色 - 提高对比度 */
@@ -27,7 +27,7 @@
   --surface-color: #ffffff;
   --card-background: #ffffff;
   --hover-color: rgba(0, 0, 0, 0.04);
-  --notification-unread: rgba(37, 99, 235, 0.08);
+  --notification-unread: rgba(51, 51, 51, 0.08);
   
   /* 边框颜色 - 更细腻的边框 */
   --border-color: #e5e7eb;
@@ -73,10 +73,10 @@
 
 /* 深色模式变量 - 更现代的深色主题 */
 body.dark-theme {
-  --primary-color: #3b82f6;
-  --primary-dark: #2563eb;
-  --primary-light: #60a5fa;
-  --primary-gradient: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
+  --primary-color: #444444;
+  --primary-dark: #333333;
+  --primary-light: #666666;
+  --primary-gradient: linear-gradient(135deg, #444444 0%, #666666 100%);
   
   --text-primary: #f9fafb;
   --text-secondary: #d1d5db;
@@ -86,7 +86,7 @@ body.dark-theme {
   --surface-color: #1f2937;
   --card-background: #1f2937;
   --hover-color: rgba(255, 255, 255, 0.04);
-  --notification-unread: rgba(59, 130, 246, 0.15);
+  --notification-unread: rgba(68, 68, 68, 0.15);
   
   --border-color: #374151;
   --border-light: #1f2937;

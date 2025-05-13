@@ -150,9 +150,8 @@ export const chatroomService = {
   // 获取聊天室的消息
   async getChatMessages(roomId: number, page = 1, limit = 50) {
     try {
-      const response = await apiClient.get(`/api/v1/chatroom/messages/${roomId}`, {
-        params: { skip: (page - 1) * limit, limit }
-      })
+      // 移除分頁參數，直接獲取所有消息
+      const response = await apiClient.get(`/api/v1/chatroom/messages/${roomId}`)
       return response.data
     } catch (error) {
       console.error(`Error fetching messages for room ${roomId}:`, error)

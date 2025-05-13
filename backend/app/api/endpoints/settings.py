@@ -394,6 +394,12 @@ def compress_image(file_content, max_size=(200, 200), quality=85, format='WEBP')
         # 打開圖片
         img = Image.open(io.BytesIO(file_content))
         
+        # 檢查是否為GIF並且有多幀(動畫)
+        if img.format == 'GIF' and hasattr(img, 'n_frames') and img.n_frames > 1:
+            logger.info(f"檢測到動畫GIF圖片，保留原始格式")
+            # 直接返回原始GIF數據以保留動畫
+            return file_content
+        
         # 縮放圖片，保持比例
         img.thumbnail(max_size)
         
@@ -433,6 +439,7 @@ async def upload_avatar(
     支持的图片格式: .jpg, .jpeg, .png, .gif
     文件大小限制: 最大5MB
     图片会自动压缩并转换为WebP格式以节省空间
+    GIF圖片將保留原始格式以維持動畫效果
     
     参数:
         file: 上传的图片文件
@@ -470,17 +477,31 @@ async def upload_avatar(
         # 读取文件内容
         file_content = await file.read()
         
+        # 檢查是否為GIF動畫圖片
+        is_animated_gif = False
         try:
-            # 压缩图片
-            compressed_data = compress_image(
-                file_content, 
-                max_size=(300, 300),  # 设置最大尺寸为300x300像素
-                quality=85,           # 设置压缩质量为85%
-                format='WEBP'         # 转换为WebP格式
-            )
+            img = Image.open(io.BytesIO(file_content))
+            is_animated_gif = img.format == 'GIF' and hasattr(img, 'n_frames') and img.n_frames > 1
+        except Exception:
+            pass
             
-            # 生成唯一文件名 (使用WebP扩展名)
-            unique_filename = f"{uuid.uuid4()}.webp"
+        try:
+            if is_animated_gif:
+                # 如果是動畫GIF，保留原始格式
+                compressed_data = file_content
+                unique_filename = f"{uuid.uuid4()}.gif"
+                logger.info("處理動畫GIF頭像，保留原始格式")
+            else:
+                # 压缩图片
+                compressed_data = compress_image(
+                    file_content, 
+                    max_size=(300, 300),  # 设置最大尺寸为300x300像素
+                    quality=85,           # 设置压缩质量为85%
+                    format='WEBP'         # 转换为WebP格式
+                )
+                # 生成唯一文件名 (使用WebP扩展名)
+                unique_filename = f"{uuid.uuid4()}.webp"
+            
             file_path = avatar_dir / unique_filename
             
             # 保存压缩后的文件

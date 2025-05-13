@@ -277,7 +277,7 @@ onMounted(async () => {
 }
 
 .user-avatar::after {
-  background-color: #3b82f6;
+  background-color: #444444; /* 修改藍色為灰色 */
 }
 
 .ai-avatar::after {
@@ -287,7 +287,7 @@ onMounted(async () => {
 .avatar {
   width: 40px !important;
   height: 40px !important;
-  background-color: #f0f9ff;
+  background-color: #f0f0f0; /* 修改淺藍色為淺灰色 */
   border: 2px solid white;
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08);
   font-weight: bold;
@@ -307,8 +307,8 @@ onMounted(async () => {
 }
 
 .user-message .message-content {
-  background-color: var(--message-bg-user, #e0f2fe);
-  border-left: 4px solid var(--primary-color, #3b82f6);
+  background-color: var(--message-bg-user, #e0e0e0); /* 修改淺藍色為淺灰色 */
+  border-left: 4px solid var(--primary-color, #444444); /* 修改藍色為灰色 */
   /* 确保用户消息顺序调整 */
   margin-left: auto;
   border-radius: 16px 2px 16px 16px; /* 调整圆角，右上为尖角 */
@@ -343,7 +343,7 @@ onMounted(async () => {
 }
 
 .user-message .sender-name {
-  color: #3b82f6;
+  color: #444444; /* 修改藍色為灰色 */
 }
 
 .ai-message .sender-name {
@@ -416,7 +416,7 @@ onMounted(async () => {
 
 @keyframes highlightGlow {
   0% {
-    background-color: rgba(59, 130, 246, 0.1);
+    background-color: rgba(68, 68, 68, 0.1); /* 修改藍色為灰色 */
   }
   100% {
     background-color: transparent;
@@ -488,16 +488,16 @@ onMounted(async () => {
 }
 
 .message-text :deep(a) {
-  color: #3b82f6;
+  color: #444444; /* 修改藍色為灰色 */
   text-decoration: none;
   font-weight: 500;
   transition: all 0.2s ease;
-  border-bottom: 1px solid rgba(59, 130, 246, 0.3);
+  border-bottom: 1px solid rgba(68, 68, 68, 0.3); /* 修改藍色為灰色 */
 }
 
 .message-text :deep(a:hover) {
-  color: #2563eb;
-  border-bottom-color: #2563eb;
+  color: #333333; /* 修改藍色為深灰色 */
+  border-bottom-color: #333333; /* 修改藍色為深灰色 */
 }
 
 .message-text :deep(ul), .message-text :deep(ol) {
@@ -537,8 +537,8 @@ onMounted(async () => {
   }
   
   .user-message .message-content {
-    background: linear-gradient(120deg, #172554, #1e3a8a);
-    border-left-color: #3b82f6;
+    background: linear-gradient(120deg, #171717, #333333); /* 修改藍色漸變為灰階漸變 */
+    border-left-color: #444444; /* 修改藍色為灰色 */
   }
   
   .ai-message .message-content {
@@ -560,7 +560,7 @@ onMounted(async () => {
   }
   
   .user-message .sender-name {
-    color: #60a5fa;
+    color: #666666; /* 修改藍色為灰色 */
   }
   
   .ai-message .sender-name {
@@ -589,7 +589,7 @@ onMounted(async () => {
   
   @keyframes highlightGlow {
     0% {
-      background-color: rgba(59, 130, 246, 0.2);
+      background-color: rgba(68, 68, 68, 0.2); /* 修改藍色為灰色 */
     }
     100% {
       background-color: transparent;
@@ -696,5 +696,49 @@ onMounted(async () => {
 .ai-message .avatar-wrapper {
   margin-right: 12px; /* 稍微减小头像和消息之间的间距 */
   margin-left: 5px; /* 添加左侧边距使头像与标题更好地对齐 */
+}
+
+.tag {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: white;
+  margin-right: 8px;
+  font-weight: 600;
+
+  &.tag-primary {
+    background-color: #444444; /* 修改藍色為灰色 */
+  }
+
+  &.tag-success {
+    background-color: #10b981;
+  }
+}
+
+.timestamp {
+  color: var(--text-tertiary, #9ca3af);
+  font-size: 11px;
+  margin-left: 8px;
+}
+
+.bubble {
+  /* 這裡保留原來的樣式 */
+}
+
+.system-message {
+  background-color: #f0f0f0; /* 修改淺藍色為淺灰色 */
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+  // ... existing code ...
+}
+
+.message-text:deep(.hljs-name) {
+  color: #444444; /* 修改藍色為灰色 */
+}
+
+.user-message .btn-border {
+  border-left-color: #444444; /* 修改藍色為灰色 */
 }
 </style> 

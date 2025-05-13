@@ -17,7 +17,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = defineProps({
   username: {
@@ -35,6 +35,11 @@ const props = defineProps({
   clickable: {
     type: Boolean,
     default: false
+  },
+  // 添加新的属性，控制是否禁止缓存
+  noCache: {
+    type: Boolean,
+    default: true
   }
 })
 
@@ -45,25 +50,39 @@ const userInitial = computed(() => {
   return props.username.charAt(0).toUpperCase()
 })
 
-// 格式化头像URL，确保包含完整的服务器地址
+// 生成一个随机的缓存破坏值
+const cacheBreaker = ref(Date.now())
+
+// 格式化头像URL，确保包含完整的服务器地址，并添加时间戳防止缓存
 const formatAvatarUrl = (url: string) => {
   if (!url) return '';
   
-  // 如果已经是完整URL，直接返回
+  // 处理基础URL
+  let formattedUrl = url;
+  
+  // 如果已经是完整URL，直接使用
   if (url.startsWith('http://') || url.startsWith('https://')) {
-    return url;
+    formattedUrl = url;
+  } else {
+    // 获取API基础URL
+    const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+    
+    // 如果是相对路径，添加后端服务器地址
+    if (url.startsWith('/')) {
+      formattedUrl = `${apiBaseUrl}${url}`;
+    } else {
+      // 其他情况，假设是相对路径但没有开头的斜杠
+      formattedUrl = `${apiBaseUrl}/${url}`;
+    }
   }
   
-  // 获取API基础URL
-  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-  
-  // 如果是相对路径，添加后端服务器地址
-  if (url.startsWith('/')) {
-    return `${apiBaseUrl}${url}`;
+  // 添加时间戳参数防止缓存 (只在启用 noCache 时)
+  if (props.noCache) {
+    const separator = formattedUrl.includes('?') ? '&' : '?';
+    formattedUrl = `${formattedUrl}${separator}_t=${cacheBreaker.value}`;
   }
   
-  // 其他情况，假设是相对路径但没有开头的斜杠
-  return `${apiBaseUrl}/${url}`;
+  return formattedUrl;
 }
 </script>
 
@@ -94,6 +113,9 @@ const formatAvatarUrl = (url: string) => {
   height: 100%;
   object-fit: cover;
   border-radius: 50%;
+  /* 移除可能限制GIF动画的属性 */
+  image-rendering: auto;
+  transform: translateZ(0); /* 开启GPU加速，提升GIF性能 */
 }
 
 .avatar-placeholder {

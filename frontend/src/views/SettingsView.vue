@@ -442,9 +442,14 @@ import { useRouter } from 'vue-router';
 import axios from 'axios';
 import { useAuthStore } from '@/stores/auth';
 import { useThemeStore } from '@/stores/theme';
+import { useUserStore } from '@/stores/user';
+import { useNotificationStore } from '@/stores/notification';
 import { ElMessage } from 'element-plus';
+import { NTabs, NTabPane, NForm, NFormItem, NInput, NButton, NSwitch, NCard, NSelect, NDivider } from 'naive-ui';
 
 const authStore = useAuthStore();
+const userStore = useUserStore();
+const notificationStore = useNotificationStore();
 const themeStore = useThemeStore();
 const router = useRouter();
 const activeTab = ref('profile');
@@ -579,30 +584,26 @@ const loadUserSettings = async () => {
   try {
     isLoading.value = true;
     
-    // 獲取用戶個人資料信息
-    try {
-      // 使用authStore獲取用戶資料，利用緩存機制
-      const userData = await authStore.getUserProfile();
-      if (userData) {
-        profileData.value = {
-          username: userData.username,
-          email: userData.email,
-          currentPassword: '',
-          newPassword: '',
-          confirmPassword: '',
-          avatar_url: userData.avatar_url
-        };
-        
-        // 设置头像预览
-        if (userData.avatar_url) {
-          const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-          avatarPreview.value = `${apiBaseUrl}${userData.avatar_url}`;
-        } else {
-          avatarPreview.value = '';
-        }
+    // 使用 userStore 获取用户数据
+    const userData = await userStore.getUserData();
+    
+    if (userData) {
+      profileData.value = {
+        username: userData.username,
+        email: userData.email,
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: '',
+        avatar_url: userData.avatar_url
+      };
+      
+      // 设置头像预览
+      if (userData.avatar_url) {
+        const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+        avatarPreview.value = `${apiBaseUrl}${userData.avatar_url}`;
+      } else {
+        avatarPreview.value = '';
       }
-    } catch (profileError) {
-      console.error('載入用戶資料失敗:', profileError);
     }
     
     // 獲取API密鑰設置狀態
@@ -771,6 +772,12 @@ const onAvatarSelected = (event) => {
   const reader = new FileReader();
   reader.onload = (e) => {
     avatarPreview.value = e.target.result;
+    
+    // 為了確保GIF預覽能動態顯示，添加隨機參數避免瀏覽器緩存
+    if (file.type === 'image/gif') {
+      const timestamp = new Date().getTime();
+      avatarPreview.value = `${e.target.result}#t=${timestamp}`;
+    }
   };
   reader.readAsDataURL(file);
   
@@ -805,7 +812,15 @@ const uploadAvatar = async () => {
       
       // 更新预览（使用服务器返回的URL）
       const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-      avatarPreview.value = `${apiBaseUrl}${response.data.avatar_url}`;
+      let newAvatarUrl = `${apiBaseUrl}${response.data.avatar_url}`;
+      
+      // 如果是GIF，添加時間戳防止瀏覽器緩存
+      if (avatarFile.value.type === 'image/gif') {
+        const timestamp = new Date().getTime();
+        newAvatarUrl += `?_t=${timestamp}`;
+      }
+      
+      avatarPreview.value = newAvatarUrl;
       
       // 通知用户
       ElMessage.success('头像上传成功');
@@ -1710,6 +1725,8 @@ body.dark-theme .security-tip {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  image-rendering: auto;
+  transform: translateZ(0);
 }
 
 .avatar-placeholder {

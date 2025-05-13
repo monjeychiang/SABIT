@@ -1096,8 +1096,8 @@ const fetchOnlineUserCount = async () => {
     // 获取token
     const token = authStore.token || localStorage.getItem('token');
     
-    // 设置请求头 - 修正Authorization header格式
-    const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+    // 设置请求头
+    const headers = token ? { 'Authorization': `bearer ${token}` } : {};
     
     const response = await axios.get('/api/v1/users/active-users-count', { headers });
     
@@ -2141,11 +2141,7 @@ watch(currentPage, (newPage) => {
   width: 50px;
   height: 50px;
   min-width: 50px;
-  min-height: 50px;
-  max-width: 50px;
-  max-height: 50px;
   margin-bottom: var(--spacing-sm);
-  aspect-ratio: 1/1;
 }
 
 .user-fullname {
