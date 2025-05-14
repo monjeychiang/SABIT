@@ -100,13 +100,13 @@ export const authService = {
               data.type === 'chat/join' || 
               data.type === 'chat/leave' || 
               data.type === 'chat/error') {
-            // 聊天相關消息
+            // 聊天相關消息只傳給聊天室 store 處理
             chatroomStore.handleWebSocketMessage(data);
           } else if (data.type === 'notification') {
-            // 通知消息
+            // 通知消息只傳給通知 store 處理
             notificationStore.handleWebSocketMessage(data);
           } else if (data.type === 'online/status' || data.type === 'user_status') {
-            // 在線狀態消息
+            // 在線狀態消息只傳給線上狀態 store 處理
             onlineStatusStore.handleWebSocketMessage(data);
           } else if (data.type === 'ping' || data.type === 'pong') {
             // 心跳消息，直接由 chatroom 處理

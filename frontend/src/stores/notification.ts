@@ -273,6 +273,12 @@ export const useNotificationStore = defineStore('notification', {
         console.log("處理 WebSocket 消息:", data);
         console.log("WebSocket 消息類型:", data.type);
         
+        // 排除聊天類型的消息
+        if (data.type && data.type.startsWith('chat/')) {
+          console.log('通知管理器忽略聊天類型的消息:', data.type);
+          return;
+        }
+        
         // 處理不同類型的消息
         switch (data.type) {
           case 'ping':
@@ -752,29 +758,17 @@ export const useNotificationStore = defineStore('notification', {
       // 请求桌面通知权限
       this.requestNotificationPermission();
       
-      // 設置消息處理回調函數
-      webSocketManager.register({
-        onMessage: (data) => {
-          console.log('通知管理器收到WebSocket消息:', data);
-          
-          // 只處理通知類型的消息
-          if (data && data.type === 'notification') {
-            // 注意：這裡直接傳入消息數據對象，而不是構造 MessageEvent 對象
-            this.handleWebSocketMessage(data);
-          }
-        },
-        onConnect: () => {
-          this.onWebSocketConnected();
-        },
-        onDisconnect: () => {
-          this.onWebSocketDisconnected();
-        }
+      // 不再直接註冊 WebSocket 處理器，完全依賴 authService 進行消息分發
+      // 所有通知消息都將通過 authService 分發到 handleWebSocketMessage 方法
+      
+      // 但需要監聽 WebSocket 的連接和斷開事件，以便更新狀態
+      window.addEventListener('websocket:connected', () => {
+        this.onWebSocketConnected();
       });
       
-      // 確保連接到主WebSocket
-      if (!webSocketManager.isConnected()) {
-        webSocketManager.connect();
-      }
+      window.addEventListener('websocket:disconnected', () => {
+        this.onWebSocketDisconnected();
+      });
       
       // 设置周期性刷新
       this.startPeriodicRefresh();
@@ -832,6 +826,15 @@ export const useNotificationStore = defineStore('notification', {
         clearTimeout(this.heartbeatTimeout);
         this.heartbeatTimeout = null;
       }
+      
+      // 移除事件监听器
+      window.removeEventListener('websocket:connected', () => {
+        this.onWebSocketConnected();
+      });
+      
+      window.removeEventListener('websocket:disconnected', () => {
+        this.onWebSocketDisconnected();
+      });
       
       // 重置状态
       this.notifications = [];
