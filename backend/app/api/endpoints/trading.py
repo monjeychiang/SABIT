@@ -471,24 +471,21 @@ async def initialize_account_page_websocket(
     current_user: User = Depends(get_current_active_user)
 ):
     """
-    优化策略3: WebSocket优先 - 当用户浏览账户页面时优先初始化WebSocket连接
+    WebSocket連接已被移除 - 改為僅使用REST API
+    
+    此端點仍然保留以保持與前端的兼容性
     """
     try:
-        # 在后台任务中初始化WebSocket连接，不阻塞响应
-        background_tasks.add_task(
-            trading_service.initialize_websocket_for_account_page,
-            current_user, db, exchange
-        )
-        
         return {
             "success": True,
-            "message": f"正在初始化{exchange.value}实时数据连接",
-            "exchange": exchange.value
+            "message": f"使用REST API獲取{exchange.value}帳戶數據",
+            "exchange": exchange.value,
+            "rest_api": True
         }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"初始化WebSocket连接失败: {str(e)}"
+            detail=f"初始化連接失敗: {str(e)}"
         )
 
 @router.post("/initialize/vip-user")
@@ -537,29 +534,23 @@ async def get_connection_status(
     """
     获取连接状态信息
     
-    返回当前WebSocket和REST API连接的状态
+    返回REST API连接的状态
     """
     try:
         # 准备结果
         result = {
             "exchange": exchange.value,
-            "websocket": {},
+            "websocket": {"connected": False, "is_healthy": False},
             "rest_api": {},
         }
         
-        # 检查WebSocket连接状态
-        ws_status = await trading_service.ws_manager.get_connection_status(
-            current_user.id, exchange
-        )
-        result["websocket"] = ws_status
-        
-        # 检查REST API连接状态
+        # 檢查REST API連接狀態
         pool_key = f"{current_user.id}:{exchange.value}"
         rest_connected = False
         
         if hasattr(trading_service.connection_pool, 'pools') and pool_key in trading_service.connection_pool.pools:
             rest_connected = True
-            # 检查连接健康状态
+            # 檢查連接健康狀態
             is_healthy = await trading_service.connection_pool.check_client_health(
                 current_user.id, exchange
             )

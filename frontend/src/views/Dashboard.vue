@@ -2,30 +2,19 @@
   <div class="dashboard container">
     <div class="dashboard-header">
       <h1>交易控制面板</h1>
-      <div class="dashboard-actions">
-        <router-link to="/grid/new" class="btn btn-primary">
-          <span class="icon">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-          </span>
-          创建新网格
-        </router-link>
-      </div>
     </div>
 
-    <!-- 资产总览部分 -->
+    <!-- 資產總覽部分 -->
     <div class="asset-overview">
       <div class="overview-card card">
-        <h3>总资产估值</h3>
+        <h3>總資產估值</h3>
         <p class="overview-number">${{ totalAssetValue.toFixed(2) }}</p>
         <p class="change-percentage" :class="{ 'positive': assetChangePercentage > 0, 'negative': assetChangePercentage < 0 }">
           {{ assetChangePercentage > 0 ? '+' : '' }}{{ assetChangePercentage.toFixed(2) }}%
         </p>
       </div>
       <div class="overview-card card">
-        <h3>可用余额</h3>
+        <h3>可用余額</h3>
         <p class="overview-number">${{ availableBalance.toFixed(2) }}</p>
         <div class="balance-distribution">
           <div class="balance-item">
@@ -39,7 +28,7 @@
         </div>
       </div>
       <div class="overview-card card">
-        <h3>持仓市值</h3>
+        <h3>持倉市值</h3>
         <p class="overview-number">${{ positionValue.toFixed(2) }}</p>
         <div class="position-distribution">
           <div v-for="position in topPositions" :key="position.symbol" class="position-item">
@@ -50,10 +39,10 @@
       </div>
     </div>
 
-    <!-- 市场概况部分 -->
+    <!-- 市場概況部分 -->
     <div class="market-overview">
       <div class="section-header">
-        <h2>市场概况</h2>
+        <h2>市場概況</h2>
         <div class="time-selector">
           <button 
             v-for="period in ['24h', '7d', '30d']" 
@@ -88,10 +77,10 @@
       </div>
     </div>
 
-    <!-- 资产变化图表 -->
+    <!-- 資產變化圖表 -->
     <div class="asset-chart card">
       <div class="section-header">
-        <h2>资产变化</h2>
+        <h2>資產變化</h2>
         <div class="chart-controls">
           <div class="time-selector">
             <button 
@@ -113,127 +102,18 @@
         />
       </div>
     </div>
-
-    <div class="grid-summary">
-      <div class="summary-card card">
-        <h3>活跃网格</h3>
-        <p class="summary-number">{{ activeGridsCount }}</p>
-        <div class="summary-icon active-icon">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M22 12h-4l-3 9L9 3l-3 9H2"></path>
-          </svg>
-        </div>
-      </div>
-      <div class="summary-card card">
-        <h3>总投资额</h3>
-        <p class="summary-number">${{ totalInvestment.toFixed(2) }}</p>
-        <div class="summary-icon investment-icon">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"></circle>
-            <path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"></path>
-            <line x1="12" y1="6" x2="12" y2="8"></line>
-            <line x1="12" y1="16" x2="12" y2="18"></line>
-          </svg>
-        </div>
-      </div>
-      <div class="summary-card card">
-        <h3>总利润</h3>
-        <p class="summary-number" :class="{ 'profit-positive': totalProfit > 0, 'profit-negative': totalProfit < 0 }">
-          ${{ totalProfit.toFixed(2) }}
-        </p>
-        <div class="summary-icon profit-icon">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
-            <polyline points="17 6 23 6 23 12"></polyline>
-          </svg>
-        </div>
-      </div>
-    </div>
-
-    <div v-if="isLoading" class="loading-container card">
-      <div class="loading-spinner"></div>
-      <p>加载网格数据中...</p>
-    </div>
-
-    <div v-else-if="errorMessage" class="error-container card">
-      <p>{{ errorMessage }}</p>
-      <button @click="loadGrids" class="btn btn-primary mt-3">重试</button>
-    </div>
-
-    <div v-else-if="grids.length === 0" class="empty-state card">
-      <div class="empty-icon">📊</div>
-      <h3>暂无网格策略</h3>
-      <p>您还没有创建任何网格交易策略。</p>
-      <router-link to="/grid/new" class="btn btn-primary mt-3">创建您的第一个网格</router-link>
-    </div>
-
-    <div v-else class="grid-list">
-      <div v-for="grid in grids" :key="grid.grid_id" class="grid-card card">
-        <div class="grid-header">
-          <h3>{{ grid.symbol }}</h3>
-          <div class="grid-status" :class="{ 'status-running': grid.status === 'running', 'status-stopped': grid.status === 'stopped' }">
-            {{ grid.status === 'running' ? '运行中' : '已停止' }}
-          </div>
-        </div>
-        
-        <div class="grid-body">
-          <div class="grid-info">
-            <div class="info-row">
-              <span class="info-label">类型:</span>
-              <span class="info-value">{{ grid.grid_type === 'arithmetic' ? '算术' : '几何' }}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">价格范围:</span>
-              <span class="info-value">${{ grid.lower_price }} - ${{ grid.upper_price }}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">网格等级:</span>
-              <span class="info-value">{{ grid.grid_levels }}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">投资额:</span>
-              <span class="info-value">${{ grid.investment }}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">当前价格:</span>
-              <span class="info-value">${{ grid.current_price }}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">利润:</span>
-              <span class="info-value" :class="{ 'profit-positive': grid.profit > 0, 'profit-negative': grid.profit < 0 }">
-                ${{ grid.profit.toFixed(2) }}
-              </span>
-            </div>
-          </div>
-          <div class="grid-actions">
-            <button v-if="grid.status === 'stopped'" @click="startGrid(grid.grid_id)" class="btn btn-primary" :disabled="actionLoading">
-              启动
-            </button>
-            <button v-else @click="stopGrid(grid.grid_id)" class="btn btn-danger" :disabled="actionLoading">
-              停止
-            </button>
-            <button @click="viewGridDetails(grid.grid_id)" class="btn btn-secondary">
-              详情
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch, onUnmounted } from 'vue';
-import { useRouter } from 'vue-router';
-import axios from 'axios';
 import LineChart from '@/components/LineChart.vue';
 
-// 基础数据
+// 基礎數據
 const isLoading = ref(true);
 const errorMessage = ref('');
-const grids = ref([]);
 
-// 资产数据
+// 資產數據
 const totalAssetValue = ref(0);
 const assetChangePercentage = ref(0);
 const availableBalance = ref(0);
@@ -241,16 +121,11 @@ const usdtBalance = ref(0);
 const btcBalance = ref(0);
 const positionValue = ref(0);
 
-// 市场数据
+// 市場數據
 const selectedPeriod = ref('24h');
 const selectedAssetPeriod = ref('1W');
 
-// 网格统计
-const activeGridsCount = ref(0);
-const totalInvestment = ref(0);
-const totalProfit = ref(0);
-
-// 模拟数据
+// 模擬數據
 const topPositions = ref([
   { symbol: 'BTC', value: 30000 },
   { symbol: 'ETH', value: 15000 },
@@ -272,10 +147,10 @@ const topMarkets = ref([
       }]
     }
   },
-  // ... 其他市场数据
+  // ... 其他市場數據
 ]);
 
-// 图表配置
+// 圖表配置
 const chartOptions = {
   responsive: true,
   maintainAspectRatio: false,
@@ -324,7 +199,7 @@ const assetChartOptions = {
 const assetChartData = ref({
   labels: Array.from({ length: 30 }, (_, i) => i + 1),
   datasets: [{
-    label: '资产价值',
+    label: '資產價值',
     data: Array.from({ length: 30 }, () => Math.random() * 20000 + 90000),
     borderColor: '#10B981',
     backgroundColor: 'rgba(16, 185, 129, 0.1)',
@@ -333,7 +208,7 @@ const assetChartData = ref({
   }]
 });
 
-// 工具函数
+// 工具函數
 const formatVolume = (value) => {
   if (value >= 1000000000) {
     return (value / 1000000000).toFixed(1) + 'B';
@@ -347,52 +222,39 @@ const formatVolume = (value) => {
   return value.toString();
 };
 
-// 数据加载函数
-const loadGrids = async () => {
+// 數據加載函數
+const loadData = async () => {
   try {
     isLoading.value = true;
     errorMessage.value = '';
     
-    // 模拟API调用延迟
+    // 模擬API調用延遲
     await new Promise(resolve => setTimeout(resolve, 1000));
     
-    // 模拟数据
-    grids.value = [
-      {
-        grid_id: 1,
-        symbol: 'BTC/USDT',
-        status: 'running',
-        grid_type: 'arithmetic',
-        lower_price: 55000,
-        upper_price: 60000,
-        grid_levels: 100,
-        investment: 50000,
-        current_price: 57325.42,
-        profit: 2500
-      },
-      // ... 其他网格数据
-    ];
+    // 這裡應該是加載資產和市場數據的API調用
+    // 為了演示，我們使用靜態數據
+    
   } catch (error) {
-    console.error('Failed to load grids:', error);
-    errorMessage.value = '加载数据失败，请重试';
+    console.error('Failed to load data:', error);
+    errorMessage.value = '加載數據失敗，請重試';
   } finally {
     isLoading.value = false;
   }
 };
 
-// 生命周期钩子
+// 生命週期鉤子
 let dataRefreshInterval;
 
 onMounted(() => {
-  loadGrids();
-  // 设置定时刷新，但间隔时间较长
+  loadData();
+  // 設置定時刷新，但間隔時間較長
   dataRefreshInterval = setInterval(() => {
-    loadGrids();
+    loadData();
   }, 30000); // 30秒刷新一次
 });
 
 onUnmounted(() => {
-  // 清理定时器
+  // 清理定時器
   if (dataRefreshInterval) {
     clearInterval(dataRefreshInterval);
   }
@@ -409,226 +271,6 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: var(--spacing-xl);
-}
-
-.dashboard-actions {
-  display: flex;
-  gap: var(--spacing-md);
-}
-
-.btn .icon {
-  display: inline-flex;
-  margin-right: var(--spacing-xs);
-}
-
-.grid-summary {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--spacing-lg);
-  margin-bottom: var(--spacing-xl);
-}
-
-.summary-card {
-  position: relative;
-  overflow: hidden;
-  padding: var(--spacing-lg);
-  border-radius: var(--border-radius-lg);
-  transition: transform 0.3s ease, box-shadow 0.3s ease;
-}
-
-.summary-card:hover {
-  transform: translateY(-5px);
-  box-shadow: var(--box-shadow-md);
-}
-
-.summary-card h3 {
-  font-size: var(--font-size-md);
-  color: var(--text-secondary);
-  margin-bottom: var(--spacing-sm);
-}
-
-.summary-number {
-  font-size: var(--font-size-xxl);
-  font-weight: 700;
-  margin: 0;
-}
-
-.summary-icon {
-  position: absolute;
-  top: var(--spacing-lg);
-  right: var(--spacing-lg);
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.2;
-}
-
-.active-icon {
-  color: var(--info-color);
-}
-
-.investment-icon {
-  color: var(--primary-color);
-}
-
-.profit-icon {
-  color: var(--success-color);
-}
-
-.profit-positive {
-  color: var(--success-color);
-}
-
-.profit-negative {
-  color: var(--danger-color);
-}
-
-.loading-container, .error-container, .empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: var(--spacing-xl);
-  text-align: center;
-  margin-bottom: var(--spacing-xl);
-}
-
-.loading-spinner {
-  width: 40px;
-  height: 40px;
-  border: 4px solid rgba(0, 0, 0, 0.1);
-  border-top: 4px solid var(--primary-color);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin-bottom: var(--spacing-lg);
-}
-
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-.empty-icon {
-  font-size: 48px;
-  margin-bottom: var(--spacing-lg);
-}
-
-.grid-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-  gap: var(--spacing-lg);
-}
-
-.grid-card {
-  display: flex;
-  flex-direction: column;
-  border-radius: var(--border-radius-lg);
-  overflow: hidden;
-  transition: transform 0.3s ease, box-shadow 0.3s ease;
-}
-
-.grid-card:hover {
-  transform: translateY(-5px);
-  box-shadow: var(--box-shadow-md);
-}
-
-.grid-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: var(--spacing-md);
-  border-bottom: 1px solid var(--border-light);
-}
-
-.grid-header h3 {
-  font-size: var(--font-size-lg);
-  font-weight: 600;
-  margin: 0;
-}
-
-.grid-status {
-  padding: 4px 8px;
-  border-radius: var(--border-radius-sm);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  text-transform: uppercase;
-}
-
-.status-running {
-  background-color: rgba(76, 175, 80, 0.1);
-  color: var(--success-color);
-}
-
-.status-stopped {
-  background-color: rgba(244, 67, 54, 0.1);
-  color: var(--danger-color);
-}
-
-.grid-body {
-  padding: var(--spacing-md);
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.grid-info {
-  flex: 1;
-  margin-bottom: var(--spacing-md);
-}
-
-.info-row {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: var(--spacing-sm);
-  font-size: var(--font-size-sm);
-}
-
-.info-label {
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-
-.info-value {
-  font-weight: 600;
-}
-
-.grid-actions {
-  display: flex;
-  gap: var(--spacing-sm);
-}
-
-.grid-actions .btn {
-  flex: 1;
-}
-
-@media (max-width: 1024px) {
-  .grid-summary {
-    grid-template-columns: repeat(3, 1fr);
-  }
-  
-  .grid-list {
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  }
-}
-
-@media (max-width: 768px) {
-  .dashboard-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--spacing-md);
-  }
-  
-  .grid-summary {
-    grid-template-columns: 1fr;
-    gap: var(--spacing-md);
-  }
-  
-  .grid-list {
-    grid-template-columns: 1fr;
-  }
 }
 
 .asset-overview {

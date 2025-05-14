@@ -16,11 +16,6 @@
         <span v-if="!isCollapsed">Dashboard</span>
       </router-link>
 
-      <router-link to="/grid/new" class="v-nav-link">
-        <i class="v-icon fas fa-plus-circle"></i>
-        <span v-if="!isCollapsed">Create Grid</span>
-      </router-link>
-
       <router-link to="/markets" class="v-nav-link">
         <i class="v-icon fas fa-chart-line"></i>
         <span v-if="!isCollapsed">Markets</span>

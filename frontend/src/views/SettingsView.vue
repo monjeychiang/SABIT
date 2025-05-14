@@ -594,13 +594,13 @@ const loadUserSettings = async () => {
         currentPassword: '',
         newPassword: '',
         confirmPassword: '',
-        avatar_url: userData.avatar_url
+        avatar_url: userData.avatar
       };
       
       // 设置头像预览
-      if (userData.avatar_url) {
+      if (userData.avatar) {
         const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-        avatarPreview.value = `${apiBaseUrl}${userData.avatar_url}`;
+        avatarPreview.value = `${apiBaseUrl}${userData.avatar}`;
       } else {
         avatarPreview.value = '';
       }
@@ -825,9 +825,14 @@ const uploadAvatar = async () => {
       // 通知用户
       ElMessage.success('头像上传成功');
       
-      // 更新全局用户信息
+      // 更新全局用户信息 - 确保在auth和user store中都正确更新
       if (authStore.user) {
         authStore.user.avatar_url = response.data.avatar_url;
+      }
+      
+      // 同时也更新userStore中的头像信息
+      if (userStore.user) {
+        userStore.user.avatar = response.data.avatar_url;
       }
     } else {
       throw new Error(response.data?.message || '头像上传失败');
@@ -866,9 +871,14 @@ const deleteAvatar = async () => {
       // 清除头像URL
       profileData.value.avatar_url = null;
       
-      // 更新全局用户信息
+      // 更新全局用户信息 - authStore
       if (authStore.user) {
         authStore.user.avatar_url = null;
+      }
+      
+      // 同时也更新userStore中的头像信息
+      if (userStore.user) {
+        userStore.user.avatar = null;
       }
       
       // 通知用户

@@ -17,6 +17,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 import json
 import asyncio
+from starlette.middleware.base import BaseHTTPMiddleware
 
 # 設置標準時間
 os.environ['TZ'] = 'Asia/Taipei'
@@ -168,6 +169,27 @@ app.add_middleware(
     expose_headers=["*"]
 )
 
+# 自定義中間件，用於跳過 WebSocket 請求的身份驗證
+class CustomAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.time()
+        
+        # WebSocket 連接請求不執行身份驗證檢查
+        path = request.url.path
+        if path.startswith('/ws/') or path.startswith('/test-websocket') or (path.startswith('/account/') and 'websocket' in path):
+            logger.debug(f"跳過 WebSocket 路由的身份驗證檢查: {path}")
+            response = await call_next(request)
+            return response
+        
+        # 對於其他請求，執行常規處理
+        response = await call_next(request)
+        process_time = time.time() - start_time
+        response.headers["X-Process-Time"] = str(process_time)
+        return response
+
+# 添加自定義中間件（確保在其他身份驗證中間件之前）
+app.add_middleware(CustomAuthMiddleware)
+
 # 請求計時中間件
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
@@ -292,6 +314,36 @@ async def shutdown_event():
         logger.error(f"關閉線上狀態管理器時出錯: {str(e)}")
     
     logger.info("應用已完全關閉")
+
+# 在其他路由註冊之後添加
+# 直接導入 WebSocket 路由
+from .api.endpoints import account, ws_main
+
+# 註冊額外的路由（不在api_router中的）
+app.include_router(account.router)
+app.include_router(ws_main.router)
+
+# 添加一個測試路由
+@app.get("/test")
+async def test_endpoint():
+    """測試伺服器是否運行正常"""
+    return {"status": "ok", "message": "Server is running"}
+
+# 增加一個測試中間件狀態的路由
+@app.get("/debug/middleware")
+async def debug_middleware():
+    """顯示中間件和路由信息，用於調試"""
+    middleware_list = [str(m.__class__.__name__) for m in app.user_middleware]
+    routes = [{"path": route.path, "name": route.name} for route in app.routes]
+    return {
+        "middleware": middleware_list,
+        "routes": routes,
+        "websocket_routes": [
+            r.path for r in app.routes if r.path.startswith('/ws') 
+            or r.path.startswith('/test-websocket')
+            or (r.path.startswith('/account') and 'websocket' in str(r))
+        ]
+    }
 
 if __name__ == '__main__':
     # 啟動伺服器

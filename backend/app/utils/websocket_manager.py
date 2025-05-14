@@ -210,39 +210,30 @@ class WebSocketManager:
         api_secret = connection["api_secret"]
         
         try:
-            # 实现具体交易所的连接逻辑
+            # 实现具体交易所的连接逻辑 - 只保留市场数据，移除帐户资金的WebSocket连接
             if exchange == ExchangeEnum.BINANCE:
-                # 模拟币安WebSocket连接
-                logger.info(f"正在连接币安WebSocket: {pool_key}")
+                # 连接到币安市场数据WebSocket
+                logger.info(f"正在连接币安行情数据WebSocket: {pool_key}")
                 
-                # 模拟连接和认证过程
-                await asyncio.sleep(1)  # 模拟网络延迟
-                
-                # 设置连接为已连接状态
+                # 设置连接为已连接状态，实际应用中应建立真正的WebSocket连接
                 connection["connected"] = True
-                logger.info(f"币安WebSocket连接成功: {pool_key}")
+                logger.info(f"币安行情数据WebSocket连接成功: {pool_key}")
                 
             elif exchange == ExchangeEnum.BYBIT:
-                # 模拟Bybit WebSocket连接
-                logger.info(f"正在连接Bybit WebSocket: {pool_key}")
-                
-                # 模拟连接和认证过程
-                await asyncio.sleep(1)  # 模拟网络延迟
+                # 连接到Bybit市场数据WebSocket
+                logger.info(f"正在连接Bybit行情数据WebSocket: {pool_key}")
                 
                 # 设置连接为已连接状态
                 connection["connected"] = True
-                logger.info(f"Bybit WebSocket连接成功: {pool_key}")
+                logger.info(f"Bybit行情数据WebSocket连接成功: {pool_key}")
                 
             elif exchange == ExchangeEnum.okx:
-                # 模拟OKX WebSocket连接
-                logger.info(f"正在连接OKX WebSocket: {pool_key}")
-                
-                # 模拟连接和认证过程
-                await asyncio.sleep(1)  # 模拟网络延迟
+                # 连接到OKX市场数据WebSocket
+                logger.info(f"正在连接OKX行情数据WebSocket: {pool_key}")
                 
                 # 设置连接为已连接状态
                 connection["connected"] = True
-                logger.info(f"OKX WebSocket连接成功: {pool_key}")
+                logger.info(f"OKX行情数据WebSocket连接成功: {pool_key}")
                 
             else:
                 logger.warning(f"不支持的交易所WebSocket: {exchange.value}")

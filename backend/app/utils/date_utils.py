@@ -2,12 +2,12 @@ import datetime
 import pytz
 from typing import Optional
 
-# 定义东八区时区
-TZ_CHINA = pytz.timezone('Asia/Shanghai')
+# 定义台北時區
+TZ_TAIPEI = pytz.timezone('Asia/Taipei')
 
-def get_china_time() -> datetime.datetime:
+def get_taiwan_time() -> datetime.datetime:
     """返回台灣標準時間（UTC+8）"""
-    return datetime.datetime.now(TZ_CHINA)
+    return datetime.datetime.now(TZ_TAIPEI)
 
 def format_datetime(dt: Optional[datetime.datetime] = None, 
                    format_str: str = "%Y-%m-%d %H:%M:%S") -> str:
@@ -22,12 +22,12 @@ def format_datetime(dt: Optional[datetime.datetime] = None,
         格式化後的日期時間字符串
     """
     if dt is None:
-        dt = get_china_time()
+        dt = get_taiwan_time()
     return dt.strftime(format_str)
 
 def parse_datetime(datetime_str: str, 
                   format_str: str = "%Y-%m-%d %H:%M:%S",
-                  timezone: pytz.timezone = TZ_CHINA) -> datetime.datetime:
+                  timezone: pytz.timezone = TZ_TAIPEI) -> datetime.datetime:
     """
     將字符串解析為日期時間對象
     
@@ -76,7 +76,7 @@ def get_time_ago(timestamp: datetime.datetime) -> str:
     Returns:
         易讀的時間差字符串，如 "2 分鐘前"
     """
-    now = get_china_time()
+    now = get_taiwan_time()
     diff = now - timestamp
     
     seconds = diff.total_seconds()

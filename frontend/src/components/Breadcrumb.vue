@@ -109,12 +109,6 @@ const breadcrumbs = computed(() => {
           case 'history':
             crumbName = '交易歷史';
             break;
-          case 'create-grid':
-            crumbName = '創建網格';
-            break;
-          case 'grid':
-            crumbName = '網格詳情';
-            break;
           case 'markets':
             crumbName = '市場行情';
             break;

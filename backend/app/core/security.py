@@ -17,11 +17,11 @@ import secrets
 import uuid
 import logging
 import json
+import string
 from google_auth_oauthlib.flow import Flow
 from google.oauth2 import id_token
 from google.auth.transport import requests
 import random
-import string
 import time
 
 # 配置日誌記錄器，用於安全模組的日誌記錄
@@ -80,6 +80,98 @@ GOOGLE_SCOPES = [
 # 用於存儲 PKCE 驗證碼的字典（PKCE: Proof Key for Code Exchange，用於增強OAuth安全性）
 _code_verifier_store = {}
 
+def clean_api_key(api_key: str) -> str:
+    """
+    清理API密鑰字符串
+    
+    移除可能影響API密鑰使用的無用字符，如引號、空格等。
+    
+    參數:
+        api_key: 原始API密鑰字符串
+        
+    返回:
+        清理後的API密鑰字符串
+    """
+    if not api_key:
+        return None
+        
+    # 記錄原始長度（不顯示實際內容，保護敏感信息）
+    original_length = len(api_key)
+    
+    # 移除首尾引號（處理多種引號情況）
+    for quote in ['"', "'", '"', '"', ''', ''']:
+        if api_key.startswith(quote) and api_key.endswith(quote):
+            api_key = api_key[1:-1]
+            break
+            
+    # 移除空白字符和控制字符
+    api_key = api_key.strip()
+    
+    # 移除不可見字符和控制字符
+    printable_set = set(string.printable)
+    api_key = ''.join(c for c in api_key if c in printable_set)
+    
+    # 檢查是否有轉義字符（如 \n, \t 等）並移除
+    api_key = api_key.replace('\\n', '').replace('\\r', '').replace('\\t', '')
+    
+    # 記錄清理後的長度和變化
+    cleaned_length = len(api_key)
+    if original_length != cleaned_length:
+        logger.debug(f"API密鑰清理: 原始長度 {original_length} -> 清理後長度 {cleaned_length}")
+    
+    return api_key
+
+def standardize_api_key(api_key: str) -> str:
+    """
+    標準化API密鑰格式
+    
+    確保API密鑰格式一致，以便後續加密和使用。
+    這是clean_api_key的增強版，添加了更多針對API密鑰的特定處理。
+    
+    參數:
+        api_key: 原始API密鑰字符串
+        
+    返回:
+        標準化後的API密鑰字符串
+    """
+    if not api_key:
+        return None
+        
+    # 先進行基本清理
+    api_key = clean_api_key(api_key)
+    
+    # 針對API密鑰的特殊處理
+    
+    # 1. 移除常見的前綴（如果有的話）
+    prefixes = ["key:", "apikey:", "key=", "apikey="]
+    for prefix in prefixes:
+        if api_key.lower().startswith(prefix):
+            api_key = api_key[len(prefix):]
+            break
+            
+    # 2. 移除URL編碼字符
+    api_key = api_key.replace('%20', '').replace('%0A', '').replace('%0D', '')
+    
+    # 3. 移除可能的HTML實體
+    api_key = api_key.replace('&nbsp;', '').replace('&quot;', '').replace('&apos;', '')
+    
+    # 4. 如果密鑰包含明顯分隔符，只取實際部分
+    separators = ["|", ":", ";", ","]
+    for sep in separators:
+        if sep in api_key and api_key.count(sep) == 1:
+            parts = api_key.split(sep)
+            # 選擇看起來像密鑰的部分（通常更長且包含字母和數字）
+            if len(parts[0].strip()) > len(parts[1].strip()):
+                api_key = parts[0].strip()
+            else:
+                api_key = parts[1].strip()
+            break
+    
+    # 再次清理空白字符，確保結果乾淨
+    api_key = api_key.strip()
+    
+    return api_key
+
 def encrypt_api_key(api_key: str) -> str:
     """
     加密API密鑰
@@ -98,10 +190,22 @@ def encrypt_api_key(api_key: str) -> str:
     if not api_key:
         return None
     
-    # 加密API密鑰
-    encrypted_data = fernet.encrypt(api_key.encode())
-    # 返回base64編碼的字符串
-    return encrypted_data.decode()
+    # 先標準化API密鑰
+    api_key = standardize_api_key(api_key)
+    
+    # 記錄標準化後的長度
+    logger.debug(f"準備加密的API密鑰長度: {len(api_key)}")
+    
+    try:
+        # 加密API密鑰
+        encrypted_data = fernet.encrypt(api_key.encode())
+        # 返回base64編碼的字符串
+        encrypted_str = encrypted_data.decode()
+        logger.debug(f"加密後的API密鑰長度: {len(encrypted_str)}")
+        return encrypted_str
+    except Exception as e:
+        logger.error(f"API密鑰加密失敗: {str(e)}")
+        return None
 
 def decrypt_api_key(encrypted_api_key: str) -> str:
     """
@@ -122,12 +226,35 @@ def decrypt_api_key(encrypted_api_key: str) -> str:
         return None
     
     try:
+        logger.debug(f"開始解密API密鑰，加密密鑰長度: {len(encrypted_api_key)}")
+        
         # 解密API密鑰
         decrypted_data = fernet.decrypt(encrypted_api_key.encode())
-        # 返回解密後的字符串
-        return decrypted_data.decode()
+        # 獲取解密後的字符串
+        decrypted_api_key = decrypted_data.decode()
+        
+        # 記錄原始解密結果的長度（不顯示實際內容，保護敏感信息）
+        logger.debug(f"原始解密API密鑰長度: {len(decrypted_api_key)}")
+        
+        # 標準化並返回解密後的API密鑰
+        cleaned_api_key = standardize_api_key(decrypted_api_key)
+        
+        # 記錄清理前後長度差異
+        if cleaned_api_key and len(cleaned_api_key) != len(decrypted_api_key):
+            logger.debug(f"API密鑰清理: 原始長度 {len(decrypted_api_key)} -> 清理後長度 {len(cleaned_api_key)}")
+        
+        return cleaned_api_key
     except Exception as e:
         logger.error(f"API密鑰解密失敗: {str(e)}")
+        if isinstance(e, UnicodeDecodeError):
+            logger.error(f"這可能是編碼問題，嘗試不同的編碼...")
+            try:
+                # 嘗試使用latin-1編碼解碼
+                decrypted_data = fernet.decrypt(encrypted_api_key.encode())
+                decrypted_api_key = decrypted_data.decode('latin-1')
+                return standardize_api_key(decrypted_api_key)
+            except Exception as latin_err:
+                logger.error(f"使用latin-1編碼解碼失敗: {str(latin_err)}")
         return None
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:

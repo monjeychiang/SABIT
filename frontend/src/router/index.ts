@@ -46,24 +46,6 @@ export const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/create-grid',
-    name: 'createGrid',
-    component: () => import('@/views/GridFormView.vue'),
-    meta: { 
-      layout: 'default',
-      breadcrumb: '創建網格'
-    }
-  },
-  {
-    path: '/grid/:id',
-    name: 'gridDetail',
-    component: () => import('@/views/GridDetailView.vue'),
-    meta: { 
-      layout: 'default',
-      breadcrumb: '網格詳情'
-    }
-  },
-  {
     path: '/markets',
     name: 'markets',
     component: () => import('@/views/markets.vue'),
@@ -128,6 +110,16 @@ export const routes: RouteRecordRaw[] = [
     meta: { 
       layout: 'default',
       breadcrumb: '主題測試'
+    }
+  },
+  {
+    path: '/account',
+    name: 'account',
+    component: () => import('@/views/AccountView.vue'),
+    meta: { 
+      layout: 'default',
+      requiresAuth: true,
+      breadcrumb: '帳戶管理'
     }
   },
   {

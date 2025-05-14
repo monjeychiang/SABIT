@@ -14,6 +14,7 @@ import { useOnlineStatusStore } from '@/stores/online-status'
 import latencyService from '@/services/latencyService'
 import authService from '@/services/authService'
 import { useUserStore } from '@/stores/user'
+import { accountWebSocketService } from '@/services/accountWebSocketService'
 
 const router = useRouter();
 const route = useRoute();
@@ -33,10 +34,16 @@ const isSidebarVisible = ref(false);
 // 新增：服务器时间和WebSocket状态
 const serverTime = ref(new Date());
 const wsStatus = ref({
-  main: false
+  main: false,
+  account: false // 添加賬戶WebSocket狀態
 });
 const wsStatusText = computed(() => {
   return wsStatus.value.main ? '已連線' : '未連線';
+});
+
+// 新增：賬戶WebSocket狀態文字
+const accountWsStatusText = computed(() => {
+  return wsStatus.value.account ? '已連線' : '未連線';
 });
 
 // 新增：服务器延迟状态
@@ -124,7 +131,10 @@ const closeMenuOnContentClick = () => {
 const handleLogout = async () => {
   try {
     console.log('处理登出：正在使用authService.logout()');
-    // 使用authService.logout()，它会处理WebSocket关闭和状态重置
+    // 斷開賬戶WebSocket連接
+    accountWebSocketService.disconnect();
+    
+    // 使用authService.logout()，它會處理主WebSocket關閉和狀態重置
     await authService.logout();
     
     // 触发登出事件
@@ -132,6 +142,7 @@ const handleLogout = async () => {
     
     // 更新WebSocket状态显示
     wsStatus.value.main = false;
+    wsStatus.value.account = false;
     
     // 跳转到首页而不是刷新页面
     router.push('/');
@@ -181,12 +192,16 @@ const updateServerTime = () => {
 // 新增：更新WebSocket状态
 const updateWebSocketStatus = () => {
   if (authStore.isAuthenticated) {
-    // 只監控主WebSocket
+    // 監控主WebSocket
     import('@/services/webSocketService').then(({ default: mainWebSocketManager }) => {
       wsStatus.value.main = mainWebSocketManager.isConnected();
     });
+    
+    // 監控賬戶WebSocket
+    wsStatus.value.account = accountWebSocketService.isConnected();
   } else {
     wsStatus.value.main = false;
+    wsStatus.value.account = false;
   }
 };
 
@@ -203,19 +218,27 @@ const updateServerLatency = () => {
 // 新增：重连WebSocket的方法
 const reconnectWebSockets = () => {
   if (authStore.isAuthenticated) {
+    // 重連主WebSocket
     import('@/services/webSocketService').then(({ default: mainWebSocketManager }) => {
       mainWebSocketManager.connectAll().then(result => {
         console.log('主WebSocket重連結果:', result ? '成功' : '失敗');
-        setTimeout(() => {
-          showWsDetails.value = false;
-        }, 500);
       }).catch(error => {
         console.error('主WebSocket重連失敗:', error);
-        setTimeout(() => {
-          showWsDetails.value = false;
-        }, 500);
       });
     });
+    
+    // 重連賬戶WebSocket
+    if (!accountWebSocketService.isConnected()) {
+      accountWebSocketService.connect('binance').then(result => {
+        console.log('賬戶WebSocket重連結果:', result ? '成功' : '失敗');
+      }).catch(error => {
+        console.error('賬戶WebSocket重連失敗:', error);
+      });
+    }
+    
+    setTimeout(() => {
+      showWsDetails.value = false;
+    }, 500);
   }
 };
 
@@ -448,6 +471,13 @@ onMounted(async () => {
   if (!tokenHandled) {
     try {
       await authStore.initAuth();
+      
+      // 如果用戶已認證，嘗試連接到賬戶WebSocket
+      if (authStore.isAuthenticated) {
+        accountWebSocketService.connect('binance').catch(error => {
+          console.error('連接賬戶WebSocket失敗:', error);
+        });
+      }
     } catch (error) {
       console.error('初始化認證失敗:', error);
     }
@@ -462,6 +492,13 @@ onMounted(async () => {
     try {
       actionLoading.value = true
       await authStore.checkAuth()
+      
+      // 如果認證成功，連接到賬戶WebSocket
+      if (authStore.isAuthenticated) {
+        accountWebSocketService.connect('binance').catch(error => {
+          console.error('連接賬戶WebSocket失敗:', error);
+        });
+      }
     } catch (error) {
       console.error('認證檢查失敗:', error)
     } finally {
@@ -512,6 +549,23 @@ onMounted(async () => {
   if (lastTestTime.value > 0) {
     updateCooldown();
   }
+
+  // 監聽登入事件
+  window.addEventListener('login-authenticated', () => {
+    console.log('檢測到登入事件，嘗試連接賬戶WebSocket');
+    // 如果用戶已認證，連接到賬戶WebSocket
+    if (authStore.isAuthenticated) {
+      accountWebSocketService.connect('binance').catch(error => {
+        console.error('連接賬戶WebSocket失敗:', error);
+      });
+    }
+  });
+  
+  // 監聽登出事件
+  window.addEventListener('logout-event', () => {
+    console.log('檢測到登出事件，斷開賬戶WebSocket');
+    accountWebSocketService.disconnect();
+  });
 });
 
 // 在组件卸载时清除定时器
@@ -520,6 +574,9 @@ onUnmounted(() => {
     clearInterval(timeInterval);
   }
   latencyService.stopAutoMeasurement();
+  
+  // 斷開賬戶WebSocket連接
+  accountWebSocketService.disconnect();
   
   // 清除冷却计时器
   if (cooldownTimer.value !== null) {
@@ -530,6 +587,8 @@ onUnmounted(() => {
   // 移除事件监听器
   window.removeEventListener('resize', handleResize);
   window.removeEventListener('auth:tokens-updated', () => {});
+  window.removeEventListener('login-authenticated', () => {});
+  window.removeEventListener('logout-event', () => {});
   
   // 移除加载动画事件监听器
   window.removeEventListener('auth-loading-start', () => {});
@@ -597,6 +656,11 @@ onUnmounted(() => {
                     <span class="ws-detail-label">主WebSocket:</span>
                     <span class="connection-dot" :class="{ 'connected': wsStatus.main, 'disconnected': !wsStatus.main }"></span>
                     <span class="ws-detail-status">{{ wsStatus.main ? '已連線' : '未連線' }}</span>
+                  </div>
+                  <div class="ws-detail-item">
+                    <span class="ws-detail-label">賬戶WebSocket:</span>
+                    <span class="connection-dot" :class="{ 'connected': wsStatus.account, 'disconnected': !wsStatus.account }"></span>
+                    <span class="ws-detail-status">{{ wsStatus.account ? '已連線' : '未連線' }}</span>
                   </div>
                   <!-- 网络测试区域 -->
                   <div class="network-test-section">
@@ -684,6 +748,11 @@ onUnmounted(() => {
                   <span class="ws-detail-label">主WebSocket:</span>
                   <span class="connection-dot" :class="{ 'connected': wsStatus.main, 'disconnected': !wsStatus.main }"></span>
                   <span class="ws-detail-status">{{ wsStatus.main ? '已連線' : '未連線' }}</span>
+                </div>
+                <div class="ws-detail-item">
+                  <span class="ws-detail-label">賬戶WebSocket:</span>
+                  <span class="connection-dot" :class="{ 'connected': wsStatus.account, 'disconnected': !wsStatus.account }"></span>
+                  <span class="ws-detail-status">{{ wsStatus.account ? '已連線' : '未連線' }}</span>
                 </div>
                 <!-- 网络测试区域 -->
                 <div class="network-test-section">

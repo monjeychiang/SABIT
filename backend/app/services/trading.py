@@ -77,9 +77,9 @@ class TradingService:
             ccxt.Exchange: 交易所客户端实例
             
         Raises:
-            HTTPException: 如果未找到API密钥或获取客户端失败
+            HTTPException: 如果无法获取客户端
         """
-        # 查询用户的交易所API密钥
+        # 查询API密钥记录
         api_key_record = db.query(ExchangeAPI).filter(
             ExchangeAPI.user_id == user.id,
             ExchangeAPI.exchange == exchange
@@ -87,11 +87,11 @@ class TradingService:
         
         if not api_key_record:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"未找到{exchange}的API密钥配置"
             )
         
-        # 解密API密钥和密钥
+        # 解密API密钥
         api_key = decrypt_api_key(api_key_record.api_key)
         api_secret = decrypt_api_key(api_key_record.api_secret)
         
@@ -116,9 +116,6 @@ class TradingService:
                     user.id, exchange, api_key, api_secret
                 )
                 
-            # 同时尝试建立WebSocket连接（如果尚未连接）
-            await self._ensure_ws_connection(user.id, exchange, api_key, api_secret)
-                
             return client
         except Exception as e:
             logger.error(f"获取交易所客户端失败: {str(e)}")
@@ -126,71 +123,6 @@ class TradingService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"连接{exchange}交易所失败: {str(e)}"
             )
-    
-    async def _ensure_ws_connection(self, user_id: int, exchange: ExchangeEnum, api_key: str, api_secret: str) -> None:
-        """
-        确保WebSocket连接已建立
-        
-        如果尚未建立连接，则尝试建立连接并开始接收账户数据推送
-        
-        Args:
-            user_id: 用户ID
-            exchange: 交易所枚举值
-            api_key: API密钥
-            api_secret: API密钥秘钥
-        """
-        # 使用异步任务来处理WebSocket连接，避免阻塞主流程
-        asyncio.create_task(
-            self._connect_to_websocket(user_id, exchange, api_key, api_secret)
-        )
-    
-    async def _connect_to_websocket(self, user_id: int, exchange: ExchangeEnum, api_key: str, api_secret: str) -> None:
-        """
-        建立WebSocket连接的实际逻辑
-        
-        Args:
-            user_id: 用户ID
-            exchange: 交易所枚举值
-            api_key: API密钥
-            api_secret: API密钥秘钥
-        """
-        pool_key = f"{user_id}:{exchange.value}"
-        
-        # 检查是否已有活跃连接
-        if hasattr(self.ws_manager, 'connections') and pool_key in self.ws_manager.connections:
-            if self.ws_manager.connections[pool_key].get('connected', False):
-                return
-        
-        try:
-            # 定义账户数据更新回调
-            async def on_account_update(data: Dict[str, Any]) -> None:
-                """
-                处理WebSocket账户数据推送
-                
-                更新缓存中的账户数据，供get_account_info方法使用
-                
-                Args:
-                    data: 账户数据
-                """
-                # 更新缓存
-                cache_key = f"{user_id}:{exchange.value}"
-                self.account_data_cache[cache_key] = {
-                    'data': data,
-                    'timestamp': datetime.now().timestamp()
-                }
-                logger.debug(f"更新账户数据缓存: {cache_key}")
-            
-            # 连接WebSocket
-            connected = await self.ws_manager.connect(user_id, exchange, api_key, api_secret, on_account_update)
-            
-            if connected:
-                logger.info(f"成功建立WebSocket连接: {pool_key}")
-            else:
-                logger.warning(f"无法建立WebSocket连接: {pool_key}，将使用REST API获取账户数据")
-                
-        except Exception as e:
-            logger.error(f"建立WebSocket连接失败: {str(e)}")
-            # 连接失败不抛出异常，而是回退到使用REST API
     
     async def execute_exchange_operation(self, user, db, exchange, operation_func, *args, **kwargs):
         """
@@ -309,9 +241,9 @@ class TradingService:
         exchange: ExchangeEnum
     ) -> AccountInfo:
         """
-        获取用户在特定交易所的账户信息
+        获取账户信息
         
-        首先尝试使用WebSocket缓存数据，如果没有或过期则使用REST API
+        获取指定交易所的账户详情，包括余额、权益等信息
         
         Args:
             user: 用户模型实例
@@ -319,24 +251,12 @@ class TradingService:
             exchange: 交易所枚举值
             
         Returns:
-            AccountInfo: 账户信息，包括余额和其他账户相关数据
+            AccountInfo: 账户信息模型
+            
+        Raises:
+            HTTPException: 如果获取账户信息失败
         """
-        # 尝试从WebSocket缓存获取数据
-        cache_key = f"{user.id}:{exchange.value}"
-        cached_data = self.account_data_cache.get(cache_key)
-        
-        # 首先尝试使用 WebSocket 数据
-        if cached_data and (datetime.now().timestamp() - cached_data['timestamp']) < 10:
-            # 如果缓存数据新鲜度在10秒内，直接使用缓存数据
-            logger.info(f"使用WebSocket缓存数据 ({exchange.value})")
-            
-            # 提取缓存数据
-            ws_data = cached_data['data']
-            
-            # 转换为AccountInfo格式
-            return self._convert_ws_data_to_account_info(exchange, ws_data)
-        
-        # 查询用户的交易所API密钥
+        # 查询API密钥记录
         api_key_record = db.query(ExchangeAPI).filter(
             ExchangeAPI.user_id == user.id,
             ExchangeAPI.exchange == exchange
@@ -344,11 +264,11 @@ class TradingService:
         
         if not api_key_record:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
+                status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"未找到{exchange}的API密钥配置"
             )
         
-        # 解密API密钥和密钥
+        # 解密API密钥
         api_key = decrypt_api_key(api_key_record.api_key)
         api_secret = decrypt_api_key(api_key_record.api_secret)
         
@@ -358,17 +278,8 @@ class TradingService:
                 detail="API密钥解密失败"
             )
         
-        # 尝试建立或刷新WebSocket连接，这是异步操作，不会阻塞
-        await self._ensure_ws_connection(user.id, exchange, api_key, api_secret)
-        
-        # 如果WebSocket数据可用，再次检查
-        ws_account_data = await self.ws_manager.get_account_data(user.id, exchange)
-        if ws_account_data:
-            logger.info(f"使用WebSocket实时数据 ({exchange.value})")
-            return self._convert_ws_data_to_account_info(exchange, ws_account_data)
-        
-        # 回退到REST API
-        logger.info(f"WebSocket数据不可用，使用REST API获取账户信息 ({exchange.value})")
+        # 使用REST API获取账户信息
+        logger.info(f"使用REST API获取账户信息 ({exchange.value})")
         
         async def _operation(client):
             # 获取账户信息
@@ -423,135 +334,6 @@ class TradingService:
             return account_info
         
         return await self.execute_exchange_operation(user, db, exchange, _operation)
-    
-    def _convert_ws_data_to_account_info(self, exchange: ExchangeEnum, ws_data: Dict[str, Any]) -> AccountInfo:
-        """
-        将WebSocket推送的账户数据转换为AccountInfo格式
-        
-        Args:
-            exchange: 交易所枚举值
-            ws_data: WebSocket推送的账户数据
-            
-        Returns:
-            AccountInfo: 标准格式的账户信息
-        """
-        # 默认值
-        total_equity = Decimal('0')
-        unrealized_pnl = Decimal('0')
-        margin_used = Decimal('0')
-        margin_free = Decimal('0')
-        balances = []
-        
-        try:
-            # 根据不同交易所和事件类型处理数据
-            if exchange == ExchangeEnum.BINANCE:
-                # 处理币安账户更新
-                if ws_data.get('event_type') == 'ACCOUNT_UPDATE':
-                    # 处理余额更新
-                    balance_updates = ws_data.get('balance_update', [])
-                    for item in balance_updates:
-                        asset = item.get('asset', '')
-                        wallet_balance = Decimal(str(item.get('wallet_balance', '0')))
-                        cross_balance = Decimal(str(item.get('cross_wallet_balance', '0')))
-                        available = Decimal(str(item.get('available_balance', wallet_balance)))
-                        
-                        balances.append(Balance(
-                            asset=asset,
-                            free=available,
-                            used=wallet_balance - available,
-                            total=wallet_balance
-                        ))
-                    
-                    # 计算总权益和其他值
-                    # 这里可能需要根据具体需求进行调整
-                    for balance in balances:
-                        if balance.asset == 'USDT':  # 假设USDT是计价货币
-                            total_equity += balance.total
-                            margin_free += balance.free
-                    
-                    # 处理仓位更新，计算未实现盈亏
-                    position_updates = ws_data.get('position_update', [])
-                    for pos in position_updates:
-                        pos_pnl = Decimal(str(pos.get('unrealized_pnl', '0')))
-                        unrealized_pnl += pos_pnl
-                        
-                        # 如果是隔离保证金，添加到已用保证金
-                        if pos.get('margin_type') == 'isolated':
-                            margin_used += Decimal(str(pos.get('isolated_wallet', '0')))
-            
-            elif exchange == ExchangeEnum.BYBIT:
-                # 处理Bybit账户更新
-                if ws_data.get('event_type') == 'ACCOUNT_UPDATE':
-                    # 处理余额更新
-                    balance_updates = ws_data.get('balance_update', [])
-                    for item in balance_updates:
-                        asset = item.get('asset', '')
-                        wallet_balance = Decimal(str(item.get('wallet_balance', '0')))
-                        available = Decimal(str(item.get('available_balance', '0')))
-                        
-                        balances.append(Balance(
-                            asset=asset,
-                            free=available,
-                            used=wallet_balance - available,
-                            total=wallet_balance
-                        ))
-                        
-                        # 如果是USDT，更新总权益和可用保证金
-                        if asset == 'USDT':
-                            total_equity = wallet_balance
-                            margin_free = available
-                
-                # 处理仓位更新
-                elif ws_data.get('event_type') == 'POSITION_UPDATE':
-                    position_updates = ws_data.get('position_update', [])
-                    for pos in position_updates:
-                        pos_pnl = Decimal(str(pos.get('unrealized_pnl', '0')))
-                        unrealized_pnl += pos_pnl
-            
-            elif exchange == ExchangeEnum.okx:
-                # 处理OKX账户更新
-                if ws_data.get('event_type') == 'ACCOUNT_UPDATE':
-                    # 处理余额更新
-                    balance_updates = ws_data.get('balance_update', [])
-                    for item in balance_updates:
-                        asset = item.get('asset', '')
-                        wallet_balance = Decimal(str(item.get('wallet_balance', '0')))
-                        available = Decimal(str(item.get('available_balance', '0')))
-                        
-                        balances.append(Balance(
-                            asset=asset,
-                            free=available,
-                            used=wallet_balance - available,
-                            total=wallet_balance
-                        ))
-                        
-                        # 如果是USDT，更新总权益和可用保证金
-                        if asset == 'USDT':
-                            total_equity = wallet_balance
-                            margin_free = available
-                
-                # 处理仓位更新
-                elif ws_data.get('event_type') == 'POSITION_UPDATE':
-                    position_updates = ws_data.get('position_update', [])
-                    for pos in position_updates:
-                        pos_pnl = Decimal(str(pos.get('unrealized_pnl', '0')))
-                        unrealized_pnl += pos_pnl
-            
-            # 可以扩展支持更多交易所...
-            
-        except Exception as e:
-            logger.error(f"处理WebSocket账户数据异常: {str(e)}")
-            # 出错时返回尽可能多的已处理数据
-        
-        # 构建账户信息对象
-        return AccountInfo(
-            exchange=exchange,
-            balances=balances,
-            total_equity=total_equity,
-            unrealized_pnl=unrealized_pnl,
-            margin_used=margin_used,
-            margin_free=margin_free
-        )
     
     async def get_balance(
         self, 
@@ -1906,79 +1688,14 @@ class TradingService:
             Dict[str, Any]: 连接状态信息
         """
         try:
-            # 查询用户的交易所API密钥
-            api_key_record = db.query(ExchangeAPI).filter(
-                ExchangeAPI.user_id == user.id,
-                ExchangeAPI.exchange == exchange
-            ).first()
-            
-            if not api_key_record:
-                logger.warning(f"未找到用户{user.id}的{exchange.value}API密钥配置")
-                return {"success": False, "message": f"未找到{exchange.value}的API密钥配置"}
-            
-            # 解密API密钥
-            api_key = decrypt_api_key(api_key_record.api_key)
-            api_secret = decrypt_api_key(api_key_record.api_secret)
-            
-            if not api_key or not api_secret:
-                logger.error(f"用户{user.id}的API密钥解密失败")
-                return {"success": False, "message": "API密钥解密失败"}
-                
-            # 检查是否已有WebSocket连接
-            pool_key = f"{user.id}:{exchange.value}"
-            ws_connected = False
-            
-            if hasattr(self.ws_manager, 'connections') and pool_key in self.ws_manager.connections:
-                if self.ws_manager.connections[pool_key].get('connected', False):
-                    ws_connected = True
-                    logger.info(f"用户{user.id}已有{exchange.value}的WebSocket连接")
-            
-            # 如果没有WebSocket连接，尝试建立
-            ws_status = {}
-            if not ws_connected:
-                # 定义空回调函数，仅用于接收数据更新缓存
-                async def empty_callback(data: Dict[str, Any]) -> None:
-                    pass
-                
-                # 尝试建立WebSocket连接
-                connected = await self.ws_manager.connect(
-                    user.id, exchange, api_key, api_secret, empty_callback
-                )
-                
-                ws_status = {
-                    "success": connected,
-                    "message": "WebSocket连接已建立" if connected else "WebSocket连接失败，将使用REST API获取数据",
-                    "connection_id": pool_key if connected else None
-                }
-            else:
-                ws_status = {
-                    "success": True,
-                    "message": "已有活跃的WebSocket连接",
-                    "connection_id": pool_key
-                }
-            
-            # 获取连接健康状态
-            connection_status = await self.ws_manager.get_connection_status(user.id, exchange)
-            ws_status["status"] = connection_status
-            
-            # 获取一次账户数据，确保缓存中有初始数据
-            account_data = await self.ws_manager.get_account_data(user.id, exchange)
-            if account_data:
-                ws_status["has_data"] = True
-                # 仅返回数据类型信息，不返回具体数据以减少响应大小
-                ws_status["data_type"] = account_data.get("event_type", "UNKNOWN")
-            else:
-                ws_status["has_data"] = False
-                
-                # 如果没有WebSocket数据，尝试获取基本账户信息
-                if not account_data and ws_status["success"]:
-                    # 实时数据尚未推送，获取基本账户信息作为初始数据
-                    basic_info = await self.get_basic_account_info(user, db, exchange)
-                    if basic_info.get("success", False):
-                        ws_status["basic_info"] = True
-                    
-            return ws_status
-            
+            # 由於不再使用WebSocket獲取帳戶資訊，返回基本的REST API狀態
+            return {
+                "success": True,
+                "message": "使用REST API獲取帳戶數據",
+                "exchange": exchange.value,
+                "rest_api": True,
+                "websocket": False
+            }
         except Exception as e:
             logger.error(f"初始化WebSocket连接失败: {str(e)}")
             return {
