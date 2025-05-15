@@ -954,52 +954,82 @@ const handleNewMessage = (event) => {
 onMounted(async () => {
   // 初始化聊天室列表
   if (userStore.isAuthenticated) {
-    // 只在用戶首次打開聊天窗口且尚未加載聊天室列表時加載
-    if (chatroomStore.rooms.length === 0) {
-      await chatroomStore.fetchUserRooms()
+    console.log('ChatWindow 組件掛載，檢查聊天室列表...');
+    
+    // 無論列表是否為空，都嘗試重新加載，確保最新數據
+    try {
+      console.log('正在加載聊天室列表...');
+      await chatroomStore.fetchUserRooms();
+      console.log('聊天室列表加載完成，共 ' + chatroomStore.rooms.length + ' 個聊天室');
       
-      // 如果有聊天室，選擇第一個
-      if (chatroomStore.rooms.length > 0) {
+      // 如果有聊天室，並且沒有選擇當前聊天室，則選擇第一個
+      if (chatroomStore.rooms.length > 0 && !currentRoomId.value) {
         isLoadingInitialMessages.value = true;
         try {
-          await selectRoom(chatroomStore.rooms[0].id)
+          console.log('選擇第一個聊天室...');
+          await selectRoom(chatroomStore.rooms[0].id);
+        } finally {
+          isLoadingInitialMessages.value = false;
+        }
+      } else if (currentRoomId.value) {
+        // 如果已有當前聊天室，加載其消息和公告
+        isLoadingInitialMessages.value = true;
+        try {
+          console.log('加載當前聊天室消息...');
+          await chatroomStore.loadRoomMessages(currentRoomId.value);
+          
+          try {
+            const response = await axios.get(`/api/v1/chatroom/rooms/${currentRoomId.value}`);
+            if (response.data && response.data.announcement) {
+              currentRoomAnnouncement.value = response.data.announcement;
+            }
+          } catch (error) {
+            console.error('獲取聊天室詳情失敗:', error);
+          }
         } finally {
           isLoadingInitialMessages.value = false;
         }
       }
-    } else if (currentRoomId.value) {
-      // 如果已有當前聊天室，加載其消息和公告
-      isLoadingInitialMessages.value = true;
-      try {
-        await chatroomStore.loadRoomMessages(currentRoomId.value)
-        try {
-          const response = await axios.get(`/api/v1/chatroom/rooms/${currentRoomId.value}`)
-          if (response.data && response.data.announcement) {
-            currentRoomAnnouncement.value = response.data.announcement
-          }
-        } catch (error) {
-          console.error('初始化時獲取聊天室詳情失敗:', error)
-        }
-      } finally {
-        isLoadingInitialMessages.value = false;
-      }
+    } catch (error) {
+      console.error('加載聊天室列表失敗:', error);
     }
   }
   
   // 註冊事件監聽器
   window.addEventListener('chat:message-received', handleNewMessage);
   
+  // 註冊WebSocket連接成功事件，在連接建立時刷新聊天室列表
+  window.addEventListener('chat:websocket-connected', handleWebSocketConnected);
+  
   // 處理點擊外部關閉上下文菜單
   document.addEventListener('click', (event) => {
     if (contextMenu.show) {
       // 修正選擇器，使用正確的類名
-      const isClickInside = event.target.closest('.context-menu')
+      const isClickInside = event.target.closest('.context-menu');
       if (!isClickInside) {
-        closeContextMenu()
+        closeContextMenu();
       }
     }
-  })
-})
+  });
+});
+
+// WebSocket連接成功後刷新聊天室列表
+const handleWebSocketConnected = async () => {
+  console.log('ChatWindow: WebSocket已連接，正在刷新聊天室列表...');
+  if (userStore.isAuthenticated) {
+    try {
+      await chatroomStore.fetchUserRooms();
+      console.log('聊天室列表刷新成功，共 ' + chatroomStore.rooms.length + ' 個聊天室');
+      
+      // 如果沒有選擇當前聊天室，但有可用聊天室，則選擇第一個
+      if (!currentRoomId.value && chatroomStore.rooms.length > 0) {
+        await selectRoom(chatroomStore.rooms[0].id);
+      }
+    } catch (error) {
+      console.error('WebSocket連接後刷新聊天室列表失敗:', error);
+    }
+  }
+};
 
 // 強制更新函數
 const forceUpdate = () => {
@@ -1023,6 +1053,9 @@ onUnmounted(() => {
   // 確保移除正確的消息事件處理函數
   // window.removeEventListener('chat:message-received', () => {}); // 這是錯誤的寫法
   window.removeEventListener('chat:message-received', handleNewMessage);
+  
+  // 移除WebSocket連接成功事件監聽器
+  window.removeEventListener('chat:websocket-connected', handleWebSocketConnected);
 })
 
 // 计算属性：判断当前用户是否为管理员
@@ -3058,5 +3091,37 @@ const handleMessagesScroll = async () => {
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   vertical-align: middle;
+}
+
+/* 隱藏滾動條但保留滾動功能 */
+.chat-messages::-webkit-scrollbar,
+.rooms-list::-webkit-scrollbar,
+.room-members-list::-webkit-scrollbar,
+.public-rooms-list::-webkit-scrollbar {
+  width: 0;
+  background: transparent;
+  display: none;
+}
+
+.chat-messages,
+.rooms-list,
+.room-members-list,
+.public-rooms-list {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+/* 深色模式下的滾動條隱藏也要確保 */
+:root.dark .chat-messages::-webkit-scrollbar,
+:root.dark .rooms-list::-webkit-scrollbar,
+:root.dark .room-members-list::-webkit-scrollbar,
+:root.dark .public-rooms-list::-webkit-scrollbar,
+:root[data-theme='dark'] .chat-messages::-webkit-scrollbar,
+:root[data-theme='dark'] .rooms-list::-webkit-scrollbar,
+:root[data-theme='dark'] .room-members-list::-webkit-scrollbar,
+:root[data-theme='dark'] .public-rooms-list::-webkit-scrollbar {
+  width: 0;
+  background: transparent;
+  display: none;
 }
 </style> 

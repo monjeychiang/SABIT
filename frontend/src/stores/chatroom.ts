@@ -118,14 +118,30 @@ export const useChatroomStore = defineStore('chatroom', {
   actions: {
     // 初始化聊天系统
     initialize() {
-      // 加载已加入的聊天室列表
-      this.fetchUserRooms();
+      console.log('[Chat] 初始化聊天系統...');
       
       // 設置聊天相關事件監聽器
       this.setupEventListeners();
       
+      // 立即嘗試加載聊天室列表
+      this.fetchUserRooms().then(success => {
+        if (success) {
+          console.log('[Chat] 聊天室列表初始化成功');
+          
+          // 如果用戶已加入某些聊天室，嘗試訂閱
+          if (this.joinedRoomIds.length > 0) {
+            console.log('[Chat] 正在訂閱已加入的聊天室:', this.joinedRoomIds);
+            this.resubscribeToRooms();
+          }
+        } else {
+          console.warn('[Chat] 聊天室列表初始化失敗，將在WebSocket連接後重試');
+        }
+      });
+      
       // 注意：不再直接连接WebSocket，由authService统一管理
       // WebSocket连接将在authService.initializeWebSockets()中处理
+      
+      console.log('[Chat] 聊天系統初始化完成');
     },
     
     // 設置事件監聽器
@@ -614,20 +630,34 @@ export const useChatroomStore = defineStore('chatroom', {
     },
 
     // 加载用户加入的聊天室列表
-    async fetchUserRooms() {
+    async fetchUserRooms(retryCount = 0, maxRetries = 3) {
       const authStore = useAuthStore();
       if (!authStore.isAuthenticated) {
-        console.error('用户未登录，无法加载聊天室列表');
-        return;
+        console.error('用戶未登錄，無法加載聊天室列表');
+        return false;
+      }
+      
+      // 檢查令牌有效性
+      if (!authStore.token || !authStore.isAuthenticated) {
+        console.error('認證令牌無效，無法加載聊天室列表');
+        return false;
       }
       
       try {
+        console.log(`[Chat] 開始載入聊天室列表 (嘗試 ${retryCount + 1}/${maxRetries + 1})`);
         const apiBaseUrl = getApiBaseUrl();
         const response = await axios.get(`${apiBaseUrl}/api/v1/chatroom/rooms`, {
           headers: {
             'Authorization': `Bearer ${authStore.token}`
-          }
+          },
+          timeout: 10000 // 10秒超時
         });
+        
+        // 验证响应数据
+        if (!Array.isArray(response.data)) {
+          console.error('聊天室列表數據格式錯誤:', response.data);
+          return false;
+        }
         
         // 统一属性名格式，将snake_case转为camelCase
         this.rooms = response.data.map((room: ChatRoomData) => ({
@@ -652,9 +682,47 @@ export const useChatroomStore = defineStore('chatroom', {
           .filter((room: ChatRoomData) => room.is_member)
           .map((room: ChatRoomData) => room.id);
           
-        console.log('已加载聊天室列表:', this.rooms.length, '个聊天室');
+        console.log(`[Chat] 已加載聊天室列表: ${this.rooms.length} 個聊天室，其中已加入 ${this.joinedRoomIds.length} 個`);
+        
+        // 通知UI聊天室列表已更新
+        window.dispatchEvent(new CustomEvent('chat:rooms-updated', { 
+          detail: { roomCount: this.rooms.length }
+        }));
+        
+        return true;
       } catch (error) {
-        console.error('加载聊天室列表失败:', error);
+        // 詳細記錄錯誤信息
+        if (axios.isAxiosError(error)) {
+          const statusCode = error.response?.status;
+          const errorData = error.response?.data;
+          
+          if (statusCode === 401 || statusCode === 403) {
+            console.error('[Chat] 身份驗證失敗，無法加載聊天室列表:', errorData);
+            // 可能需要重新登錄
+            return false;
+          } else if (statusCode === 429) {
+            console.warn('[Chat] 請求過於頻繁，稍後再試:', errorData);
+          } else if (statusCode === 500) {
+            console.error('[Chat] 服務器錯誤，無法加載聊天室列表:', errorData);
+          } else if (error.code === 'ECONNABORTED') {
+            console.error('[Chat] 加載聊天室列表超時');
+          } else {
+            console.error('[Chat] 加載聊天室列表失敗:', error.message, errorData);
+          }
+        } else {
+          console.error('[Chat] 加載聊天室列表失敗:', error);
+        }
+        
+        // 重試機制
+        if (retryCount < maxRetries) {
+          const retryDelay = Math.pow(2, retryCount) * 1000; // 指數退避策略
+          console.log(`[Chat] 將在 ${retryDelay/1000} 秒後重試加載聊天室列表...`);
+          
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+          return this.fetchUserRooms(retryCount + 1, maxRetries);
+        }
+        
+        return false;
       }
     },
 

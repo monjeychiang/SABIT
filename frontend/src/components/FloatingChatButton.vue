@@ -54,7 +54,22 @@ const isAgentOnline = ref(true);
 const unreadCount = computed(() => chatroomStore.totalUnreadCount);
 
 // 切换聊天窗口
-function toggleChatWindow() {
+async function toggleChatWindow() {
+  // 打開聊天窗口時，確保聊天室列表已載入
+  if (!isChatOpen.value) {
+    // 檢查是否已有聊天室列表，如果沒有則重新載入
+    if (chatroomStore.rooms.length === 0) {
+      console.log('聊天窗口打開，正在載入聊天室列表...');
+      try {
+        await chatroomStore.fetchUserRooms();
+        console.log('聊天室列表載入成功，共 ' + chatroomStore.rooms.length + ' 個聊天室');
+      } catch (error) {
+        console.error('載入聊天室列表時出錯：', error);
+      }
+    }
+  }
+  
+  // 切換窗口狀態
   isChatOpen.value = !isChatOpen.value;
 }
 
@@ -88,6 +103,9 @@ onMounted(() => {
   // 添加未读消息更新事件监听器
   window.addEventListener('chat:unread-updated', handleUnreadUpdate);
   
+  // 添加WebSocket連接成功事件監聽器
+  window.addEventListener('chat:websocket-connected', handleWebSocketConnected);
+  
   // 检查是否支持聊天功能（这里可以根据实际情况调整）
   // 例如：检查用户权限、系统配置等
   // apiService.checkChatAvailability().then(result => {
@@ -95,6 +113,20 @@ onMounted(() => {
   //   isAgentOnline.value = result.agentOnline;
   // });
 });
+
+// 處理WebSocket連接成功事件
+async function handleWebSocketConnected() {
+  console.log('WebSocket連接成功，正在檢查聊天室列表...');
+  // 如果聊天室列表為空，嘗試載入
+  if (chatroomStore.rooms.length === 0) {
+    try {
+      await chatroomStore.fetchUserRooms();
+      console.log('WebSocket連接後載入聊天室列表成功，共 ' + chatroomStore.rooms.length + ' 個聊天室');
+    } catch (error) {
+      console.error('WebSocket連接後載入聊天室列表失敗：', error);
+    }
+  }
+}
 
 // 处理未读消息更新事件
 function handleUnreadUpdate(event) {
@@ -105,6 +137,7 @@ function handleUnreadUpdate(event) {
 // 组件卸载前清除事件监听器
 onBeforeUnmount(() => {
   window.removeEventListener('chat:unread-updated', handleUnreadUpdate);
+  window.removeEventListener('chat:websocket-connected', handleWebSocketConnected);
 });
 </script>
 

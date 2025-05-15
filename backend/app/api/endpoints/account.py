@@ -594,3 +594,33 @@ async def api_key_diagnostic(
     }
     
     return results 
+
+# 添加一個新的端點，用於檢查用戶擁有哪些交易所的API密鑰
+@router.get("/api-keys/exchanges", response_model=list)
+async def get_user_exchanges(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    獲取用戶已配置API密鑰的交易所列表
+    
+    返回一個交易所名稱的列表，用戶已為這些交易所配置了API密鑰。
+    前端可以使用此端點來檢查用戶是否有特定交易所的API密鑰，
+    避免不必要的WebSocket連接嘗試。
+    """
+    try:
+        # 查詢用戶已經配置的所有交易所API密鑰
+        user_exchanges = db.query(ExchangeAPI.exchange).filter(
+            ExchangeAPI.user_id == current_user.id
+        ).all()
+        
+        # 將結果轉換為簡單的交易所名稱列表
+        exchange_list = [item[0] for item in user_exchanges]
+        
+        return exchange_list
+    except Exception as e:
+        logger.error(f"獲取用戶交易所列表時發生錯誤: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="獲取交易所列表失敗"
+        ) 

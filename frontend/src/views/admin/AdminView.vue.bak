@@ -71,7 +71,7 @@
     <div class="admin-container">
       <div class="admin-section">
         <h2>在線用戶</h2>
-        <OnlineUsersWidget :refresh-interval="60000" :max-users="10" />
+        <OnlineUsersWidget :refresh-interval="30000" :max-users="10" />
       </div>
     </div>
     
@@ -1168,7 +1168,7 @@ onMounted(() => {
   
   // 獲取在線用戶數並定期刷新
   fetchOnlineUserCount();
-  onlineUserRefreshInterval.value = setInterval(fetchOnlineUserCount, 60000); // 每1分鐘刷新
+  onlineUserRefreshInterval.value = setInterval(fetchOnlineUserCount, 30000); // 每30秒刷新
   
   // 設置監聽器處理選擇器的點擊外部事件
   document.addEventListener('click', handleDocumentClick);

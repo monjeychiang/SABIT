@@ -53,8 +53,8 @@ EVENT_TEMPLATES = {
     
     # 登入成功事件模板
     EventType.LOGIN_SUCCESS: {
-        "title": "登入成功通知",
-        "message": "您已於 {login_time} 成功登入系統。登入位置: {location}，IP地址: {ip_address}，設備: {device}",
+        "title": "登入安全提醒",
+        "message": "您已於 {login_time} 使用 {device_name} ({browser}) 登入系統。IP: {ip_address}。如非本人操作，請立即修改密碼。",
         "notification_type": NotificationType.INFO
     }
 }
@@ -169,8 +169,23 @@ class EventManager:
         elif isinstance(event, UserActionEvent) and event.event_type == EventType.LOGIN_SUCCESS:
             variables["login_time"] = event.created_at.strftime("%Y-%m-%d %H:%M:%S")
             variables["action_type"] = event.action_type
-            variables["device"] = event.device_info.get("name", "未知設備") if event.device_info else "未知設備"
-            variables["location"] = event.location or "未知位置"
+            
+            # 設備資訊處理
+            if event.device_info:
+                # 優先使用display_name，如果有的話
+                if "display_name" in event.device_info:
+                    variables["device_name"] = event.device_info.get("display_name")
+                else:
+                    # 回退到name
+                    variables["device_name"] = event.device_info.get("name", "未知設備")
+                
+                # 瀏覽器資訊
+                variables["browser"] = event.device_info.get("browser", "未知瀏覽器")
+            else:
+                variables["device_name"] = "未知設備"
+                variables["browser"] = "未知瀏覽器"
+            
+            # 正確處理IP地址
             variables["ip_address"] = event.ip_address or "未知IP"
             
         return variables

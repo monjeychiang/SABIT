@@ -297,6 +297,21 @@ class OnlineStatusManager:
         """獲取總線上用戶數量"""
         return len(self.active_connections)
     
+    def get_all_online_users(self) -> List[int]:
+        """獲取所有線上用戶的 ID 列表"""
+        return list(self.active_connections.keys())
+    
+    def get_user_status(self, user_id: int) -> Dict[str, Any]:
+        """獲取用戶的狀態資訊
+        
+        Args:
+            user_id: 用戶 ID
+            
+        Returns:
+            包含用戶狀態資訊的字典，如果用戶不存在則返回空字典
+        """
+        return self.user_status.get(user_id, {})
+    
     def get_stats(self) -> Dict[str, Any]:
         """獲取線上狀態管理器的統計資訊"""
         stats = self.stats.copy()

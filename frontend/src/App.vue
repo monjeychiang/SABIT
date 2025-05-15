@@ -130,26 +130,32 @@ const closeMenuOnContentClick = () => {
 // 处理登出
 const handleLogout = async () => {
   try {
-    console.log('处理登出：正在使用authService.logout()');
+    console.log('處理登出：正在使用authService.logout()');
     // 斷開賬戶WebSocket連接
     accountWebSocketService.disconnect();
     
     // 使用authService.logout()，它會處理主WebSocket關閉和狀態重置
     await authService.logout();
     
-    // 触发登出事件
+    // 触發登出事件
     window.dispatchEvent(new Event('logout-event'));
     
-    // 更新WebSocket状态显示
+    // 更新WebSocket狀態顯示
     wsStatus.value.main = false;
     wsStatus.value.account = false;
     
-    // 跳转到首页而不是刷新页面
-    router.push('/');
+    // 跳轉到首頁並刷新頁面
+    router.push('/').then(() => {
+      // 使用延遲確保路由變更已完成
+      setTimeout(() => {
+        window.location.reload();
+      }, 100);
+    });
   } catch (error) {
-    console.error('登出处理失败:', error);
-    // 即使失败也尝试重定向
+    console.error('登出處理失敗:', error);
+    // 即使失敗也嘗試重定向並刷新
     router.push('/');
+    window.location.reload();
   }
 };
 
@@ -229,10 +235,17 @@ const reconnectWebSockets = () => {
     
     // 重連賬戶WebSocket
     if (!accountWebSocketService.isConnected()) {
-      accountWebSocketService.connect('binance').then(result => {
-        console.log('賬戶WebSocket重連結果:', result ? '成功' : '失敗');
-      }).catch(error => {
-        console.error('賬戶WebSocket重連失敗:', error);
+      // 检查是否有API密钥
+      accountWebSocketService.hasExchangeApiKey('binance').then(hasApiKey => {
+        if (hasApiKey) {
+          accountWebSocketService.connect('binance').then(result => {
+            console.log('賬戶WebSocket重連結果:', result ? '成功' : '失敗');
+          }).catch(error => {
+            console.error('賬戶WebSocket重連失敗:', error);
+          });
+        } else {
+          console.log('用戶沒有binance的API密鑰，跳過WebSocket重連');
+        }
       });
     }
     
@@ -474,9 +487,20 @@ onMounted(async () => {
       
       // 如果用戶已認證，嘗試連接到賬戶WebSocket
       if (authStore.isAuthenticated) {
-        accountWebSocketService.connect('binance').catch(error => {
-          console.error('連接賬戶WebSocket失敗:', error);
-        });
+        try {
+          // 檢查用戶是否有binance的API密鑰
+          const hasApiKey = await accountWebSocketService.hasExchangeApiKey('binance');
+          if (hasApiKey) {
+            accountWebSocketService.connect('binance').catch(error => {
+              console.error('連接賬戶WebSocket失敗:', error);
+            });
+          } else {
+            console.log('用戶沒有binance的API密鑰，跳過WebSocket連接');
+            wsStatus.value.account = false;
+          }
+        } catch (error) {
+          console.error('檢查API密鑰時出錯:', error);
+        }
       }
     } catch (error) {
       console.error('初始化認證失敗:', error);
@@ -495,9 +519,20 @@ onMounted(async () => {
       
       // 如果認證成功，連接到賬戶WebSocket
       if (authStore.isAuthenticated) {
-        accountWebSocketService.connect('binance').catch(error => {
-          console.error('連接賬戶WebSocket失敗:', error);
-        });
+        try {
+          // 檢查用戶是否有binance的API密鑰
+          const hasApiKey = await accountWebSocketService.hasExchangeApiKey('binance');
+          if (hasApiKey) {
+            accountWebSocketService.connect('binance').catch(error => {
+              console.error('連接賬戶WebSocket失敗:', error);
+            });
+          } else {
+            console.log('用戶沒有binance的API密鑰，跳過WebSocket連接');
+            wsStatus.value.account = false;
+          }
+        } catch (error) {
+          console.error('檢查API密鑰時出錯:', error);
+        }
       }
     } catch (error) {
       console.error('認證檢查失敗:', error)
@@ -551,13 +586,27 @@ onMounted(async () => {
   }
 
   // 監聽登入事件
-  window.addEventListener('login-authenticated', () => {
+  window.addEventListener('login-authenticated', async () => {
     console.log('檢測到登入事件，嘗試連接賬戶WebSocket');
     // 如果用戶已認證，連接到賬戶WebSocket
     if (authStore.isAuthenticated) {
-      accountWebSocketService.connect('binance').catch(error => {
-        console.error('連接賬戶WebSocket失敗:', error);
-      });
+      try {
+        // 檢查用戶是否有binance的API密鑰
+        const hasApiKey = await accountWebSocketService.hasExchangeApiKey('binance');
+        if (hasApiKey) {
+          accountWebSocketService.connect('binance').catch(error => {
+            console.error('連接賬戶WebSocket失敗:', error);
+          });
+        } else {
+          console.log('用戶沒有binance的API密鑰，跳過WebSocket連接');
+          wsStatus.value.account = false;
+        }
+      } catch (error) {
+        console.error('檢查API密鑰時出錯:', error);
+      }
+      // 前端登入通知已被禁用，僅依賴後端通知
+      console.log('用戶已登入，將只接收後端登入通知');
+      // notificationStore.sendLoginSuccessNotification(); // 已在 notification.ts 中禁用
     }
   });
   
@@ -565,6 +614,13 @@ onMounted(async () => {
   window.addEventListener('logout-event', () => {
     console.log('檢測到登出事件，斷開賬戶WebSocket');
     accountWebSocketService.disconnect();
+    
+    // 添加頁面刷新邏輯
+    // 使用短暫延遲確保所有登出操作完成
+    setTimeout(() => {
+      console.log('登出事件處理完成，準備刷新頁面');
+      window.location.reload();
+    }, 300);
   });
 });
 
@@ -1320,5 +1376,45 @@ onUnmounted(() => {
   60% {background-size: 20% 50% ,20% 100%,20% 20% }
   80% {background-size: 20% 50% ,20% 50% ,20% 100%}
   100%{background-size: 20% 50% ,20% 50% ,20% 50% }
+}
+
+/* 隱藏全局滾動條 */
+body::-webkit-scrollbar,
+#app::-webkit-scrollbar,
+.main-content::-webkit-scrollbar,
+.sidebar::-webkit-scrollbar,
+.sidebar-content::-webkit-scrollbar,
+.sidebar-menu::-webkit-scrollbar {
+  width: 0;
+  background: transparent;
+  display: none;
+}
+
+body,
+#app,
+.main-content,
+.sidebar,
+.sidebar-content,
+.sidebar-menu {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+/* 確保深色模式下也隱藏滾動條 */
+:root.dark body::-webkit-scrollbar,
+:root.dark #app::-webkit-scrollbar,
+:root.dark .main-content::-webkit-scrollbar,
+:root.dark .sidebar::-webkit-scrollbar,
+:root.dark .sidebar-content::-webkit-scrollbar,
+:root.dark .sidebar-menu::-webkit-scrollbar,
+:root[data-theme='dark'] body::-webkit-scrollbar,
+:root[data-theme='dark'] #app::-webkit-scrollbar,
+:root[data-theme='dark'] .main-content::-webkit-scrollbar,
+:root[data-theme='dark'] .sidebar::-webkit-scrollbar,
+:root[data-theme='dark'] .sidebar-content::-webkit-scrollbar,
+:root[data-theme='dark'] .sidebar-menu::-webkit-scrollbar {
+  width: 0;
+  background: transparent;
+  display: none;
 }
 </style>

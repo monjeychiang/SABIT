@@ -1066,24 +1066,36 @@ async def get_auth_config():
 
 # 添加一個簡單的User Agent解析函數
 def parse_user_agent(user_agent_string: str) -> Dict[str, str]:
-    """簡單解析User Agent字符串獲取設備信息"""
+    """解析User Agent字符串獲取設備信息"""
     device_info = {
         "name": "未知設備",
         "type": "unknown",
-        "os": "未知系統"
+        "os": "未知系統",
+        "browser": "未知瀏覽器"
     }
     
+    if not user_agent_string:
+        return device_info
+        
     ua = user_agent_string.lower()
     
-    # 檢測設備類型
+    # 檢測設備類型和操作系統
     if "mobile" in ua or "android" in ua or "iphone" in ua or "ipad" in ua:
         device_info["type"] = "mobile"
         
-        if "iphone" in ua or "ipad" in ua or "ios" in ua:
-            device_info["name"] = "iPhone/iPad"
+        if "iphone" in ua:
+            device_info["name"] = "iPhone"
+            device_info["os"] = "iOS"
+        elif "ipad" in ua:
+            device_info["name"] = "iPad"
             device_info["os"] = "iOS"
         elif "android" in ua:
-            device_info["name"] = "Android裝置"
+            # 嘗試提取具體的Android設備名稱
+            android_device_match = re.search(r"android.*?;\s*([^;)]+)[\s;)]", ua)
+            if android_device_match:
+                device_info["name"] = android_device_match.group(1).strip()
+            else:
+                device_info["name"] = "Android裝置"
             device_info["os"] = "Android"
     else:
         device_info["type"] = "desktop"
@@ -1091,6 +1103,15 @@ def parse_user_agent(user_agent_string: str) -> Dict[str, str]:
         if "windows" in ua:
             device_info["name"] = "Windows電腦"
             device_info["os"] = "Windows"
+            # 檢測Windows版本
+            if "windows nt 10" in ua:
+                device_info["os"] = "Windows 10/11"
+            elif "windows nt 6.3" in ua:
+                device_info["os"] = "Windows 8.1"
+            elif "windows nt 6.2" in ua:
+                device_info["os"] = "Windows 8"
+            elif "windows nt 6.1" in ua:
+                device_info["os"] = "Windows 7"
         elif "macintosh" in ua or "mac os" in ua:
             device_info["name"] = "Mac電腦"
             device_info["os"] = "macOS"
@@ -1100,15 +1121,25 @@ def parse_user_agent(user_agent_string: str) -> Dict[str, str]:
     
     # 檢測瀏覽器
     browser = "未知瀏覽器"
-    if "chrome" in ua and "edg" not in ua:
-        browser = "Chrome"
+    if "chrome" in ua and "edg" not in ua and "opr" not in ua and "samsung" not in ua:
+        browser = "Chrome瀏覽器"
     elif "firefox" in ua:
-        browser = "Firefox"
+        browser = "Firefox瀏覽器"
     elif "safari" in ua and "chrome" not in ua:
-        browser = "Safari"
+        browser = "Safari瀏覽器"
     elif "edg" in ua:
-        browser = "Edge"
+        browser = "Edge瀏覽器"
+    elif "opr" in ua or "opera" in ua:
+        browser = "Opera瀏覽器"
+    elif "samsung" in ua:
+        browser = "Samsung瀏覽器"
     
     device_info["browser"] = browser
+    
+    # 整合設備和操作系統為更友好的顯示名稱
+    if device_info["type"] == "desktop":
+        device_info["display_name"] = f"{device_info['os']}設備"
+    else:
+        device_info["display_name"] = device_info["name"]
     
     return device_info 

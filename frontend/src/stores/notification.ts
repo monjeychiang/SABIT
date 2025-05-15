@@ -848,17 +848,34 @@ export const useNotificationStore = defineStore('notification', {
       this.newNotificationCallback = null;
     },
 
-    // 发送登录成功通知
+    // 发送登录成功通知（已禁用 - 改為僅由後端生成通知）
     sendLoginSuccessNotification(username?: string): void {
+      // 不再生成前端登入通知，改為僅記錄日誌
+      console.log('前端登入通知已禁用，將只由後端生成登入安全通知');
+      
+      // 以下代碼已被註釋掉，不再生成前端通知
+      /*
       try {
-        const greeting = username ? `欢迎回来，${username}！` : '欢迎回来！';
+        const greeting = username ? `${username}` : '用戶';
+        const now = new Date();
+        const loginTime = now.toLocaleString('zh-TW', { 
+          year: 'numeric', 
+          month: '2-digit', 
+          day: '2-digit',
+          hour: '2-digit', 
+          minute: '2-digit', 
+          hour12: false 
+        });
+        
+        // 準備 IP 地址顯示（實際 IP 將由後端記錄）
+        let clientIP = '本機位址';
         
         // 创建通知对象
         const notification: Notification = {
           id: Date.now(), // 使用时间戳作为临时ID
-          title: '登录成功',
-          message: `${greeting} 您已成功登录系统。`,
-          notification_type: NotificationType.SUCCESS,
+          title: '登入安全提醒',
+          message: `${greeting}，您已於 ${loginTime} 成功登入系統。IP: ${clientIP}。如非本人操作，請立即修改密碼。`,
+          notification_type: NotificationType.INFO,
           is_read: false,
           created_at: new Date().toISOString()
         };
@@ -891,6 +908,7 @@ export const useNotificationStore = defineStore('notification', {
       } catch (error) {
         console.error('发送登录成功通知失败:', error);
       }
+      */
     },
 
     // 兼容方法：提供与旧版API兼容的WebSocket连接方法

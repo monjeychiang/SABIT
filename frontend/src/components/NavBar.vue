@@ -14,14 +14,28 @@
       />
     </div>
     
+    <!-- 添加搜索框 -->
+    <div class="search-container">
+      <div class="search-box">
+        <input 
+          type="text" 
+          placeholder="搜索..." 
+          class="search-input" 
+          v-model="searchQuery"
+        />
+        <button class="search-button">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
+            <path fill="none" d="M0 0h24v24H0z"/>
+            <path d="M18.031 16.617l4.283 4.282-1.415 1.415-4.282-4.283A8.96 8.96 0 0 1 11 20c-4.968 0-9-4.032-9-9s4.032-9 9-9 9 4.032 9 9a8.96 8.96 0 0 1-1.969 5.617zm-2.006-.742A6.977 6.977 0 0 0 18 11c0-3.868-3.133-7-7-7-3.868 0-7 3.132-7 7 0 3.867 3.132 7 7 7a6.977 6.977 0 0 0 4.875-1.975l.15-.15z" fill="currentColor"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    
     <div class="right">
       <!-- 未登录时显示登录按钮 -->
       <template v-if="!isAuthenticated">
         <button class="login-button" @click="showLoginModal = true">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
-            <path fill="none" d="M0 0h24v24H0z"/>
-            <path d="M10 11V8l5 4-5 4v-3H1v-2h9zm-7.542 4h2.124A8.003 8.003 0 0 0 20 12 8 8 0 0 0 4.582 9H2.458C3.732 4.943 7.522 2 12 2c5.523 0 10 4.477 10 10s-4.477 10-10 10c-4.478 0-8.268-2.943-9.542-7z" fill="currentColor"/>
-          </svg>
           登入
         </button>
       </template>
@@ -158,7 +172,7 @@
       <div v-if="showLoginModal" class="login-modal-overlay" @click="showLoginModal = false">
         <div class="login-modal" @click.stop>
           <div class="login-modal-header">
-            <h2>登入系統</h2>
+            <h2>歡迎回來</h2>
             <button class="close-button" @click="showLoginModal = false">×</button>
           </div>
           
@@ -253,7 +267,7 @@
       <div v-if="showRegisterModal" class="register-modal-overlay" @click="showRegisterModal = false">
         <div class="register-modal" @click.stop>
           <div class="register-modal-header">
-            <h2>註冊帳號</h2>
+            <h2>加入我們</h2>
             <button class="close-button" @click="showRegisterModal = false">×</button>
           </div>
           
@@ -523,6 +537,9 @@ const referralData = ref({
   referralsList: []
 });
 const codeCopied = ref(false);
+
+// 添加 searchQuery 變量
+const searchQuery = ref('');
 
 onMounted(async () => {
   themeStore.initTheme();
@@ -1373,6 +1390,7 @@ const formatDate = (dateString) => {
 .login-button {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: var(--spacing-sm);
   padding: var(--spacing-sm) var(--spacing-md);
   background-color: var(--primary-color);
@@ -1382,6 +1400,7 @@ const formatDate = (dateString) => {
   cursor: pointer;
   font-weight: 500;
   transition: all var(--transition-fast) ease;
+  min-width: 80px;
 }
 
 .login-button:hover {
@@ -1838,7 +1857,8 @@ const formatDate = (dateString) => {
 }
 
 .login-submit-button,
-.register-submit {
+.register-submit,
+.google-login-button {
   background-color: var(--primary-color);
   color: white;
   border: none;
@@ -1848,15 +1868,20 @@ const formatDate = (dateString) => {
   font-weight: 600;
   cursor: pointer;
   transition: all var(--transition-fast) ease;
+  height: 40px;
 }
 
 .login-submit-button:hover,
-.register-submit:hover {
-  background-color: var(--primary-color-hover);
+.register-submit:hover,
+.google-login-button:hover {
+  background-color: var(--primary-dark, #106fbd);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(var(--shadow-color-rgb, 0, 0, 0), 0.15);
 }
 
 .login-submit-button:disabled,
-.register-submit:disabled {
+.register-submit:disabled,
+.google-login-button:disabled {
   background-color: var(--disabled-color);
   cursor: not-allowed;
 }
@@ -1909,26 +1934,13 @@ const formatDate = (dateString) => {
   justify-content: center;
   gap: var(--spacing-sm);
   width: 100%;
-  padding: var(--spacing-sm);
-  background-color: white;
-  border: 1px solid var(--border-color);
-  border-radius: var(--border-radius-sm);
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  transition: all var(--transition-fast) ease;
-  height: 40px;
-}
-
-.google-login-button:hover {
-  background-color: var(--hover-color);
-  border-color: var(--primary-color);
 }
 
 .google-icon {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   object-fit: contain;
+  filter: none;
 }
 
 .user-tag {
@@ -2517,5 +2529,83 @@ const formatDate = (dateString) => {
   justify-content: center;
   padding: var(--spacing-xl);
   color: var(--text-tertiary);
+}
+
+/* 搜索框樣式 */
+.search-container {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  max-width: 400px;
+  margin: 0 20px;
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 36px;
+  border-radius: 18px;
+  background-color: var(--search-background, rgba(255, 255, 255, 0.1));
+  border: 1px solid var(--search-border, rgba(255, 255, 255, 0.2));
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.search-box:hover, .search-box:focus-within {
+  background-color: var(--search-background-hover, rgba(255, 255, 255, 0.15));
+  border-color: var(--search-border-hover, rgba(255, 255, 255, 0.3));
+  box-shadow: 0 0 0 2px rgba(var(--primary-color-rgb), 0.1);
+}
+
+.search-input {
+  flex: 1;
+  height: 100%;
+  border: none;
+  background: transparent;
+  padding: 0 15px;
+  color: var(--text-primary);
+  font-size: 14px;
+  outline: none;
+}
+
+.search-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.search-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: color 0.2s ease;
+}
+
+.search-button:hover {
+  color: var(--primary-color);
+}
+
+/* 響應式搜索框樣式 */
+@media (max-width: 768px) {
+  .search-container {
+    max-width: 200px;
+    margin: 0 10px;
+  }
+  
+  .search-input {
+    font-size: 13px;
+    padding: 0 10px;
+  }
+}
+
+@media (max-width: 576px) {
+  .search-container {
+    display: none; /* 在極小屏幕上隱藏搜索框 */
+  }
 }
 </style> 

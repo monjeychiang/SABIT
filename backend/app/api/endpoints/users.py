@@ -1,4 +1,5 @@
 from ...middlewares.activity_tracker import active_session_store
+from ...core.online_status_manager import online_status_manager
 from fastapi import Depends, HTTPException, status, APIRouter
 from typing import List, Dict, Any
 from ...core.security import get_current_active_user, get_current_admin_user
@@ -20,7 +21,7 @@ async def get_active_users_count(current_user: User = Depends(get_current_active
     該端點返回系統中目前在線的活躍用戶總數。
     只有已認證的用戶才能訪問此資訊。
     """
-    return {"active_users": active_session_store.get_active_users_count()}
+    return {"active_users": online_status_manager.get_total_online_users()}
 
 # 添加一个新的API端点，允许普通用户访问在线用户列表的基本信息，但不包含敏感数据
 @router.get("/active-users-public")
@@ -34,23 +35,27 @@ async def get_active_users_public(current_user: User = Depends(get_current_activ
     # 使用with語句和try-finally確保連接被正確釋放回連接池
     db = SessionLocal()
     try:
-        active_user_ids = active_session_store.get_all_active_users()
+        # 使用 online_status_manager 替代 active_session_store
+        online_user_ids = online_status_manager.get_all_online_users()
         
-        if not active_user_ids:
+        if not online_user_ids:
             return {"users": []}
         
         # 獲取活躍用戶詳細資訊
-        users = db.query(User).filter(User.id.in_(active_user_ids)).all()
+        users = db.query(User).filter(User.id.in_(online_user_ids)).all()
         
         # 構建包含最後活躍時間的用戶資訊，但只包含公開資料
         result = []
         for user in users:
-            last_active = active_session_store.get_user_last_active(user.id)
+            # 獲取用戶的最後活躍時間
+            user_status = online_status_manager.get_user_status(user.id)
+            last_active = user_status.get("last_active") if user_status else None
+            
             user_dict = {
                 "id": user.id,
                 "username": user.username,
                 "avatar_url": user.avatar_url,
-                "last_active": last_active.isoformat() if last_active else None
+                "last_active": last_active
             }
             result.append(user_dict)
         
@@ -83,13 +88,15 @@ async def check_user_active(
             detail="沒有權限查看其他用戶的狀態"
         )
     
-    is_active = active_session_store.is_user_active(user_id)
-    last_active = active_session_store.get_user_last_active(user_id)
+    # 使用 online_status_manager 替代 active_session_store
+    is_online = online_status_manager.is_user_online(user_id)
+    user_status = online_status_manager.get_user_status(user_id)
+    last_active = user_status.get("last_active")
     
     return {
         "user_id": user_id,
-        "is_active": is_active,
-        "last_active": last_active.isoformat() if last_active else None
+        "is_active": is_online,
+        "last_active": last_active
     }
 
 @router.get("/active-users", response_model=List[int])
@@ -99,7 +106,8 @@ async def get_active_users(current_user: User = Depends(get_current_admin_user))
     返回當前系統中所有活躍用戶的ID列表。
     此端點僅限管理員使用，需要管理員權限。
     """
-    return active_session_store.get_all_active_users()
+    # 使用 online_status_manager 替代 active_session_store
+    return online_status_manager.get_all_online_users()
 
 @router.get("/active-users-details")
 async def get_active_users_details(current_user: User = Depends(get_current_admin_user)):
@@ -122,25 +130,28 @@ async def get_active_users_details(current_user: User = Depends(get_current_admi
     # 使用with語句和try-finally確保連接被正確釋放回連接池
     db = SessionLocal()
     try:
-        active_user_ids = active_session_store.get_all_active_users()
+        # 使用 online_status_manager 替代 active_session_store
+        online_user_ids = online_status_manager.get_all_online_users()
         
-        if not active_user_ids:
+        if not online_user_ids:
             return {"users": []}
         
         # 獲取活躍用戶詳細資訊
-        users = db.query(User).filter(User.id.in_(active_user_ids)).all()
+        users = db.query(User).filter(User.id.in_(online_user_ids)).all()
         
         # 構建包含最後活躍時間的用戶資訊
         result = []
         for user in users:
-            last_active = active_session_store.get_user_last_active(user.id)
+            user_status = online_status_manager.get_user_status(user.id)
+            last_active = user_status.get("last_active")
+            
             user_dict = {
                 "id": user.id,
                 "username": user.username,
                 "email": user.email,
                 "avatar_url": user.avatar_url,
                 "is_admin": user.is_admin,
-                "last_active": last_active.isoformat() if last_active else None
+                "last_active": last_active
             }
             result.append(user_dict)
         

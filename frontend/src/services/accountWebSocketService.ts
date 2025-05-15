@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue';
 import { useAuthStore } from '@/stores/auth';
+import axios from 'axios';
 
 // 賬戶數據接口
 export interface AccountData {
@@ -25,6 +26,9 @@ class AccountWebSocketService {
   private exchange: string = '';
   private pingInterval: any = null;
   private refreshInterval: any = null;
+  private userExchanges: string[] = [];
+  private lastExchangeCheck: number = 0;
+  private checkingExchanges: boolean = false;
 
   // 狀態
   private _status = ref<AccountWSStatus>({
@@ -46,8 +50,74 @@ class AccountWebSocketService {
   public readonly status = computed(() => this._status.value);
   public readonly accountData = computed(() => this._accountData.value);
 
+  // 檢查用戶是否有特定交易所的API密鑰
+  public async hasExchangeApiKey(exchange: string): Promise<boolean> {
+    const now = Date.now();
+    // 如果距離上次檢查不超過1分鐘，直接使用緩存結果
+    if (this.userExchanges.length > 0 && now - this.lastExchangeCheck < 60000) {
+      return this.userExchanges.includes(exchange.toLowerCase());
+    }
+    
+    // 如果正在檢查中，等待檢查完成
+    if (this.checkingExchanges) {
+      await new Promise<void>(resolve => {
+        const checkInterval = setInterval(() => {
+          if (!this.checkingExchanges) {
+            clearInterval(checkInterval);
+            resolve();
+          }
+        }, 100);
+      });
+      return this.userExchanges.includes(exchange.toLowerCase());
+    }
+    
+    try {
+      this.checkingExchanges = true;
+      const authStore = useAuthStore();
+      
+      // 檢查用戶是否已認證
+      if (!authStore.isAuthenticated || !authStore.token) {
+        this.checkingExchanges = false;
+        return false;
+      }
+      
+      // 從API獲取用戶配置的交易所列表
+      const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+      const response = await axios.get(`${baseUrl}/api-keys/exchanges`, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      });
+      
+      // 更新緩存
+      this.userExchanges = response.data.map((e: string) => e.toLowerCase());
+      this.lastExchangeCheck = now;
+      
+      return this.userExchanges.includes(exchange.toLowerCase());
+    } catch (error) {
+      console.error('[AccountWS] 檢查交易所API密鑰時出錯:', error);
+      return false;
+    } finally {
+      this.checkingExchanges = false;
+    }
+  }
+  
+  // 獲取用戶配置的所有交易所列表
+  public async getUserExchanges(): Promise<string[]> {
+    await this.hasExchangeApiKey('dummy'); // 這將更新userExchanges緩存
+    return [...this.userExchanges]; // 返回副本
+  }
+
   // 連接到賬戶WebSocket
   public async connect(exchange: string): Promise<boolean> {
+    // 檢查用戶是否有此交易所的API密鑰
+    const hasApiKey = await this.hasExchangeApiKey(exchange);
+    if (!hasApiKey) {
+      console.warn(`[AccountWS] 用戶沒有 ${exchange} 的API密鑰，取消連接`);
+      this._status.value.error = `沒有配置 ${exchange} 的API密鑰`;
+      return false;
+    }
+    
     // 如果已連接，先斷開
     if (this.socket) {
       this.disconnect();
