@@ -63,6 +63,32 @@ export function useAccountWebSocket(exchange: string = 'binance') {
     return accountWebSocketService.send(message);
   };
   
+  // 下單方法
+  const placeOrder = async (orderParams: any) => {
+    try {
+      if (!isConnected.value) {
+        throw new Error('WebSocket未連接');
+      }
+      return await accountWebSocketService.placeOrder(orderParams);
+    } catch (error) {
+      console.error('[useAccountWebSocket] 下單失敗:', error);
+      throw error;
+    }
+  };
+  
+  // 取消訂單方法
+  const cancelOrder = async (cancelParams: any) => {
+    try {
+      if (!isConnected.value) {
+        throw new Error('WebSocket未連接');
+      }
+      return await accountWebSocketService.cancelOrder(cancelParams);
+    } catch (error) {
+      console.error('[useAccountWebSocket] 取消訂單失敗:', error);
+      throw error;
+    }
+  };
+  
   // 檢查連接狀態
   const isConnected = computed(() => {
     return status.value.connected;
@@ -117,6 +143,8 @@ export function useAccountWebSocket(exchange: string = 'binance') {
     connect,
     disconnect,
     send,
-    filterBalancesByWalletType
+    filterBalancesByWalletType,
+    placeOrder,
+    cancelOrder
   };
 } 

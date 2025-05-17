@@ -123,6 +123,16 @@ export const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/trade-test',
+    name: 'trade-test',
+    component: () => import('@/views/TradeTestView.vue'),
+    meta: { 
+      layout: 'default',
+      requiresAuth: true,
+      breadcrumb: 'WebSocket 交易測試'
+    }
+  },
+  {
     path: '/:pathMatch(.*)*',
     redirect: '/'
   }

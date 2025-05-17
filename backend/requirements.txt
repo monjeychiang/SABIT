@@ -60,3 +60,7 @@ playwright>=1.49.0
 numpy>=1.20.0
 matplotlib>=3.4.0  # 用于绘制性能比较图表 
 pillow>=10.0.0
+
+# 币安WebSocket API Ed25519签名支持
+cryptography>=40.0.0  # 已經包含，但確保版本足夠新以支持Ed25519
+PyNaCl>=1.5.0  # 提供額外的加密功能，包括Ed25519

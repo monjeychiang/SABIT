@@ -7,7 +7,7 @@
     }">
       <div class="sidebar-content">
         <nav class="sidebar-menu">
-          <router-link to="/" class="menu-item" :class="{ 'active': isActiveRoute('/') }" title="Dashboard" @click="handleMenuItemClick">
+          <router-link to="/" class="menu-item" :class="{ 'active': isActiveRoute('/') && !isActiveRoute('/chat') }" title="Dashboard" @click="handleMenuItemClick">
             <span class="menu-icon">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="3" y="3" width="7" height="9"></rect>
@@ -16,27 +16,30 @@
                 <rect x="3" y="16" width="7" height="5"></rect>
               </svg>
             </span>
-            <span v-if="!isCollapsed || (isMobile && isVisible)" class="menu-text">Dashboard</span>
+            <span v-if="!isCollapsed || (isMobile && isVisible)" class="menu-text">控制面板</span>
           </router-link>
           
           <router-link to="/markets" class="menu-item" :class="{ 'active': isActiveRoute('/markets') }" title="Markets" @click="handleMenuItemClick">
             <span class="menu-icon">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="22,7 13.5,15.5 8.5,10.5 2,17"></polyline>
-                <polyline points="16,7 22,7 22,13"></polyline>
+                <path d="M18 20V10"></path>
+                <path d="M12 20V4"></path>
+                <path d="M6 20v-6"></path>
               </svg>
             </span>
-            <span v-if="!isCollapsed || (isMobile && isVisible)" class="menu-text">Markets</span>
+            <span v-if="!isCollapsed || (isMobile && isVisible)" class="menu-text">市場行情</span>
           </router-link>
           
           <router-link to="/history" class="menu-item" :class="{ 'active': isActiveRoute('/history') }" title="History" @click="handleMenuItemClick">
             <span class="menu-icon">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
-                <polyline points="12 6 12 12 16 14"></polyline>
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="16" y1="2" x2="16" y2="6"></line>
+                <line x1="8" y1="2" x2="8" y2="6"></line>
+                <line x1="3" y1="10" x2="21" y2="10"></line>
               </svg>
             </span>
-            <span v-if="!isCollapsed || (isMobile && isVisible)" class="menu-text">History</span>
+            <span v-if="!isCollapsed || (isMobile && isVisible)" class="menu-text">交易歷史</span>
           </router-link>
 
           <!-- AI聊天助手链接 -->
@@ -44,12 +47,9 @@
             <span class="menu-icon">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                <path d="M8 10h.01"></path>
-                <path d="M12 10h.01"></path>
-                <path d="M16 10h.01"></path>
               </svg>
             </span>
-            <span v-if="!isCollapsed || (isMobile && isVisible)" class="menu-text">AI Chat</span>
+            <span v-if="!isCollapsed || (isMobile && isVisible)" class="menu-text">AI聊天助手</span>
           </router-link>
         </nav>
         
@@ -85,6 +85,25 @@
                 </svg>
               </span>
               <span v-if="!isCollapsed || (isMobile && isVisible)" class="menu-text">Admin Panel</span>
+            </router-link>
+            
+            <!-- WebSocket 交易測試頁面鏈接 -->
+            <router-link 
+              to="/trade-test" 
+              class="menu-item" 
+              :class="{ 'active': isActiveRoute('/trade-test') }" 
+              title="WebSocket 交易測試"
+              @click="handleMenuItemClick"
+            >
+              <span class="menu-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M2 9l10 3 10-3"></path>
+                  <path d="M2 12l10 3 10-3"></path>
+                  <path d="M2 15l10 3 10-3"></path>
+                  <path d="M2 3l10 3 10-3"></path>
+                </svg>
+              </span>
+              <span v-if="!isCollapsed || (isMobile && isVisible)" class="menu-text">WebSocket 交易測試</span>
             </router-link>
           </nav>
         </div>

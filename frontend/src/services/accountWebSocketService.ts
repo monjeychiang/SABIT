@@ -371,39 +371,194 @@ class AccountWebSocketService {
 
   // 嘗試重新連接
   private attemptReconnect(): void {
+    // 檢查是否已達到最大重連次數
     if (this._status.value.reconnectAttempts >= 5) {
-      console.log('[AccountWS] 已達到最大重連次數，停止重連');
+      console.error('[AccountWS] 達到最大重連次數，停止重連');
+      this._status.value.error = '達到最大重連次數，請手動重新連接';
       return;
     }
-
-    const delay = Math.min(1000 * (Math.pow(2, this._status.value.reconnectAttempts)), 30000);
-    console.log(`[AccountWS] 將在 ${delay}ms 後嘗試重連...`);
     
+    // 增加重連計數
     this._status.value.reconnectAttempts++;
     
-    this.reconnectTimer = window.setTimeout(() => {
-      console.log(`[AccountWS] 嘗試重連 #${this._status.value.reconnectAttempts}`);
-      this.connect(this.exchange).catch(() => {
-        // 重連失敗，已在內部處理
-      });
-    }, delay);
+    // 計算退避時間 (0.5秒, 1秒, 2秒, 4秒, 8秒)
+    const backoffTime = Math.pow(2, this._status.value.reconnectAttempts - 1) * 500;
+    
+    console.log(`[AccountWS] 嘗試第 ${this._status.value.reconnectAttempts} 次重連，延遲 ${backoffTime}ms`);
+    
+    // 清除之前的重連計時器
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    
+    // 設置新的重連計時器
+    this.reconnectTimer = window.setTimeout(async () => {
+      this.reconnectTimer = null;
+      console.log('[AccountWS] 執行重連...');
+      
+      try {
+        // 重新連接
+        await this.connect(this.exchange);
+        
+        // 連接成功，重置重連計數
+        if (this._status.value.connected) {
+          console.log('[AccountWS] 重連成功');
+          this._status.value.reconnectAttempts = 0;
+          
+          // 觸發重連成功事件
+          window.dispatchEvent(new CustomEvent('account:websocket-reconnected', { 
+            detail: { exchange: this.exchange } 
+          }));
+        }
+      } catch (error) {
+        console.error('[AccountWS] 重連失敗:', error);
+        // 如果重連失敗，會自動在下一次錯誤時再次觸發重連
+      }
+    }, backoffTime);
   }
 
   // 發送消息
   public send(message: any): boolean {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      console.error('[AccountWS] WebSocket未連接，無法發送消息');
+      console.error('[AccountWS] 嘗試向未連接的WebSocket發送消息');
       return false;
     }
     
     try {
-      const data = typeof message === 'string' ? message : JSON.stringify(message);
-      this.socket.send(data);
+      // 確保消息是一個物件
+      const msgObj = typeof message === 'string' ? JSON.parse(message) : message;
+      
+      // 發送消息
+      this.socket.send(JSON.stringify(msgObj));
       return true;
-    } catch (e) {
-      console.error('[AccountWS] 發送消息失敗:', e);
+    } catch (error) {
+      console.error('[AccountWS] 發送消息時出錯:', error);
       return false;
     }
+  }
+
+  // 發送消息並等待響應 - 新增方法
+  public async sendMessage(message: any): Promise<any> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+        reject(new Error('WebSocket未連接，無法發送消息'));
+        return;
+      }
+
+      // 請求唯一ID
+      const requestId = `req_${Date.now()}`;
+      
+      // 將requestId添加到消息中
+      const msgWithId = { ...message, request_id: requestId };
+      
+      // 註冊一次性消息處理器來接收響應
+      const handleResponse = (event: MessageEvent) => {
+        try {
+          const data = JSON.parse(event.data);
+          
+          // 檢查是否是我們所等待的響應
+          if ((data.type === 'order_response' || data.type === 'order_result') && 
+              (data.request_id === requestId || !data.request_id)) {
+            // 收到響應，移除監聽器
+            this.socket?.removeEventListener('message', handleResponse);
+            clearTimeout(timeout);
+            
+            // 解析響應
+            if (data.success === false) {
+              reject(data.error || new Error('請求失敗'));
+            } else {
+              resolve(data);
+            }
+          }
+        } catch (e) {
+          console.error('[AccountWS] 處理響應時出錯:', e);
+        }
+      };
+      
+      // 添加臨時消息處理器
+      this.socket.addEventListener('message', handleResponse);
+      
+      // 設置響應超時
+      const timeout = setTimeout(() => {
+        this.socket?.removeEventListener('message', handleResponse);
+        reject(new Error('請求超時，沒有收到響應'));
+      }, 30000); // 30秒超時
+      
+      // 發送消息
+      const success = this.send(msgWithId);
+      
+      if (!success) {
+        clearTimeout(timeout);
+        this.socket.removeEventListener('message', handleResponse);
+        reject(new Error('發送消息失敗'));
+      }
+    });
+  }
+
+  // 透過WebSocket下單
+  public async placeOrder(orderParams: any): Promise<any> {
+    // 確保使用正確的消息格式
+    const message = {
+      type: 'place_order',
+      order_params: orderParams // 使用order_params作為鍵名
+    };
+    
+    return await this.sendMessage(message);
+  }
+  
+  // 透過WebSocket取消訂單
+  public async cancelOrder(cancelParams: any): Promise<any> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+        reject(new Error('WebSocket未連接，無法取消訂單'));
+        return;
+      }
+
+      // 請求唯一ID
+      const requestId = `cancel_${Date.now()}`;
+      
+      // 註冊一次性消息處理器來接收取消訂單響應
+      const handleResponse = (event: MessageEvent) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'cancel_response') {
+            // 收到取消訂單響應，移除監聽器
+            this.socket?.removeEventListener('message', handleResponse);
+            
+            if (data.success) {
+              resolve(data.data);
+            } else {
+              reject(new Error(data.message || '取消訂單失敗'));
+            }
+          }
+        } catch (e) {
+          console.error('[AccountWS] 處理取消訂單響應時出錯:', e);
+        }
+      };
+      
+      // 添加臨時消息處理器
+      this.socket.addEventListener('message', handleResponse);
+      
+      // 設置響應超時
+      const timeout = setTimeout(() => {
+        this.socket?.removeEventListener('message', handleResponse);
+        reject(new Error('取消訂單請求超時'));
+      }, 30000);
+      
+      // 發送取消訂單請求
+      const success = this.send({
+        type: 'cancel_order',
+        cancel_params: cancelParams,
+        request_id: requestId
+      });
+      
+      if (!success) {
+        clearTimeout(timeout);
+        this.socket.removeEventListener('message', handleResponse);
+        reject(new Error('發送取消訂單請求失敗'));
+      }
+    });
   }
 
   // 檢查是否已連接
