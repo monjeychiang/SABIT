@@ -154,6 +154,25 @@
       <!-- 垂直分隔線 -->
       <div class="vertical-divider"></div>
       
+      <!-- 添加GitHub圖標 -->
+      <button class="icon-button" @click="goToGitHub" title="前往GitHub倉庫">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+          <path fill="none" d="M0 0h24v24H0z"/>
+          <path d="M12 2C6.475 2 2 6.475 2 12a9.994 9.994 0 0 0 6.838 9.488c.5.087.687-.213.687-.476 0-.237-.013-1.024-.013-1.862-2.512.463-3.162-.612-3.362-1.175-.113-.288-.6-1.175-1.025-1.413-.35-.187-.85-.65-.013-.662.788-.013 1.35.725 1.538 1.025.9 1.512 2.338 1.087 2.912.825.088-.65.35-1.087.638-1.337-2.225-.25-4.55-1.113-4.55-4.938 0-1.088.387-1.987 1.025-2.688-.1-.25-.45-1.275.1-2.65 0 0 .837-.262 2.75 1.026a9.28 9.28 0 0 1 2.5-.338c.85 0 1.7.112 2.5.337 1.912-1.3 2.75-1.024 2.75-1.024.55 1.375.2 2.4.1 2.65.637.7 1.025 1.587 1.025 2.687 0 3.838-2.337 4.688-4.562 4.938.362.312.675.912.675 1.85 0 1.337-.013 2.412-.013 2.75 0 .262.188.574.688.474A10.016 10.016 0 0 0 22 12c0-5.525-4.475-10-10-10z" fill="currentColor"/>
+        </svg>
+      </button>
+      
+      <!-- 添加問號圖標 -->
+      <button class="icon-button" @click="showHelp" title="幫助中心">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+          <path fill="none" d="M0 0h24v24H0z"/>
+          <path d="M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10zm0-2a8 8 0 1 0 0-16 8 8 0 0 0 0 16zm-1-5h2v2h-2v-2zm2-1.645V14h-2v-1.5a1 1 0 0 1 1-1 1.5 1.5 0 1 0-1.471-1.794l-1.962-.393A3.501 3.501 0 1 1 13 13.355z" fill="currentColor"/>
+        </svg>
+      </button>
+      
+      <!-- 垂直分隔線 -->
+      <div class="vertical-divider"></div>
+      
       <!-- 深色模式切換按鈕 - 移動到這裡作為最右側元素 -->
       <button class="theme-toggle-button" @click="toggleDarkMode" aria-label="Toggle dark mode">
         <svg v-if="isDarkMode" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
@@ -1314,23 +1333,32 @@ const formatDate = (dateString) => {
     return dateString;
   }
 };
+
+const goToGitHub = () => {
+  // 打開GitHub倉庫頁面
+  window.open('https://github.com/monjeychiang/SABIT', '_blank');
+};
+
+const showHelp = () => {
+  // 顯示幫助中心或文檔
+  router.push('/help');
+};
 </script>
 
 <style scoped>
 .navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: var(--navbar-height);
+  padding: 0 var(--spacing-md);
+  background-color: var(--background-color);
+  border-bottom: none;
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
-  height: var(--navbar-height);
-  background-color: var(--surface-color);
-  border-bottom: 1px solid var(--border-color);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 var(--spacing-md);
-  z-index: 1000;
-  transition: all var(--transition-normal) ease;
+  z-index: 100;
 }
 
 .left {
@@ -1449,19 +1477,18 @@ const formatDate = (dateString) => {
 
 .notifications-panel {
   position: absolute;
-  top: calc(100% + var(--spacing-sm));
-  right: 0;
-  width: 320px;
-  background-color: var(--surface-color);
-  border: 1px solid var(--border-color);
-  border-radius: var(--border-radius-md);
-  box-shadow: var(--box-shadow-lg);
-  z-index: 1000;
-  transition: all var(--transition-normal) ease;
-  max-height: 400px;
+  top: calc(100% + 5px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 380px;
+  max-width: 90vw;
+  max-height: calc(100vh - 150px);
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--text-tertiary) transparent;
+  background-color: var(--background-color);
+  border: none;
+  border-radius: var(--border-radius-md);
+  box-shadow: var(--box-shadow-md);
+  z-index: 10;
 }
 
 .notifications-header {
@@ -1633,15 +1660,16 @@ const formatDate = (dateString) => {
 
 .user-dropdown-menu {
   position: absolute;
-  top: calc(100% + var(--spacing-sm));
-  right: 0;
-  width: 200px; /* 恢复原来的宽度 */
-  background-color: var(--surface-color);
-  border: 1px solid var(--border-color);
+  top: calc(100% + 5px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 250px;
+  background-color: var(--background-color);
+  border: none;
   border-radius: var(--border-radius-md);
-  box-shadow: var(--box-shadow-lg);
-  z-index: 1000;
-  transition: all var(--transition-normal) ease;
+  box-shadow: var(--box-shadow-md);
+  z-index: 10;
+  overflow: hidden;
 }
 
 .dropdown-item {
@@ -1689,13 +1717,12 @@ const formatDate = (dateString) => {
 
 .login-modal,
 .register-modal {
-  width: 420px;
+  background-color: var(--background-color);
+  width: 400px;
   max-width: 90%;
-  background-color: var(--surface-color);
-  border-radius: var(--border-radius-md);
-  box-shadow: var(--shadow-lg);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--box-shadow-lg);
   overflow: hidden;
-  animation: modalEnter 0.3s ease;
 }
 
 .login-modal-header,
@@ -2028,7 +2055,16 @@ const formatDate = (dateString) => {
   }
   
   .notifications-panel {
+    left: auto;
+    right: 0;
+    transform: none;
     width: 280px;
+  }
+  
+  .user-dropdown-menu {
+    left: auto;
+    right: 0;
+    transform: none;
   }
   
   .login-modal {
@@ -2533,57 +2569,55 @@ const formatDate = (dateString) => {
 
 /* 搜索框樣式 */
 .search-container {
-  display: flex;
-  align-items: center;
   flex: 1;
-  max-width: 400px;
-  margin: 0 20px;
+  display: flex;
+  justify-content: center;
+  max-width: 700px;
+  margin: 0 auto;
 }
 
 .search-box {
   display: flex;
   align-items: center;
   width: 100%;
-  height: 36px;
-  border-radius: 18px;
-  background-color: var(--search-background, rgba(255, 255, 255, 0.1));
-  border: 1px solid var(--search-border, rgba(255, 255, 255, 0.2));
-  overflow: hidden;
-  transition: all 0.3s ease;
+  max-width: 700px;
+  background-color: var(--hover-color);
+  border: none;
+  border-radius: 8px;
+  padding: 4px 8px;
+  transition: background-color 0.3s, box-shadow 0.3s;
 }
 
-.search-box:hover, .search-box:focus-within {
-  background-color: var(--search-background-hover, rgba(255, 255, 255, 0.15));
-  border-color: var(--search-border-hover, rgba(255, 255, 255, 0.3));
-  box-shadow: 0 0 0 2px rgba(var(--primary-color-rgb), 0.1);
+.search-box:hover {
+  background-color: var(--hover-color);
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.1);
+}
+
+.search-box:focus-within {
+  background-color: var(--background-color);
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border-color);
 }
 
 .search-input {
   flex: 1;
-  height: 100%;
   border: none;
   background: transparent;
-  padding: 0 15px;
-  color: var(--text-primary);
+  padding: 8px;
   font-size: 14px;
+  color: var(--text-primary);
   outline: none;
 }
 
-.search-input::placeholder {
-  color: var(--text-tertiary);
-}
-
 .search-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 8px;
+  color: var(--text-secondary);
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  color: var(--text-secondary);
-  transition: color 0.2s ease;
 }
 
 .search-button:hover {
@@ -2607,5 +2641,22 @@ const formatDate = (dateString) => {
   .search-container {
     display: none; /* 在極小屏幕上隱藏搜索框 */
   }
+}
+
+.icon-button {
+  background: none;
+  border: none;
+  padding: var(--spacing-sm);
+  cursor: pointer;
+  border-radius: var(--border-radius-sm);
+  color: var(--text-primary);
+  transition: all var(--transition-fast) ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-button:hover {
+  background-color: var(--hover-color);
 }
 </style> 

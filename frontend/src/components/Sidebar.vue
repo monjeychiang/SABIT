@@ -179,8 +179,8 @@ const logout = () => {
 .sidebar {
   width: var(--sidebar-width);
   height: 100%;
-  background-color: var(--surface-color);
-  border-right: 1px solid var(--border-color);
+  background-color: var(--background-color);
+  border-right: none;
   position: fixed;
   left: 0;
   top: 0;
@@ -230,74 +230,41 @@ const logout = () => {
 .menu-item {
   display: flex;
   align-items: center;
-  padding: var(--spacing-sm) var(--spacing-md);
+  padding: 10px 16px;
   color: var(--text-primary);
   text-decoration: none;
-  border-radius: var(--border-radius-md);
-  margin: 0 var(--spacing-sm);
-  transition: all 0.2s ease;
-  gap: var(--spacing-md);
-  cursor: pointer;
-  border: none;
-  background: none;
-  text-align: left;
-  font-size: var(--font-size-sm);
-  position: relative;
-  overflow: hidden;
-}
-
-.menu-item::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background-color: var(--primary-color);
-  opacity: 0;
-  transition: opacity var(--transition-fast) ease;
+  border-radius: 0 24px 24px 0;
+  transition: background-color 0.2s ease;
+  margin-bottom: 4px;
+  margin-right: 12px;
 }
 
 .menu-item:hover {
-  transform: translateX(4px);
-  background-color: rgba(var(--primary-color-rgb), 0.1);
-}
-
-.menu-item:active {
-  transform: translateX(2px);
+  background-color: var(--hover-color);
 }
 
 .menu-item.active {
-  background-color: var(--primary-color);
-  color: var(--text-light);
-}
-
-.menu-item.active::before {
-  opacity: 1;
-}
-
-.menu-item.active .menu-icon {
-  color: var(--text-light);
+  background-color: var(--primary-hover);
+  color: var(--primary-color);
+  font-weight: 500;
 }
 
 .menu-icon {
+  width: 24px;
+  height: 24px;
+  margin-right: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-secondary);
-  transition: all var(--transition-fast) ease;
-  width: 24px;
-  height: 24px;
+  color: inherit;
 }
 
 .menu-text {
+  flex: 1;
   white-space: nowrap;
-  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
   transition: opacity 0.2s ease;
-}
-
-.sidebar.sidebar-collapsed .menu-text {
-  opacity: 0;
 }
 
 .sidebar-section {

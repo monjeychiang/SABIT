@@ -25,6 +25,35 @@
       </div>
     </div>
 
+    <!-- 幣安連接狀態 -->
+    <div class="connection-status binance-connection" :class="{ 'connected': binanceConnected, 'websocket-api': isWebSocketAPI, 'rest-api': isRestAPI, 'error': binanceConnectError }" v-if="isConnected">
+      <div class="status-indicator" :class="{ active: binanceConnected, error: binanceConnectError }"></div>
+      <span>幣安 API 狀態: {{ binanceConnected ? '已連接' : (binanceConnectError ? '連接錯誤' : '未連接') }}</span>
+      <div class="connection-info">
+        <span class="connection-type" :class="{ 'websocket-api': isWebSocketAPI, 'rest-api': isRestAPI, 'error': binanceConnectError }">
+          {{ binanceConnectionType }}
+        </span>
+        <i class="fas fa-info-circle api-info-icon" title="WebSocket API 提供更快的交易速度和更低的延遲，但需要專門的 Ed25519 密鑰。REST API 是標準接口，使用一般的 HMAC-SHA256 密鑰"></i>
+      </div>
+      <div class="connection-actions" v-if="binanceConnectError">
+        <button @click="reconnectBinance" class="reconnect-btn">
+          <span class="icon">↻</span> 重新連接
+        </button>
+      </div>
+    </div>
+
+    <!-- 幣安連接錯誤信息 -->
+    <div class="binance-error-message" v-if="isConnected && binanceConnectError">
+      <div class="error-icon">!</div>
+      <div class="error-content">
+        <div class="error-title">幣安 API 連接錯誤</div>
+        <div class="error-desc">{{ binanceErrorMessage || '連接意外斷開，請嘗試重新連接' }}</div>
+        <div class="error-tips">
+          常見原因: 網絡問題、API密鑰過期或權限不足、服務端連接超時
+        </div>
+      </div>
+    </div>
+
     <div class="card account-info" v-if="isConnected">
       <div class="card-header">
         <h2>賬戶信息</h2>
@@ -309,6 +338,10 @@ const isOrderSubmitting = ref(false);
 const isCancelSubmitting = ref(false);
 const testMode = ref(true);
 
+// 幣安連接錯誤狀態
+const binanceConnectError = ref(false);
+const binanceErrorMessage = ref('');
+
 // 響應和錯誤信息
 const orderResponse = ref<any>(null);
 const orderError = ref<string | null>(null);
@@ -319,19 +352,64 @@ const cancelError = ref<string | null>(null);
 const connect = async () => {
   try {
     await connectWs();
+    // 清除錯誤狀態
+    binanceConnectError.value = false;
+    binanceErrorMessage.value = '';
   } catch (error) {
     console.error('連接失敗:', error);
+    // 可以在這裡設置錯誤狀態，但因為未連接，所以不會顯示幣安狀態
   }
 };
 
 // 斷開WebSocket
 const disconnect = () => {
   disconnectWs();
+  // 清除錯誤狀態
+  binanceConnectError.value = false;
+  binanceErrorMessage.value = '';
+};
+
+// 重新連接幣安
+const reconnectBinance = async () => {
+  try {
+    // 首先發送刷新請求，這將嘗試重新建立與幣安的連接
+    await refreshAccountData();
+    
+    // 如果成功刷新，清除錯誤狀態
+    binanceConnectError.value = false;
+    binanceErrorMessage.value = '';
+    
+  } catch (error) {
+    console.error('重新連接幣安失敗:', error);
+    // 設置更詳細的錯誤信息
+    if (error instanceof Error) {
+      binanceErrorMessage.value = error.message;
+    } else {
+      binanceErrorMessage.value = '重新連接失敗，請檢查網絡和API密鑰';
+    }
+  }
 };
 
 // 刷新帳戶數據
-const refreshAccountData = () => {
-  send({ type: 'refresh' });
+const refreshAccountData = async () => {
+  try {
+    // 發送刷新請求
+    await send({ type: 'refresh' });
+  } catch (error) {
+    console.error('刷新數據失敗:', error);
+    // 設置錯誤狀態
+    binanceConnectError.value = true;
+    
+    if (error instanceof Error) {
+      binanceErrorMessage.value = error.message;
+    } else if (typeof error === 'string') {
+      binanceErrorMessage.value = error;
+    } else {
+      binanceErrorMessage.value = 'WebSocket 連接錯誤';
+    }
+    
+    throw error; // 重新拋出錯誤以便調用者處理
+  }
 };
 
 // 提交訂單
@@ -363,6 +441,8 @@ const submitOrder = async () => {
   }
 
   try {
+    isOrderSubmitting.value = true;
+    
     // 構建訂單參數 - 僅包含必要參數
     const orderParams = {
       // 基本訂單參數
@@ -397,6 +477,18 @@ const submitOrder = async () => {
     // 處理響應
     if (result.success === false) {
       orderError.value = result.error || '下單失敗，請檢查輸入參數';
+      
+      // 檢查是否是WebSocket連接錯誤
+      if (result.error && (
+          result.error.includes('WebSocket') || 
+          result.error.includes('連接') || 
+          result.error.includes('網絡') ||
+          result.error.includes('no close frame')
+      )) {
+        binanceConnectError.value = true;
+        binanceErrorMessage.value = result.error;
+      }
+      
       return;
     }
 
@@ -404,10 +496,34 @@ const submitOrder = async () => {
     orderResponse.value = result;
     
     // 更新賬戶信息
-    await refreshAccountData();
+    try {
+      await refreshAccountData();
+      // 成功刷新賬戶數據，連接正常
+      binanceConnectError.value = false;
+      binanceErrorMessage.value = '';
+    } catch (error) {
+      console.error('刷新賬戶數據出錯:', error);
+      // 這裡不設置訂單錯誤，因為訂單已經成功
+      // 但標記幣安連接可能有問題
+      binanceConnectError.value = true;
+      binanceErrorMessage.value = '訂單已提交，但獲取最新賬戶數據時出錯';
+    }
   } catch (error) {
     console.error('下單錯誤:', error);
     orderError.value = error.message || '下單過程中發生錯誤';
+    
+    // 檢查是否是WebSocket連接錯誤
+    if (error.message && (
+        error.message.includes('WebSocket') || 
+        error.message.includes('連接') || 
+        error.message.includes('網絡') ||
+        error.message.includes('no close frame')
+    )) {
+      binanceConnectError.value = true;
+      binanceErrorMessage.value = error.message;
+    }
+  } finally {
+    isOrderSubmitting.value = false;
   }
 };
 
@@ -447,18 +563,54 @@ const submitCancelOrder = async () => {
     // 檢查響應
     if (result && result.error) {
       // API 返回了錯誤
-      throw new Error(`錯誤 ${result.error.code}: ${result.error.msg}`);
+      const errorMsg = `錯誤 ${result.error.code}: ${result.error.msg}`;
+      cancelError.value = errorMsg;
+      
+      // 檢查是否是WebSocket連接錯誤
+      if (result.error.msg && (
+          result.error.msg.includes('WebSocket') || 
+          result.error.msg.includes('連接') || 
+          result.error.msg.includes('網絡') ||
+          result.error.msg.includes('no close frame')
+      )) {
+        binanceConnectError.value = true;
+        binanceErrorMessage.value = result.error.msg;
+      }
+      
+      throw new Error(errorMsg);
     }
     
     cancelResponse.value = result;
     
     // 取消訂單成功後刷新賬戶數據
-    refreshAccountData();
+    try {
+      await refreshAccountData();
+      // 成功刷新賬戶數據，連接正常
+      binanceConnectError.value = false;
+      binanceErrorMessage.value = '';
+    } catch (error) {
+      console.error('刷新賬戶數據出錯:', error);
+      // 這裡不設置取消訂單錯誤，因為取消訂單可能已經成功
+      // 但標記幣安連接可能有問題
+      binanceConnectError.value = true;
+      binanceErrorMessage.value = '訂單可能已取消，但獲取最新賬戶數據時出錯';
+    }
     
   } catch (error) {
     console.error('取消訂單錯誤:', error);
     if (error instanceof Error) {
       cancelError.value = error.message;
+      
+      // 檢查是否是WebSocket連接錯誤
+      if (error.message && (
+          error.message.includes('WebSocket') || 
+          error.message.includes('連接') || 
+          error.message.includes('網絡') ||
+          error.message.includes('no close frame')
+      )) {
+        binanceConnectError.value = true;
+        binanceErrorMessage.value = error.message;
+      }
     } else if (typeof error === 'object' && error !== null) {
       cancelError.value = JSON.stringify(error);
     } else {
@@ -488,6 +640,36 @@ const getColorClass = (value: string | number | undefined) => {
   if (numValue < 0) return 'negative';
   return '';
 };
+
+// 幣安連接狀態
+const binanceConnected = computed(() => {
+  // 檢查是否有賬戶數據並且是否包含API類型信息
+  return !!accountData.value && 
+         !!accountData.value.api_type && 
+         (accountData.value.api_type.includes('WebSocket') || accountData.value.api_type.includes('REST'));
+});
+
+// 幣安連接類型
+const binanceConnectionType = computed(() => {
+  if (!accountData.value || !accountData.value.api_type) {
+    return '未連接';
+  }
+  return accountData.value.api_type || '未知連接類型';
+});
+
+// 是否使用 WebSocket API
+const isWebSocketAPI = computed(() => {
+  return !!accountData.value && 
+         !!accountData.value.api_type && 
+         accountData.value.api_type.includes('WebSocket');
+});
+
+// 是否使用 REST API
+const isRestAPI = computed(() => {
+  return !!accountData.value && 
+         !!accountData.value.api_type && 
+         accountData.value.api_type.includes('REST');
+});
 
 // 過濾有餘額的資產
 const filteredBalances = computed(() => {
@@ -525,8 +707,32 @@ onMounted(async () => {
     // 檢查連接是否成功
     if (isConnected.value) {
       console.log('WebSocket連接成功，正在獲取賬戶數據...');
-      await refreshAccountData();
-      console.log('賬戶數據已加載');
+      
+      try {
+        await refreshAccountData();
+        console.log('賬戶數據已加載');
+        
+        // 設置定期檢查幣安連接狀態
+        setInterval(() => {
+          // 如果有帳戶數據但最後更新時間超過2分鐘，可能存在連接問題
+          if (isConnected.value && lastUpdate.value) {
+            const now = new Date();
+            const timeDiff = now.getTime() - lastUpdate.value.getTime();
+            
+            // 如果超過2分鐘沒有更新，標記為可能出現錯誤
+            if (timeDiff > 120000) { // 2分鐘 = 120000毫秒
+              binanceConnectError.value = true;
+              binanceErrorMessage.value = '長時間未收到數據更新，可能連接已斷開';
+              console.warn('幣安連接可能已斷開，長時間未收到數據更新');
+            }
+          }
+        }, 60000); // 每分鐘檢查一次
+        
+      } catch (error) {
+        console.error('獲取賬戶數據出錯:', error);
+        binanceConnectError.value = true;
+        binanceErrorMessage.value = error instanceof Error ? error.message : '獲取賬戶數據失敗，幣安連接可能有問題';
+      }
     } else {
       console.error('WebSocket連接失敗');
       orderError.value = '無法連接到WebSocket服務，請稍後重試';
@@ -535,6 +741,22 @@ onMounted(async () => {
     console.error('掛載組件時發生錯誤:', error);
     orderError.value = `初始化錯誤: ${error.message || '未知錯誤'}`;
   }
+  
+  // 監聽網絡狀態變化
+  window.addEventListener('online', async () => {
+    if (isConnected.value && binanceConnectError.value) {
+      console.log('網絡恢復連接，嘗試重新連接幣安');
+      await reconnectBinance();
+    }
+  });
+  
+  window.addEventListener('offline', () => {
+    if (isConnected.value) {
+      binanceConnectError.value = true;
+      binanceErrorMessage.value = '網絡連接已斷開，請檢查您的網絡連接';
+      console.warn('網絡已斷開，幣安連接可能受影響');
+    }
+  });
 });
 </script>
 
@@ -1298,5 +1520,193 @@ tbody tr:hover {
 .api-info-icon {
   color: #7f8c8d;
   cursor: help;
+}
+
+/* 幣安連接狀態樣式 */
+.connection-status.binance-connection {
+  border-left-color: #3498db;
+  background-color: rgba(52, 152, 219, 0.05);
+  margin-top: -16px;
+  margin-bottom: 24px;
+}
+
+.connection-status.binance-connection.connected {
+  background-color: rgba(52, 152, 219, 0.1);
+}
+
+.connection-status.binance-connection.disconnected {
+  border-left-color: #e74c3c;
+  background-color: rgba(231, 76, 60, 0.05);
+}
+
+.connection-status.binance-connection.websocket-api {
+  border-left-color: #3498db;
+}
+
+.connection-status.binance-connection.rest-api {
+  border-left-color: #f39c12;
+}
+
+.connection-status.binance-connection .status-indicator.active {
+  background-color: #3498db;
+  box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.3);
+}
+
+.connection-status.binance-connection.rest-api .status-indicator.active {
+  background-color: #f39c12;
+  box-shadow: 0 0 0 2px rgba(243, 156, 18, 0.3);
+}
+
+.connection-status.binance-connection span {
+  color: #2c3e50;
+}
+
+.connection-status.binance-connection .connection-info {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.connection-status.binance-connection .connection-info span {
+  font-size: 0.9rem;
+  color: #7f8c8d;
+}
+
+.connection-status.binance-connection .connection-info .connection-type {
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+
+.connection-status.binance-connection .connection-info .connection-type.websocket-api {
+  background-color: rgba(52, 152, 219, 0.15);
+  color: #3498db;
+  border: 1px solid rgba(52, 152, 219, 0.3);
+}
+
+.connection-status.binance-connection .connection-info .connection-type.rest-api {
+  background-color: rgba(243, 156, 18, 0.15);
+  color: #d35400;
+  border: 1px solid rgba(243, 156, 18, 0.3);
+}
+
+.api-info-icon {
+  color: #7f8c8d;
+  cursor: help;
+}
+
+/* 幣安連接錯誤信息樣式 */
+.binance-error-message {
+  display: flex;
+  align-items: flex-start;
+  padding: 16px;
+  background-color: #ffebee;
+  border-radius: 8px;
+  margin-top: -16px;
+  margin-bottom: 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  border-left: 4px solid #e74c3c;
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.error-icon {
+  font-size: 2rem;
+  color: #e53935;
+  margin-right: 16px;
+  background-color: rgba(229, 57, 53, 0.1);
+  width: 50px;
+  height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.error-content {
+  flex: 1;
+}
+
+.error-title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #37474f;
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+.error-desc {
+  margin: 0;
+  color: #78909c;
+}
+
+.error-tips {
+  margin-top: 8px;
+  font-size: 0.9rem;
+  color: #78909c;
+}
+
+.connection-status.binance-connection.error {
+  border-left-color: #e74c3c;
+  background-color: rgba(231, 76, 60, 0.1);
+}
+
+.connection-status.binance-connection .status-indicator.error {
+  background-color: #e74c3c;
+  box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.3);
+  animation: pulse-error 2s infinite;
+}
+
+@keyframes pulse-error {
+  0% {
+    box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(231, 76, 60, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(231, 76, 60, 0);
+  }
+}
+
+.connection-status.binance-connection .connection-info .connection-type.error {
+  background-color: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+  border: 1px solid rgba(231, 76, 60, 0.3);
+}
+
+.reconnect-btn {
+  background-color: #e74c3c;
+  color: white;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.reconnect-btn:hover {
+  background-color: #c0392b;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+}
+
+.reconnect-btn .icon {
+  font-size: 1.1em;
+  margin-right: 4px;
+  animation: spin 1.5s linear infinite;
+  display: inline-block;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 </style> 

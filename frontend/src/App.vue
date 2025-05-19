@@ -669,26 +669,32 @@ onUnmounted(() => {
           @logout="handleLogout"
         />
         
-        <div class="app-content">
-          <Sidebar 
-            :is-collapsed="isSidebarCollapsed" 
-            :is-mobile="isMobile"
-            :is-visible="isSidebarVisible"
-            @close-mobile-sidebar="isSidebarVisible = false"
-          />
-          
+        <!-- 調整側邊欄位置，將其移到與 app-content 同級 -->
+        <Sidebar 
+          :is-collapsed="isSidebarCollapsed" 
+          :is-mobile="isMobile"
+          :is-visible="isSidebarVisible"
+          @close-mobile-sidebar="isSidebarVisible = false"
+        />
+        
+        <div class="app-content" :class="{'sidebar-collapsed': isSidebarCollapsed && !isMobile}">
           <main class="main-content" :style="mainContentStyle" @click="closeMenuOnContentClick">
-            <!-- 添加面包屑导航 -->
-            <Breadcrumb />
+            <!-- 麵包屑導航 -->
+            <div class="main-content-header">
+              <Breadcrumb />
+            </div>
             
-            <router-view v-slot="{ Component, route }">
-              <transition name="fade" mode="out-in">
-                <component 
-                  :is="Component"
-                  :key="route.meta.reload ? route.fullPath : route.path"
-                />
-              </transition>
-            </router-view>
+            <!-- 可滾動內容區域 -->
+            <div class="content-scrollable">
+              <router-view v-slot="{ Component, route }">
+                <transition name="fade" mode="out-in">
+                  <component 
+                    :is="Component" 
+                    :key="route.meta.reload ? route.fullPath : route.path"
+                  />
+                </transition>
+              </router-view>
+            </div>
           </main>
         </div>
         
@@ -776,12 +782,14 @@ onUnmounted(() => {
     <!-- 認證佈局：沒有導航欄和側邊欄，全屏顯示 -->
     <template v-else-if="currentLayout === 'auth'">
       <div class="auth-layout">
-        <router-view v-slot="{ Component, route }">
-          <component 
-            :is="Component"
-            :key="route.fullPath"
-          />
-        </router-view>
+        <div class="auth-content-wrapper">
+          <router-view v-slot="{ Component, route }">
+            <component 
+              :is="Component"
+              :key="route.fullPath"
+            />
+          </router-view>
+        </div>
       </div>
       
       <!-- 认证布局也显示底部状态栏 -->
@@ -880,36 +888,153 @@ onUnmounted(() => {
   background-color: var(--background-color);
   color: var(--text-primary);
   transition: background-color var(--transition-normal) ease, color var(--transition-normal) ease;
-  /* 添加padding-bottom为状态栏的高度，防止内容被状态栏遮挡 */
   padding-bottom: var(--status-bar-height, 24px);
   position: relative;
+  font-family: var(--font-family);
+  overflow: hidden; /* 禁止整個應用滾動 */
+}
+
+/* 添加全局樣式來禁止基本元素滾動 */
+html, body {
+  overflow: hidden;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  position: fixed;
+  width: 100%;
 }
 
 .app-content {
   display: flex;
-  min-height: 100vh;
-  padding-top: var(--navbar-height);
-  transition: all var(--transition-normal) ease;
+  flex: 1;
+  position: relative;
+  overflow: hidden; /* 確保內容區不會滾動 */
+  margin-left: var(--sidebar-width); /* 為側邊欄留出空間 */
+  width: calc(100% - var(--sidebar-width)); /* 調整寬度以適應側邊欄 */
+  margin-top: calc(var(--navbar-height) + var(--spacing-sm)); /* 增加與導航欄之間的間距 */
+  padding-top: 0; /* 移除頂部padding */
+  background-color: var(--background-color); /* 使用應用整體背景色，而非卡片背景色 */
+}
+
+/* 側邊欄折疊時調整 app-content */
+.app-content.sidebar-collapsed {
+  margin-left: var(--sidebar-collapsed-width); /* 為折疊的側邊欄留出空間 */
+  width: calc(100% - var(--sidebar-collapsed-width)); /* 調整寬度 */
+}
+
+/* 移動設備上的調整 */
+@media (max-width: 768px) {
+  .app-content {
+    margin-top: calc(var(--navbar-height) + var(--spacing-xs)); /* 移動設備上使用更小的間距 */
+    padding-top: 0;
+  }
+  
+  .main-content {
+    margin: var(--spacing-sm); /* 恢復移動設備上的頂部邊距 */
+    margin-bottom: calc(var(--spacing-sm) + var(--status-bar-height-mobile, 20px) + 8px); /* 調整移動設備上的底部間距 */
+    min-height: 200px; /* 移動設備上的最小高度可以更小 */
+  }
 }
 
 .main-content {
   flex: 1;
-  padding: var(--content-padding);
-  padding-top: calc(var(--spacing-md) * 0.5);
-  transition: padding-left var(--transition-normal) ease;
-  min-height: calc(100vh - var(--navbar-height) - var(--status-bar-height, 24px));
-  background-color: var(--background-color);
+  margin: var(--spacing-md); /* 恢復頂部邊距 */
+  margin-bottom: calc(var(--spacing-md) + var(--status-bar-height, 24px) + 8px); /* 增加底部間距，確保不被狀態欄遮擋 */
+  border-radius: var(--border-radius-lg);
+  transition: padding-left var(--transition-normal) ease, margin-left var(--transition-normal) ease;
+  max-height: calc(100vh - var(--navbar-height) - var(--spacing-sm) - var(--spacing-md) * 2 - var(--status-bar-height, 24px)); /* 更新高度計算，考慮頂部間距 */
+  background-color: var(--card-background);
   position: relative;
+  box-shadow: var(--box-shadow-sm);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* 防止整個卡片滾動 */
+  height: auto; /* 讓卡片高度根據內容自適應，而不是固定高度 */
+  min-height: 300px; /* 設置最小高度，確保卡片不會太小 */
 }
 
-/* 授權頁面佈局 */
-.auth-layout {
-  min-height: 100vh;
+/* 更新 NavBar 樣式確保它佔據正確空間 */
+.navbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--navbar-height);
+  z-index: 1000;
+  background-color: var(--navbar-bg);
+}
+
+/* 更新側邊欄樣式，確保它與導航欄無縫銜接 */
+.sidebar {
+  position: fixed;
+  top: var(--navbar-height);
+  left: 0;
+  bottom: var(--status-bar-height, 24px); /* 確保不遮擋狀態欄 */
+  width: var(--sidebar-width);
+  height: calc(100vh - var(--navbar-height) - var(--status-bar-height, 24px));
+  z-index: 100;
+  transition: width var(--transition-normal) ease, transform var(--transition-normal) ease;
+  overflow: hidden;
+}
+
+/* 更新側邊欄折疊樣式 */
+.sidebar.collapsed {
+  width: var(--sidebar-collapsed-width);
+}
+
+/* 移動設備上的側邊欄樣式 */
+@media (max-width: 768px) {
+  .sidebar {
+    transform: translateX(-100%);
+  }
+  
+  .sidebar.visible {
+    transform: translateX(0);
+  }
+}
+
+.main-content-header {
+  padding: var(--spacing-sm) var(--spacing-lg) 0; /* 減少頂部內邊距 */
+  flex-shrink: 0;
+  z-index: 10; /* 確保始終在頂部 */
+  position: relative; /* 使z-index生效 */
+  background-color: var(--card-background); /* 確保背景色與卡片一致 */
+}
+
+.content-scrollable {
+  flex: 1;
+  overflow-y: auto; /* 只有內容區域滾動 */
+  overflow-x: hidden; /* 防止水平滾動 */
+  padding: var(--spacing-sm) var(--spacing-lg) var(--spacing-lg); /* 調整頂部內邊距 */
+  padding-bottom: calc(var(--spacing-lg) + 8px); /* 增加內容底部的間距 */
+  position: relative; /* 添加相對定位 */
+  -webkit-overflow-scrolling: touch; /* 在iOS上改善滾動體驗 */
+}
+
+/* 修改路由視圖的包裝方式 */
+.router-view-wrapper {
+  height: 100%;
   display: flex;
-  justify-content: center;
-  align-items: center;
-  background-color: var(--background-color);
-  padding-bottom: var(--status-bar-height, 24px);
+  flex-direction: column;
+}
+
+/* 調整滾動條樣式只針對內容區域 */
+.content-scrollable::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.content-scrollable::-webkit-scrollbar-track {
+  background-color: transparent;
+}
+
+.content-scrollable::-webkit-scrollbar-thumb {
+  background-color: var(--border-color);
+  border-radius: 3px;
+}
+
+.content-scrollable::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-tertiary);
 }
 
 /* 底部状态栏样式 */
@@ -920,16 +1045,17 @@ onUnmounted(() => {
   right: 0;
   width: calc(100% - var(--sidebar-width));
   height: var(--status-bar-height, 24px);
-  background-color: var(--surface-color);
-  border-top: 1px solid var(--border-color);
+  background-color: var(--background-color);
+  border-top: none;
   display: flex;
   align-items: center;
   justify-content: flex-end; /* 内容右对齐 */
   padding: 0 var(--spacing-md);
   font-size: 12px;
   color: var(--text-secondary);
-  z-index: 999;
+  z-index: 50; /* 降低z-index，確保模態對話框覆蓋層能覆蓋狀態欄 */
   transition: left var(--transition-normal) ease, width var(--transition-normal) ease;
+  box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.05); /* 添加輕微的頂部陰影，使狀態欄更明顯 */
 }
 
 /* 侧边栏折叠时状态栏位置变化 */
@@ -989,6 +1115,7 @@ onUnmounted(() => {
   height: 8px;
   border-radius: 50%;
   display: inline-block;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.2);
 }
 
 .connection-dot.connected {
@@ -1026,8 +1153,8 @@ onUnmounted(() => {
   bottom: calc(var(--status-bar-height) + 5px);
   right: 0;
   width: 250px;
-  background-color: var(--surface-color);
-  border: 1px solid var(--border-color);
+  background-color: var(--background-color);
+  border: none;
   border-radius: var(--border-radius-md);
   box-shadow: var(--box-shadow-md);
   z-index: 1000;
@@ -1059,6 +1186,8 @@ onUnmounted(() => {
 
 .ws-details-content {
   padding: 10px 12px;
+  background-color: var(--card-background);
+  border-radius: var(--border-radius-sm);
 }
 
 .ws-detail-item {
@@ -1079,9 +1208,11 @@ onUnmounted(() => {
 
 .ws-details-footer {
   padding: 8px 12px;
-  border-top: 1px solid var(--border-color);
+  border-top: none;
   display: flex;
   justify-content: flex-end;
+  background-color: var(--card-background);
+  border-radius: 0 0 var(--border-radius-md) var(--border-radius-md);
 }
 
 .ws-reconnect-button {
@@ -1130,7 +1261,18 @@ onUnmounted(() => {
   }
   
   .main-content {
-    padding: var(--spacing-md);
+    margin: 0 var(--spacing-sm) var(--spacing-sm); /* 移除頂部 margin */
+    margin-bottom: calc(var(--spacing-sm) + var(--status-bar-height-mobile, 20px) + 8px); /* 調整移動設備上的底部間距 */
+    min-height: 200px; /* 移動設備上的最小高度可以更小 */
+  }
+  
+  .main-content-header {
+    padding: var(--spacing-xs) var(--spacing-md) 0; /* 在移動設備上減少頂部間距 */
+  }
+  
+  .content-scrollable {
+    padding: var(--spacing-xs) var(--spacing-md) var(--spacing-md); /* 在移動設備上減少內邊距 */
+    padding-bottom: calc(var(--spacing-md) + 8px); /* 調整移動設備上的內容底部間距 */
   }
   
   .status-bar {
@@ -1155,9 +1297,9 @@ onUnmounted(() => {
 }
 
 .breadcrumb-container {
-  margin-bottom: var(--spacing-md);
+  margin-bottom: var(--spacing-sm); /* 減少麵包屑的底部間距 */
   position: relative;
-  top: -8px;
+  top: 0; /* 移除頂部的負邊距 */
   background-color: transparent;
 }
 
@@ -1284,7 +1426,8 @@ onUnmounted(() => {
   padding: 8px;
   background-color: var(--background-color);
   border-radius: var(--border-radius-sm);
-  border: 1px solid var(--border-color);
+  border: none;
+  box-shadow: var(--box-shadow-sm);
 }
 
 .test-result-header {
@@ -1353,8 +1496,9 @@ onUnmounted(() => {
   justify-content: center;
   align-items: center;
   background-color: rgba(var(--surface-color-rgb), 0.9);
-  z-index: 9999;
+  z-index: 9999; /* 確保這個值比其他模態對話框更高 */
   backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
 }
 
 /* 新的三点加载动画效果 */
@@ -1416,5 +1560,71 @@ body,
   width: 0;
   background: transparent;
   display: none;
+}
+
+/* 修改 auth layout 部分的 router-view */
+.auth-layout {
+  min-height: calc(100vh - var(--status-bar-height, 24px) - 8px); /* 調整高度，增加與狀態欄的間距 */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: var(--background-color);
+  overflow: hidden; /* 防止整體認證佈局滾動 */
+  margin-bottom: calc(var(--status-bar-height, 24px) + 8px); /* 增加底部間距 */
+}
+
+.auth-content-wrapper {
+  max-height: calc(90vh - var(--status-bar-height, 24px) - 16px); /* 調整最大高度，確保不與狀態欄重疊 */
+  overflow-y: auto;
+  padding: var(--spacing-md);
+  -webkit-overflow-scrolling: touch; /* 在iOS上改善滾動體驗 */
+}
+
+/* 防止頁面整體滾動的補充樣式 */
+.default-layout {
+  position: fixed;
+  width: 100%;
+  height: calc(100% - var(--status-bar-height, 24px)); /* 調整高度，不包含狀態欄 */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--background-color); /* 使用應用整體背景色，而非卡片背景色 */
+}
+
+/* 為組件添加正確的滾動行為 */
+.router-view-component {
+  height: 100%;
+  width: 100%;
+  overflow: visible; /* 允許組件內容顯示，但滾動由父容器控制 */
+}
+
+/* 新增：確保模態對話框的覆蓋層能覆蓋整個頁面，包括狀態欄 */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(var(--surface-color-rgb), 0.8);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  z-index: 900; /* 比狀態欄的z-index更高 */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* 新增：確保模態對話框本身的z-index比覆蓋層更高 */
+.modal-content {
+  z-index: 901;
+  position: relative;
+  background-color: var(--card-background);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--box-shadow-lg);
+  max-width: 90%;
+  max-height: 90%;
+  overflow: hidden;
 }
 </style>

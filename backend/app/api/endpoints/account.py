@@ -23,6 +23,10 @@ logger = logging.getLogger(__name__)
 
 # WebSocket客戶端緩存，以用戶ID為鍵
 ws_clients = {}
+# 最後一次緩存清理時間
+last_cache_cleanup = time.time()
+# 緩存清理間隔（秒）
+CACHE_CLEANUP_INTERVAL = 3600  # 每小時
 
 # 新增函數：獲取或創建WebSocket客戶端
 async def get_or_create_ws_client(api_key, api_secret, exchange="binance", testnet=False, user_id=None):
@@ -42,6 +46,9 @@ async def get_or_create_ws_client(api_key, api_secret, exchange="binance", testn
     """
     # 如果沒有提供用戶ID，使用api_key的哈希作為緩存鍵
     cache_key = user_id if user_id else f"{exchange}_{api_key[:8]}_{testnet}"
+    
+    # 執行定期清理任務
+    await cleanup_inactive_ws_clients()
     
     # 檢查緩存中是否有可用的客戶端
     if cache_key in ws_clients:
@@ -83,23 +90,43 @@ async def get_or_create_ws_client(api_key, api_secret, exchange="binance", testn
     
     if exchange.lower() == "binance":
         from backend.utils.binance_ws_client import BinanceWebSocketClient
-        # 調整配置參數以確保長連接
-        client = BinanceWebSocketClient(
-            api_key, 
-            api_secret, 
-            testnet=testnet,
-            # 配置參數，根據幣安文檔設置
-            # 不需主動ping，而是響應服務器的ping
-            # 服務器每3分鐘發送一次ping，10分鐘內需要回應pong
-            ping_interval=None,  # 不主動發送ping，只響應服務器的ping
-            ping_timeout=None,   # 不使用主動ping機制
-            close_timeout=30,    # 關閉超時時間30秒
-            max_queue_size=1000,  # 增加消息隊列大小
-            max_reconnect_attempts=10  # 增加最大重連嘗試次數
-        )
+        # 創建WebSocket客戶端
+        # 檢查是否為測試環境
+        test_mode = False  # 可以從配置或環境變量中獲取
+        client = BinanceWebSocketClient(api_key, api_secret)
         
-        # 添加額外的連接時間戳屬性
-        client.last_activity_time = time.time()
+        # 連接到WebSocket API
+        connected = await client.connect()
+        
+        if not connected:
+            raise Exception(f"連接到{exchange} WebSocket API失敗")
+        
+        # 儲存到緩存中
+        ws_clients[cache_key] = client
+        
+        # 啟動心跳任務，確保連接不會因為長時間閒置而斷開
+        asyncio.create_task(_maintain_client_heartbeat(client, cache_key))
+        
+        logger.info(f"[AccountWS] 成功創建並連接WebSocket客戶端 - key:{cache_key}")
+        
+        # 清理過期的客戶端 (如果緩存過大)
+        if len(ws_clients) > 100:  # 設置一個合理的上限
+            # 按上次活動時間排序，移除最久未活動的客戶端
+            inactive_clients = sorted(
+                [(k, c.last_activity_time) for k, c in ws_clients.items() if k != cache_key],
+                key=lambda x: x[1]
+            )
+            
+            # 移除最早的10個
+            for key, _ in inactive_clients[:10]:
+                try:
+                    await ws_clients[key].disconnect()
+                    logger.debug(f"[AccountWS] 移除閒置的WebSocket客戶端 - key:{key}")
+                except:
+                    pass
+                del ws_clients[key]
+        
+        return client, True
     else:
         raise ValueError(f"不支持的交易所: {exchange}")
     
@@ -221,17 +248,39 @@ async def release_ws_client(client, force_disconnect=False, cache_key=None):
         force_disconnect: 是否強制斷開連接
         cache_key: 緩存鍵，如果提供則從緩存中移除
     """
-    if force_disconnect:
+    if not client:
+        logger.debug("[AccountWS] 嘗試釋放空的WebSocket客戶端")
+        return
+        
+    # 首先嘗試斷開連接
+    if force_disconnect or not await client.is_connected():
         try:
+            logger.debug("[AccountWS] 正在斷開WebSocket連接")
             await client.disconnect()
-            logger.debug("[AccountWS] 已強制斷開WebSocket連接")
+            logger.debug("[AccountWS] 已斷開WebSocket連接")
         except Exception as e:
             logger.error(f"[AccountWS] 斷開WebSocket連接時出錯: {str(e)}")
     
     # 如果提供了緩存鍵，從緩存中移除
     if cache_key and cache_key in ws_clients:
+        # 即使在緩存中的客戶端不是傳入的客戶端，也要嘗試斷開連接
+        cached_client = ws_clients[cache_key]
+        if cached_client is not client:
+            logger.warning(f"[AccountWS] 緩存鍵 {cache_key} 對應的客戶端與要釋放的客戶端不同")
+            try:
+                await cached_client.disconnect()
+                logger.debug(f"[AccountWS] 已斷開緩存中的WebSocket客戶端連接 - key:{cache_key}")
+            except:
+                pass
+        
+        # 從緩存中移除
         del ws_clients[cache_key]
         logger.debug(f"[AccountWS] 從緩存中移除WebSocket客戶端 - key:{cache_key}")
+        
+        # 記錄目前緩存的客戶端數量
+        logger.info(f"[AccountWS] 當前緩存的WebSocket客戶端數量: {len(ws_clients)}")
+    elif cache_key:
+        logger.debug(f"[AccountWS] 緩存鍵 {cache_key} 不在緩存中，可能已被移除")
 
 # WebSocket端點獲取合約賬戶信息
 @router.websocket("/account/futures-account/{exchange}")
@@ -436,6 +485,41 @@ async def futures_account_websocket(
                             logger.debug(f"[AccountWS] 收到PING - user:{user_id}")
                             await websocket.send_json({"type": "pong", "timestamp": time.time()})
                         
+                        # 處理前端發送的斷開連接信號
+                        elif message.get("type") == "client_disconnect":
+                            logger.info(f"[AccountWS] 收到客戶端斷開連接信號 - user:{user_id}")
+                            
+                            # 清理與幣安的WebSocket連接資源
+                            if 'binance_client' in locals() and binance_client:
+                                try:
+                                    # 構建緩存鍵
+                                    cache_key = user_id if user_id else (
+                                        f"{exchange}_{api_key_data['api_key'][:8]}_False" 
+                                        if 'api_key_data' in locals() and api_key_data else None
+                                    )
+                                    
+                                    if cache_key:
+                                        await release_ws_client(binance_client, force_disconnect=True, cache_key=cache_key)
+                                        logger.info(f"[AccountWS] 在連接結束時釋放幣安WebSocket客戶端資源 - key:{cache_key}")
+                                    else:
+                                        # 如果沒有緩存鍵，仍然斷開連接但不從緩存中移除
+                                        await binance_client.disconnect()
+                                        logger.info(f"[AccountWS] 在連接結束時斷開幣安WebSocket連接 (無緩存鍵)")
+                                except Exception as e:
+                                    logger.error(f"[AccountWS] 在連接結束時釋放幣安資源時出錯: {str(e)}")
+                            
+                            # 回應客戶端
+                            await websocket.send_json({
+                                "success": True,
+                                "type": "disconnect_ack",
+                                "message": "服務器已釋放資源",
+                                "timestamp": datetime.now().isoformat()
+                            })
+                            
+                            # 可以選擇立即結束循環
+                            logger.info(f"[AccountWS] 客戶端主動斷開，結束WebSocket連接 - user:{user_id}")
+                            break
+                        
                         # 處理刷新請求
                         elif message.get("type") == "refresh":
                             logger.info(f"[AccountWS] 收到刷新請求 - user:{user_id}")
@@ -540,10 +624,16 @@ async def futures_account_websocket(
                                         exchange, api_key_data["api_key"], api_key_data["api_secret"], order_params, user_id
                                     )
                                 else:
-                                    # 其他交易所使用 REST API
-                                    order_result = await place_order_via_rest(
-                                        exchange, api_key_data["api_key"], api_key_data["api_secret"], order_params
-                                    )
+                                    # 其他交易所改為返回錯誤訊息，提示使用 RESTful API 端點
+                                    logger.warning(f"[AccountWS] 不支援的交易所 WebSocket API: {exchange} - 請使用 RESTful API 端點")
+                                    await websocket.send_json({
+                                        "success": False,
+                                        "type": "order_result",
+                                        "error": f"不支援的交易所 WebSocket API: {exchange} - 請使用 RESTful API 端點進行下單",
+                                        "timestamp": datetime.now().isoformat()
+                                    })
+                                    # 這裡我們直接從try塊返回，而不是continue到外層循環
+                                    return
                                 
                                 # 記錄下單結果摘要，不記錄完整回應
                                 order_id = order_result.get("orderId", "無")
@@ -632,10 +722,16 @@ async def futures_account_websocket(
                                         exchange, api_key_data["api_key"], api_key_data["api_secret"], cancel_params, user_id
                                     )
                                 else:
-                                    # 其他交易所使用 REST API
-                                    cancel_result = await cancel_order_via_rest(
-                                        exchange, api_key_data["api_key"], api_key_data["api_secret"], cancel_params
-                                    )
+                                    # 其他交易所改為返回錯誤訊息，提示使用 RESTful API 端點
+                                    logger.warning(f"[AccountWS] 不支援的交易所 WebSocket API: {exchange} - 請使用 RESTful API 端點")
+                                    await websocket.send_json({
+                                        "success": False,
+                                        "type": "cancel_result",
+                                        "error": f"不支援的交易所 WebSocket API: {exchange} - 請使用 RESTful API 端點進行取消訂單",
+                                        "timestamp": datetime.now().isoformat()
+                                    })
+                                    # 這裡我們直接從try塊返回，而不是continue到外層循環
+                                    return
                                 
                                 # 記錄取消訂單結果摘要
                                 order_id = cancel_result.get("orderId", "無")
@@ -779,6 +875,25 @@ async def futures_account_websocket(
             logger.info(f"[AccountWS] WebSocket連接已關閉")
         except:
             pass
+            
+        # 清理與幣安的WebSocket連接資源
+        if 'binance_client' in locals() and binance_client:
+            try:
+                # 構建緩存鍵
+                cache_key = user_id if user_id else (
+                    f"{exchange}_{api_key_data['api_key'][:8]}_False" 
+                    if 'api_key_data' in locals() and api_key_data else None
+                )
+                
+                if cache_key:
+                    await release_ws_client(binance_client, force_disconnect=True, cache_key=cache_key)
+                    logger.info(f"[AccountWS] 在連接結束時釋放幣安WebSocket客戶端資源 - key:{cache_key}")
+                else:
+                    # 如果沒有緩存鍵，仍然斷開連接但不從緩存中移除
+                    await binance_client.disconnect()
+                    logger.info(f"[AccountWS] 在連接結束時斷開幣安WebSocket連接 (無緩存鍵)")
+            except Exception as e:
+                logger.error(f"[AccountWS] 在連接結束時釋放幣安資源時出錯: {str(e)}")
 
 @router.websocket("/test-websocket")
 async def test_websocket_endpoint(
@@ -840,7 +955,7 @@ async def get_account_data(exchange, api_key, api_secret):
                 # 創建WebSocket客戶端
                 # 檢查是否為測試環境
                 test_mode = False  # 可以從配置或環境變量中獲取
-                client = BinanceWebSocketClient(api_key, api_secret, testnet=test_mode)
+                client = BinanceWebSocketClient(api_key, api_secret)
                 
                 # 連接到WebSocket API
                 connected = await client.connect()
@@ -1223,7 +1338,7 @@ async def get_user_exchanges(
             detail="獲取交易所列表失敗"
         ) 
 
-# 修改下單函數，使用緩存的客戶端
+# 修改 place_order_via_websocket 函數中對 place_order_via_rest 的引用
 async def place_order_via_websocket(exchange, api_key, api_secret, order_params, user_id=None):
     """
     使用API密鑰通過WebSocket API下單
@@ -1291,9 +1406,10 @@ async def place_order_via_websocket(exchange, api_key, api_secret, order_params,
                 
             except Exception as e:
                 logger.error(f"[AccountWS] 使用WebSocket下單時出錯: {str(e)}")
-                # 如果WebSocket方式失敗，回退到REST API方式
-                logger.info(f"[AccountWS] 回退到使用REST API下單")
-                return await place_order_via_rest(exchange, api_key, api_secret, order_params)
+                # 如果WebSocket方式失敗，回退到使用trading.py中的REST API方式
+                logger.info(f"[AccountWS] WebSocket下單失敗，請使用REST API端點進行下單操作")
+                # 不再回退到place_order_via_rest，而是直接向前端返回錯誤消息
+                raise Exception(f"WebSocket下單失敗: {str(e)}")
         else:
             # 其他交易所實現...
             raise Exception(f"不支持的交易所: {exchange}")
@@ -1305,106 +1421,7 @@ async def place_order_via_websocket(exchange, api_key, api_secret, order_params,
         logger.error(trace)
         raise
 
-# 原始的REST API方式下單的函數
-async def place_order_via_rest(exchange, api_key, api_secret, order_params):
-    """
-    使用REST API下單（舊方法，作為備份）
-    """
-    logger.info(f"[AccountWS] 開始使用REST API下單: {exchange}")
-    
-    try:
-        # 確保 API 密鑰格式正確
-        if not api_key or not api_secret:
-            error_msg = "API密鑰或密鑰密碼為空"
-            logger.error(f"[AccountWS] {error_msg}")
-            raise ValueError(error_msg)
-        
-        # 處理不同交易所
-        if exchange.lower() == "binance":
-            # 複製參數以防止修改原始參數
-            params = {}
-            
-            # 處理所有參數 - 遵循幣安的數據類型要求
-            for key, value in order_params.items():
-                # 處理布爾值 - 必須是字符串格式的"true"或"false"
-                if isinstance(value, bool):
-                    params[key] = str(value).lower()
-                # 處理數值參數 - 價格、數量等必須是字符串
-                elif key in ['price', 'quantity', 'stopPrice', 'activationPrice', 'callbackRate', 'trailingDelta']:
-                    if value is not None:
-                        params[key] = str(value)
-                # 其他參數保持不變
-                else:
-                    params[key] = value
-            
-            # 添加時間參數
-            params["timestamp"] = int(time.time() * 1000)  # 保證是整數
-            params["recvWindow"] = 5000  # 給予足夠的接收窗口
-            
-            # 創建簽名 - 按照字母順序排序參數
-            query_string = "&".join([f"{k}={v}" for k, v in sorted(params.items()) if k != "signature"])
-            
-            # 記錄查詢字符串 (開發調試用)
-            logger.debug(f"[AccountWS] 簽名查詢字符串: {query_string}")
-            
-            # 使用HMAC SHA256計算簽名
-            signature = hmac.new(
-                api_secret.encode('utf-8'),
-                query_string.encode('utf-8'),
-                hashlib.sha256
-            ).hexdigest()
-            
-            # 添加簽名到參數中
-            params["signature"] = signature
-            
-            # 確定API端點
-            is_test_order = "test" in params and (params["test"] == "true" or params["test"] is True)
-            endpoint = "/fapi/v1/order/test" if is_test_order else "/fapi/v1/order"
-            
-            # 構建URL
-            base_url = "https://fapi.binance.com"
-            
-            # 檢查是否為測試網
-            test_mode = False  # 可以從配置或環境變量中獲取
-            if test_mode:
-                base_url = "https://testnet.binancefuture.com"
-                
-            # 移除test參數，因為我們已經使用不同的端點處理測試訂單
-            if "test" in params:
-                del params["test"]
-                
-            # 構建完整URL
-            url = f"{base_url}{endpoint}"
-            
-            # 發送請求
-            headers = {
-                'X-MBX-APIKEY': api_key,
-                'Content-Type': 'application/x-www-form-urlencoded'
-            }
-            
-            # 使用aiohttp進行非阻塞HTTP請求
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, data=params, headers=headers) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        logger.info(f"[AccountWS] REST API下單成功: {result.get('orderId')}")
-                        return result
-                    else:
-                        error_data = await response.text()
-                        logger.error(f"[AccountWS] 幣安API返回錯誤: {response.status} - {error_data}")
-                        raise Exception(f"下單時API返回錯誤: {response.status} - {error_data}")
-        else:
-            # 其他交易所實現...
-            raise Exception(f"不支持的交易所: {exchange}")
-            
-    except Exception as e:
-        logger.error(f"[AccountWS] 使用REST API下單時出錯: {str(e)}")
-        import traceback
-        trace = traceback.format_exc()
-        logger.error(trace)
-        raise
-
-# 修改取消訂單函數，使用緩存的客戶端
+# 修改 cancel_order_via_websocket 函數中對 cancel_order_via_rest 的引用
 async def cancel_order_via_websocket(exchange, api_key, api_secret, cancel_params, user_id=None):
     """
     使用API密鑰通過WebSocket API取消訂單
@@ -1429,41 +1446,28 @@ async def cancel_order_via_websocket(exchange, api_key, api_secret, cancel_param
             raise ValueError(error_msg)
         
         # 檢查必要參數
-        if "symbol" not in cancel_params:
-            raise ValueError("缺少必要參數: symbol")
-            
-        if "orderId" not in cancel_params and "origClientOrderId" not in cancel_params:
-            raise ValueError("缺少必要參數: orderId 或 origClientOrderId")
+        required_params = ["symbol", "orderId"]
+        for param in required_params:
+            if param not in cancel_params:
+                raise ValueError(f"缺少必要參數: {param}")
         
         # 處理不同交易所
         if exchange.lower() == "binance":
             try:
                 # 檢查是否需要使用測試網
                 test_mode = False
-                if "test" in cancel_params and (cancel_params["test"] == "true" or cancel_params["test"] is True or cancel_params["test"] == "TRUE"):
-                    test_mode = True
-                    logger.info(f"[AccountWS] 使用測試網模式取消訂單")
                 
                 # 獲取或創建WebSocket客戶端
                 client, is_new = await get_or_create_ws_client(
                     api_key, api_secret, exchange, test_mode, user_id
                 )
                 
-                # 獲取必要參數
+                # 從cancel_params中提取必要的參數
                 symbol = cancel_params["symbol"]
+                order_id = cancel_params["orderId"]
                 
-                # 提取訂單ID或客戶端訂單ID
-                order_id = cancel_params.get("orderId")
-                client_order_id = cancel_params.get("origClientOrderId")
-                
-                # 取消訂單 - 根據提供的參數決定如何調用
-                if order_id:
-                    result = await client.cancel_order(symbol, orderId=order_id, params=cancel_params)
-                elif client_order_id:
-                    result = await client.cancel_order(symbol, origClientOrderId=client_order_id, params=cancel_params)
-                else:
-                    # 這種情況在前面的檢查中應該已經被排除
-                    raise ValueError("缺少必要參數: orderId 或 origClientOrderId")
+                # 取消訂單
+                result = await client.cancel_order(symbol, order_id, cancel_params)
                 
                 # 不再每次操作後斷開連接，保持連接以便重用
                 
@@ -1472,114 +1476,20 @@ async def cancel_order_via_websocket(exchange, api_key, api_secret, cancel_param
                 
             except Exception as e:
                 logger.error(f"[AccountWS] 使用WebSocket取消訂單時出錯: {str(e)}")
-                # 如果WebSocket方式失敗，回退到REST API方式
-                logger.info(f"[AccountWS] 回退到使用REST API取消訂單")
-                return await cancel_order_via_rest(exchange, api_key, api_secret, cancel_params)
+                # 如果WebSocket方式失敗，提示使用REST API端點
+                logger.info(f"[AccountWS] WebSocket取消訂單失敗，請使用REST API端點進行取消操作")
+                # 不再回退到cancel_order_via_rest，而是直接向前端返回錯誤消息
+                raise Exception(f"WebSocket取消訂單失敗: {str(e)}")
         else:
             # 其他交易所實現...
             raise Exception(f"不支持的交易所: {exchange}")
-            
+    
     except Exception as e:
         logger.error(f"[AccountWS] 取消訂單時發生錯誤: {str(e)}")
         import traceback
         trace = traceback.format_exc()
         logger.error(trace)
         raise
-        
-# 原始的REST API方式取消訂單的函數
-async def cancel_order_via_rest(exchange, api_key, api_secret, cancel_params):
-    """
-    使用REST API取消訂單（舊方法，作為備份）
-    """
-    logger.info(f"[AccountWS] 開始使用REST API取消訂單: {exchange}")
-    
-    try:
-        # 確保 API 密鑰格式正確
-        if not api_key or not api_secret:
-            error_msg = "API密鑰或密鑰密碼為空"
-            logger.error(f"[AccountWS] {error_msg}")
-            raise ValueError(error_msg)
-        
-        # 處理不同交易所
-        if exchange.lower() == "binance":
-            # 複製參數以防止修改原始參數
-            params = {}
-            
-            # 處理取消訂單參數 - 遵循幣安的數據類型要求
-            for key, value in cancel_params.items():
-                # 處理布爾值
-                if isinstance(value, bool):
-                    params[key] = str(value).lower()
-                # 確保orderId是字符串
-                elif key == 'orderId' and value is not None:
-                    params[key] = str(value)
-                # 其他參數保持不變
-                else:
-                    params[key] = value
-            
-            # 添加時間參數
-            params["timestamp"] = int(time.time() * 1000)
-            params["recvWindow"] = 5000
-            
-            # 創建簽名 - 按照字母順序排序參數
-            query_string = "&".join([f"{k}={v}" for k, v in sorted(params.items()) if k != "signature"])
-            
-            # 記錄查詢字符串 (開發調試用)
-            logger.debug(f"[AccountWS] 簽名查詢字符串: {query_string}")
-            
-            # 使用HMAC SHA256計算簽名
-            signature = hmac.new(
-                api_secret.encode('utf-8'),
-                query_string.encode('utf-8'),
-                hashlib.sha256
-            ).hexdigest()
-            
-            # 添加簽名到參數中
-            params["signature"] = signature
-            
-            # 構建URL
-            base_url = "https://fapi.binance.com"
-            endpoint = "/fapi/v1/order"
-            
-            # 檢查是否為測試網
-            test_mode = False  # 可以從配置或環境變量中獲取
-            if test_mode:
-                base_url = "https://testnet.binancefuture.com"
-                
-            # 移除test參數
-            if "test" in params:
-                del params["test"]
-                
-            # 構建完整URL
-            url = f"{base_url}{endpoint}"
-            
-            # 發送請求
-            headers = {
-                'X-MBX-APIKEY': api_key,
-                'Content-Type': 'application/x-www-form-urlencoded'
-            }
-            
-            # 使用aiohttp進行非阻塞HTTP請求
-            async with aiohttp.ClientSession() as session:
-                async with session.delete(url, data=params, headers=headers) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        logger.info(f"[AccountWS] REST API取消訂單成功: {result.get('orderId')}")
-                        return result
-                    else:
-                        error_data = await response.text()
-                        logger.error(f"[AccountWS] 幣安API返回錯誤: {response.status} - {error_data}")
-                        raise Exception(f"取消訂單時API返回錯誤: {response.status} - {error_data}")
-        else:
-            # 其他交易所實現...
-            raise Exception(f"不支持的交易所: {exchange}")
-            
-    except Exception as e:
-        logger.error(f"[AccountWS] 使用REST API取消訂單時出錯: {str(e)}")
-        import traceback
-        trace = traceback.format_exc()
-        logger.error(trace)
-        raise 
 
 # 幫助函數：檢查帳戶數據是否有變化
 def _has_account_data_changed(new_data, old_data):
@@ -1740,3 +1650,53 @@ def _compute_account_data_diff(new_data, old_data):
     diff["positions_changed"] = len(diff["positions"]) > 0
     
     return diff 
+
+# 定期清理未使用的WebSocket客戶端
+async def cleanup_inactive_ws_clients():
+    """
+    定期清理長時間未使用的WebSocket客戶端
+    會檢查所有緩存的客戶端，斷開並移除長時間未活動的客戶端
+    """
+    global last_cache_cleanup
+    
+    # 檢查是否需要執行清理
+    current_time = time.time()
+    if current_time - last_cache_cleanup < CACHE_CLEANUP_INTERVAL:
+        return
+    
+    last_cache_cleanup = current_time
+    logger.info(f"[AccountWS] 開始定期清理未使用的WebSocket客戶端，當前緩存數量: {len(ws_clients)}")
+    
+    # 閾值：超過6小時未活動的客戶端將被清理
+    inactive_threshold = current_time - 21600  # 6小時 = 21600秒
+    keys_to_remove = []
+    
+    # 識別需要清理的客戶端
+    for key, client in ws_clients.items():
+        try:
+            # 檢查上次活動時間
+            if hasattr(client, 'last_activity_time') and client.last_activity_time < inactive_threshold:
+                logger.info(f"[AccountWS] 發現長時間未活動的客戶端 - key:{key}, 最後活動: {int(current_time - client.last_activity_time)}秒前")
+                keys_to_remove.append(key)
+            
+            # 檢查連接狀態
+            elif not await client.is_connected():
+                logger.info(f"[AccountWS] 發現已斷開的客戶端 - key:{key}")
+                keys_to_remove.append(key)
+        except Exception as e:
+            logger.error(f"[AccountWS] 檢查客戶端狀態時出錯 - key:{key}, error:{str(e)}")
+            keys_to_remove.append(key)
+    
+    # 清理已識別的客戶端
+    for key in keys_to_remove:
+        try:
+            client = ws_clients[key]
+            logger.info(f"[AccountWS] 清理未使用的WebSocket客戶端 - key:{key}")
+            await release_ws_client(client, force_disconnect=True, cache_key=key)
+        except Exception as e:
+            logger.error(f"[AccountWS] 清理客戶端時出錯 - key:{key}, error:{str(e)}")
+            # 確保從字典中移除
+            if key in ws_clients:
+                del ws_clients[key]
+    
+    logger.info(f"[AccountWS] 完成定期清理，清理了 {len(keys_to_remove)} 個客戶端，當前緩存數量: {len(ws_clients)}")

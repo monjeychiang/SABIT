@@ -2,36 +2,52 @@
 
 /* Default theme variables */
 :root {
-  /* 主要颜色 - 使用更现代的蓝色调 */
-  --primary-color: #333333;
-  --primary-dark: #222222;
-  --primary-light: #444444;
-  --primary-gradient: linear-gradient(135deg, #333333 0%, #444444 100%);
+  /* 主要颜色 - 使用 Gmail 風格的紅色 */
+  --primary-color: #d93025;
+  --primary-dark: #c5221f;
+  --primary-light: #ea4335;
+  --primary-hover: #f8f9fa;
+  --primary-gradient: linear-gradient(135deg, #d93025 0%, #ea4335 100%);
   
-  /* 辅助颜色 - 使用更柔和的色调 */
-  --secondary-color: #10b981;
-  --accent-color: #f59e0b;
-  --danger-color: #ef4444;
-  --warning-color: #f59e0b;
-  --info-color: #444444;
-  --success-color: #10b981;
+  /* 辅助颜色 - Gmail 風格 */
+  --secondary-color: #1a73e8;
+  --accent-color: #fbbc04;
+  --danger-color: #d93025;
+  --warning-color: #fbbc04;
+  --info-color: #1a73e8;
+  --success-color: #0f9d58;
   
-  /* 文本颜色 - 提高对比度 */
-  --text-primary: #1f2937;
-  --text-secondary: #4b5563;
-  --text-tertiary: #6b7280;
+  /* 文本颜色 - Gmail 風格 */
+  --text-primary: #202124;
+  --text-secondary: #5f6368;
+  --text-tertiary: #80868b;
   --text-light: #ffffff;
   
-  /* 背景颜色 - 使用更柔和的背景色 */
-  --background-color: #f9fafb;
+  /* 背景颜色 - Gmail 風格 */
+  --background-color: #f8f9fa;
   --surface-color: #ffffff;
   --card-background: #ffffff;
-  --hover-color: rgba(0, 0, 0, 0.04);
-  --notification-unread: rgba(51, 51, 51, 0.08);
+  --hover-color: #f1f3f4;
+  --disabled-color: #dadce0;
+  --notification-unread: #f1f3f4;
   
-  /* 边框颜色 - 更细腻的边框 */
-  --border-color: #e5e7eb;
-  --border-light: #f3f4f6;
+  /* 边框颜色 - Gmail 風格 */
+  --border-color: #dadce0;
+  --border-light: #f1f3f4;
+  
+  /* 边框圆角 - 更大的圆角半径 */
+  --border-radius-sm: 8px;
+  --border-radius-md: 16px;
+  --border-radius-lg: 24px;
+  
+  /* 阴影 - 更柔和的阴影 */
+  --box-shadow-sm: 0 1px 3px rgba(60, 64, 67, 0.08);
+  --box-shadow-md: 0 4px 8px rgba(60, 64, 67, 0.12);
+  --box-shadow-lg: 0 8px 16px rgba(60, 64, 67, 0.16);
+  
+  /* 计算RGB值 */
+  --primary-color-rgb: 217, 48, 37;
+  --surface-color-rgb: 255, 255, 255;
   
   /* 边距 - 更合理的间距系统 */
   --spacing-xs: 4px;
@@ -40,21 +56,11 @@
   --spacing-lg: 24px;
   --spacing-xl: 32px;
   
-  /* 边框圆角 - 更现代的圆角 */
-  --border-radius-sm: 6px;
-  --border-radius-md: 12px;
-  --border-radius-lg: 16px;
-  
   /* 组件尺寸 - 优化布局尺寸 */
   --sidebar-width: 280px;
   --sidebar-collapsed-width: 64px;
   --navbar-height: 64px;
   --content-padding: 24px;
-  
-  /* 阴影 - 更自然的阴影效果 */
-  --box-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --box-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  --box-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
   
   /* 字体 - 使用系统字体栈 */
   --font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -71,29 +77,34 @@
   --transition-slow: 350ms;
 }
 
-/* 深色模式变量 - 更现代的深色主题 */
+/* 深色模式变量 - Gmail 風格深色主题 */
 body.dark-theme {
-  --primary-color: #444444;
-  --primary-dark: #333333;
-  --primary-light: #666666;
-  --primary-gradient: linear-gradient(135deg, #444444 0%, #666666 100%);
+  --primary-color: #ea4335;
+  --primary-dark: #d93025;
+  --primary-light: #f25c54;
+  --primary-hover: #202124;
+  --primary-gradient: linear-gradient(135deg, #ea4335 0%, #f25c54 100%);
   
-  --text-primary: #f9fafb;
-  --text-secondary: #d1d5db;
-  --text-tertiary: #9ca3af;
+  --text-primary: #e8eaed;
+  --text-secondary: #9aa0a6;
+  --text-tertiary: #80868b;
   
-  --background-color: #111827;
-  --surface-color: #1f2937;
-  --card-background: #1f2937;
-  --hover-color: rgba(255, 255, 255, 0.04);
-  --notification-unread: rgba(68, 68, 68, 0.15);
+  --background-color: #202124;
+  --surface-color: #202124;
+  --card-background: #2d2e30;
+  --hover-color: #28292c;
+  --disabled-color: #5f6368;
+  --notification-unread: #28292c;
   
-  --border-color: #374151;
-  --border-light: #1f2937;
+  --border-color: #5f6368;
+  --border-light: #3c4043;
   
-  --box-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
-  --box-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
-  --box-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+  /* 阴影 - 更深色的阴影 */
+  --box-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --box-shadow-md: 0 4px 8px rgba(0, 0, 0, 0.4);
+  --box-shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.5);
+  
+  --surface-color-rgb: 32, 33, 36;
 }
 
 /* Global styles */

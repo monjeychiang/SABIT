@@ -13,8 +13,7 @@
     </div>
     
     <div v-if="loading" class="loading-state">
-      <div class="loading-spinner"></div>
-      <p>加载中...</p>
+      <div class="loader"></div>
     </div>
     
     <div v-else-if="error" class="error-state">
@@ -69,6 +68,7 @@ const onlineUsersCount = ref(0);
 const loading = ref(true);
 const error = ref(null);
 const refreshTimer = ref(null);
+const loadingStartTime = ref(0); // 添加載入開始時間變量
 
 // 获取用户头像初始字母
 const getUserInitials = (username) => {
@@ -110,6 +110,7 @@ const formatLastActive = (lastActiveTime) => {
 // 获取在线用户数据
 const fetchOnlineUsers = async () => {
   loading.value = true;
+  loadingStartTime.value = Date.now(); // 記錄載入開始時間
   error.value = null;
   
   try {
@@ -133,11 +134,29 @@ const fetchOnlineUsers = async () => {
     
     // 限制显示数量
     onlineUsers.value = sortedUsers.slice(0, props.maxUsers);
+    
+    // 確保載入動畫至少顯示0.5秒
+    const loadingDuration = Date.now() - loadingStartTime.value;
+    if (loadingDuration < 500) {
+      setTimeout(() => {
+        loading.value = false;
+      }, 500 - loadingDuration);
+    } else {
+      loading.value = false;
+    }
   } catch (err) {
     console.error('获取在线用户信息失败:', err);
     error.value = '获取在线用户信息失败';
-  } finally {
-    loading.value = false;
+    
+    // 確保錯誤情況下也至少顯示0.5秒的載入動畫
+    const loadingDuration = Date.now() - loadingStartTime.value;
+    if (loadingDuration < 500) {
+      setTimeout(() => {
+        loading.value = false;
+      }, 500 - loadingDuration);
+    } else {
+      loading.value = false;
+    }
   }
 };
 
@@ -199,9 +218,30 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px 16px;
+  padding: 40px 16px;
   color: var(--text-secondary, #6b7280);
   text-align: center;
+}
+
+/* 新的三点加载动画效果 */
+.loader {
+  width: 55px;
+  aspect-ratio: 0.75;
+  --c: no-repeat linear-gradient(var(--primary-color) 0 0);
+  background: 
+    var(--c) 0%   50%,
+    var(--c) 50%  50%,
+    var(--c) 100% 50%;
+  animation: l7 1s infinite linear alternate;
+}
+
+@keyframes l7 {
+  0%  {background-size: 20% 50%, 20% 50%, 20% 50%}
+  20% {background-size: 20% 20%, 20% 50%, 20% 50%}
+  40% {background-size: 20% 100%, 20% 20%, 20% 50%}
+  60% {background-size: 20% 50%, 20% 100%, 20% 20%}
+  80% {background-size: 20% 50%, 20% 50%, 20% 100%}
+  100%{background-size: 20% 50%, 20% 50%, 20% 50%}
 }
 
 .loading-spinner {
@@ -212,6 +252,7 @@ onUnmounted(() => {
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin-bottom: 8px;
+  display: none; /* 隱藏舊的載入動畫 */
 }
 
 @keyframes spin {

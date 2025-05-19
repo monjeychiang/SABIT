@@ -312,8 +312,23 @@ class AccountWebSocketService {
     
     if (this.socket) {
       try {
-        // 使用1000正常關閉代碼
-        this.socket.close(1000, '用戶主動斷開連接');
+        // 先發送斷開連接信號，通知後端清理資源
+        if (this.socket.readyState === WebSocket.OPEN) {
+          this.send({ 
+            type: 'client_disconnect', 
+            message: '用戶主動斷開連接',
+            timestamp: new Date().toISOString()
+          });
+          
+          // 給後端一點時間處理斷開信號
+          setTimeout(() => {
+            // 使用1000正常關閉代碼
+            this.socket?.close(1000, '用戶主動斷開連接');
+          }, 100);
+        } else {
+          // 如果不處於開啟狀態，直接關閉
+          this.socket.close(1000, '用戶主動斷開連接');
+        }
       } catch (e) {
         console.error('[AccountWS] 關閉WebSocket時出錯:', e);
       }

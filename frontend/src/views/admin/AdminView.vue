@@ -347,8 +347,7 @@
         </div>
         
         <div class="loading" v-else-if="loadingServerStatus">
-          <div class="loading-spinner"></div>
-          <p>加載中...</p>
+          <div class="loader"></div>
         </div>
         
         <div class="error-message" v-else>
@@ -730,8 +729,7 @@
         </div>
         <div class="modal-body">
           <div v-if="loadingUserDetails" class="loading-container">
-            <div class="loading-spinner"></div>
-            <p>正在加載用戶資料...</p>
+            <div class="loader"></div>
           </div>
           
           <div v-else-if="userDetails" class="user-details-content">
@@ -879,6 +877,10 @@ const editingUser = ref({
   email: '',
   user_tag: 'regular'
 });
+
+// 載入相關變量
+const serverStatusLoadStartTime = ref(0);
+const userDetailsLoadStartTime = ref(0);
 
 // 計算總頁數
 const totalItems = ref(0);
@@ -1111,17 +1113,37 @@ const fetchOnlineUserCount = async () => {
 // 獲取伺服器狀態信息
 const fetchServerStatus = async () => {
   loadingServerStatus.value = true;
+  serverStatusLoadStartTime.value = Date.now(); // 記錄載入開始時間
+  
   try {
     const response = await axios.get('/api/v1/system/status', {
       headers: { 'Authorization': `Bearer ${authStore.token}` }
     });
     serverStatus.value = response.data;
     console.log('伺服器狀態:', serverStatus.value);
+    
+    // 確保載入動畫至少顯示0.5秒
+    const loadingDuration = Date.now() - serverStatusLoadStartTime.value;
+    if (loadingDuration < 500) {
+      setTimeout(() => {
+        loadingServerStatus.value = false;
+      }, 500 - loadingDuration);
+    } else {
+      loadingServerStatus.value = false;
+    }
   } catch (error) {
     console.error('獲取伺服器狀態失敗:', error);
     showToast('獲取伺服器狀態失敗', 'error');
-  } finally {
-    loadingServerStatus.value = false;
+    
+    // 確保載入動畫至少顯示0.5秒
+    const loadingDuration = Date.now() - serverStatusLoadStartTime.value;
+    if (loadingDuration < 500) {
+      setTimeout(() => {
+        loadingServerStatus.value = false;
+      }, 500 - loadingDuration);
+    } else {
+      loadingServerStatus.value = false;
+    }
   }
 };
 
@@ -1640,6 +1662,7 @@ const userDetails = ref(null);
 const viewUserDetails = async (user) => {
   showUserDetailsModal.value = true;
   loadingUserDetails.value = true;
+  userDetailsLoadStartTime.value = Date.now(); // 記錄載入開始時間
   userDetails.value = null;
   
   try {
@@ -1651,6 +1674,16 @@ const viewUserDetails = async (user) => {
     // 設置用戶詳細信息
     userDetails.value = loginHistoryResponse.data;
     console.log('用戶詳細資料:', userDetails.value);
+    
+    // 確保載入動畫至少顯示0.5秒
+    const loadingDuration = Date.now() - userDetailsLoadStartTime.value;
+    if (loadingDuration < 500) {
+      setTimeout(() => {
+        loadingUserDetails.value = false;
+      }, 500 - loadingDuration);
+    } else {
+      loadingUserDetails.value = false;
+    }
   } catch (error) {
     console.error('獲取用戶詳細資料失敗:', error);
     showToast('獲取用戶詳細資料失敗', 'error');
@@ -1672,8 +1705,16 @@ const viewUserDetails = async (user) => {
     } catch (fallbackError) {
       console.error('獲取基本用戶信息也失敗:', fallbackError);
     }
-  } finally {
-    loadingUserDetails.value = false;
+    
+    // 確保載入動畫至少顯示0.5秒
+    const loadingDuration = Date.now() - userDetailsLoadStartTime.value;
+    if (loadingDuration < 500) {
+      setTimeout(() => {
+        loadingUserDetails.value = false;
+      }, 500 - loadingDuration);
+    } else {
+      loadingUserDetails.value = false;
+    }
   }
 };
 
@@ -2545,9 +2586,47 @@ textarea {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 30px;
+  padding: 40px;
+  margin: 20px 0;
 }
 
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  margin: 10px 0;
+}
+
+/* 新的三点加载动画效果 */
+.loader {
+  width: 55px;
+  aspect-ratio: 0.75;
+  --c: no-repeat linear-gradient(var(--primary-color) 0 0);
+  background: 
+    var(--c) 0%   50%,
+    var(--c) 50%  50%,
+    var(--c) 100% 50%;
+  animation: l7 1s infinite linear alternate;
+}
+
+@keyframes l7 {
+  0%  {background-size: 20% 50%, 20% 50%, 20% 50%}
+  20% {background-size: 20% 20%, 20% 50%, 20% 50%}
+  40% {background-size: 20% 100%, 20% 20%, 20% 50%}
+  60% {background-size: 20% 50%, 20% 100%, 20% 20%}
+  80% {background-size: 20% 50%, 20% 50%, 20% 100%}
+  100%{background-size: 20% 50%, 20% 50%, 20% 50%}
+}
+
+.loading-cell .loader {
+  width: 24px;
+  aspect-ratio: 0.75;
+  margin-bottom: 0;
+}
+
+/* 圓形旋轉動畫樣式(保留給表格單元格使用) */
 .loading-spinner {
   width: 40px;
   height: 40px;
@@ -2591,10 +2670,9 @@ textarea {
   gap: 10px;
 }
 
-.loading-cell .loading-spinner {
-  width: 20px;
-  height: 20px;
-  border-width: 2px;
+.loading-cell .loader {
+  width: 24px;
+  aspect-ratio: .75;
   margin-bottom: 0;
 }
 
@@ -3170,5 +3248,28 @@ textarea {
   .user-info-section .details-grid {
     grid-template-columns: 1fr;
   }
+}
+
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 30px;
+}
+
+.loader {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #48c78e;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 </style> 
