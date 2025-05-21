@@ -292,24 +292,62 @@ class BinanceWebSocketClient:
     async def disconnect(self) -> None:
         """斷開與幣安WebSocket API的連接"""
         try:
-            if self.ping_task:
+            # 先標記為已關閉，避免響應處理器繼續處理
+            self.closed = True
+            
+            # 取消並等待 ping 任務結束
+            if self.ping_task and not self.ping_task.done():
                 self.ping_task.cancel()
+                try:
+                    await asyncio.wait_for(asyncio.shield(self.ping_task), timeout=2.0)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
                 self.ping_task = None
-                
-            if self.response_handler_task:
+            
+            # 取消並等待響應處理器任務結束
+            if self.response_handler_task and not self.response_handler_task.done():
                 self.response_handler_task.cancel()
+                try:
+                    await asyncio.wait_for(asyncio.shield(self.response_handler_task), timeout=2.0)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
                 self.response_handler_task = None
             
+            # 清理其他任務
+            for task in self.tasks:
+                if task and not task.done() and task != self.ping_task and task != self.response_handler_task:
+                    task.cancel()
+                    try:
+                        await asyncio.wait_for(asyncio.shield(task), timeout=1.0)
+                    except (asyncio.TimeoutError, asyncio.CancelledError):
+                        pass
+            
+            self.tasks = []
+            
+            # 關閉 WebSocket 連接
             if self.ws:
-                await self.ws.close()
+                try:
+                    await asyncio.wait_for(self.ws.close(code=1000, reason="正常關閉"), timeout=3.0)
+                except (asyncio.TimeoutError, Exception) as e:
+                    logger.warning(f"關閉WebSocket連接時超時或發生錯誤: {str(e)}")
                 self.ws = None
                 
+            # 更新狀態
             self.connected = False
             self.authenticated = False
-            logger.info("已斷開與幣安WebSocket API的連接")
+            
+            # 清理響應 future
+            for future in self.response_futures.values():
+                if not future.done():
+                    future.set_exception(ConnectionError("WebSocket連接已關閉"))
+            self.response_futures.clear()
+            
+            logger.info("已正常斷開與幣安WebSocket API的連接")
             
         except Exception as e:
             logger.error(f"斷開WebSocket連接時出錯: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
     
     async def _authenticate(self) -> bool:
         """
