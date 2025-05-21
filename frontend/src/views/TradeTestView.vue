@@ -9,11 +9,33 @@
       </div>
     </div>
 
+    <div class="connection-diagram">
+      <h2>連接狀態監控</h2>
+      <div class="diagram-container">
+        <div class="node frontend" :class="{ 'active': true }">
+          <div class="node-icon">📱</div>
+          <div class="node-label">前端</div>
+        </div>
+        <div class="connection-line" :class="{ 'active': isConnected, 'inactive': !isConnected }"></div>
+        <div class="node backend" :class="{ 'active': isConnected }">
+          <div class="node-icon">🖥️</div>
+          <div class="node-label">後端</div>
+        </div>
+        <div class="connection-line" :class="{ 'active': binanceConnected, 'inactive': !binanceConnected, 'error': binanceConnectError }"></div>
+        <div class="node exchange" :class="{ 'active': binanceConnected, 'error': binanceConnectError, 'websocket': isWebSocketAPI, 'rest': isRestAPI }">
+          <div class="node-icon">💹</div>
+          <div class="node-label">幣安</div>
+          <div class="connection-type" v-if="binanceConnected">{{ accountInfo?.api_type || '未知類型' }}</div>
+        </div>
+      </div>
+    </div>
+
     <div class="connection-status" :class="{ 'connected': isConnected, 'disconnected': !isConnected }">
       <div class="status-indicator" :class="{ active: isConnected }"></div>
       <span>WebSocket 狀態: {{ isConnected ? '已連接' : '未連接' }}</span>
       <div class="connection-info" v-if="isConnected">
         <span class="connection-time">上次更新: {{ lastUpdate ? formatTime(lastUpdate) : '尚未更新' }}</span>
+        <span class="connection-detail">前端 → 後端連接</span>
       </div>
       <div class="connection-actions">
         <button @click="connect" :disabled="isConnected" class="connect-btn">
@@ -32,6 +54,10 @@
       <div class="connection-info">
         <span class="connection-type" :class="{ 'websocket-api': isWebSocketAPI, 'rest-api': isRestAPI, 'error': binanceConnectError }">
           {{ binanceConnectionType }}
+        </span>
+        <span class="connection-detail">後端 → 幣安連接</span>
+        <span class="last-update" v-if="lastUpdate">
+          <i class="fas fa-clock"></i> {{ getTimeSinceLastUpdate() }}
         </span>
         <i class="fas fa-info-circle api-info-icon" title="WebSocket API 提供更快的交易速度和更低的延遲，但需要專門的 Ed25519 密鑰。REST API 是標準接口，使用一般的 HMAC-SHA256 密鑰"></i>
       </div>
@@ -632,6 +658,42 @@ const formatTime = (date: Date) => {
   return date.toLocaleTimeString();
 };
 
+// 獲取距離上次更新的時間
+const getTimeSinceLastUpdate = () => {
+  if (!lastUpdate.value) return '尚無更新';
+  
+  const now = new Date();
+  const diff = now.getTime() - lastUpdate.value.getTime();
+  
+  // 轉換為秒
+  const seconds = Math.floor(diff / 1000);
+  
+  // 如果小於1分鐘
+  if (seconds < 60) {
+    return `${seconds}秒前`;
+  }
+  
+  // 轉換為分鐘
+  const minutes = Math.floor(seconds / 60);
+  
+  // 如果小於1小時
+  if (minutes < 60) {
+    return `${minutes}分鐘前`;
+  }
+  
+  // 轉換為小時
+  const hours = Math.floor(minutes / 60);
+  
+  // 如果小於1天
+  if (hours < 24) {
+    return `${hours}小時前`;
+  }
+  
+  // 轉換為天
+  const days = Math.floor(hours / 24);
+  return `${days}天前`;
+};
+
 // 獲取顏色類
 const getColorClass = (value: string | number | undefined) => {
   if (value === undefined || value === null) return '';
@@ -711,6 +773,9 @@ onMounted(async () => {
       try {
         await refreshAccountData();
         console.log('賬戶數據已加載');
+        
+        // 追蹤連接狀態和最後活動時間
+        const connectionCheckInterval = 30000; // 每30秒檢查一次連接狀態
         
         // 設置定期檢查幣安連接狀態
         setInterval(() => {
@@ -1444,6 +1509,141 @@ tbody tr:hover {
   color: #78909c;
 }
 
+/* 連接狀態圖表樣式 */
+.connection-diagram {
+  margin-bottom: 24px;
+  padding: 20px;
+  background: linear-gradient(to right bottom, #f5f7fa, #ffffff);
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  border: 1px solid #e1e5eb;
+}
+
+.connection-diagram h2 {
+  font-size: 1.4rem;
+  color: #1a237e;
+  margin-top: 0;
+  margin-bottom: 16px;
+  text-align: center;
+  font-weight: 600;
+}
+
+.diagram-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  padding: 15px 0;
+}
+
+.node {
+  width: 90px;
+  height: 90px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background-color: #f5f5f5;
+  border: 2px solid #e0e0e0;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.node-icon {
+  font-size: 24px;
+  margin-bottom: 5px;
+}
+
+.node-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.node.active {
+  background-color: #e8f5e9;
+  border-color: #43a047;
+  box-shadow: 0 0 15px rgba(67, 160, 71, 0.3);
+}
+
+.node.error {
+  background-color: #ffebee;
+  border-color: #e53935;
+  box-shadow: 0 0 15px rgba(229, 57, 53, 0.3);
+}
+
+.node.websocket.active {
+  background-color: #e3f2fd;
+  border-color: #2196f3;
+}
+
+.node.rest.active {
+  background-color: #fff8e1;
+  border-color: #ffa000;
+}
+
+.connection-line {
+  flex-grow: 1;
+  height: 4px;
+  background-color: #e0e0e0;
+  position: relative;
+  transition: all 0.3s ease;
+}
+
+.connection-line.active {
+  background-color: #43a047;
+  background: linear-gradient(to right, #43a047, #2e7d32);
+}
+
+.connection-line.inactive {
+  background-color: #e0e0e0;
+  border-top: 2px dashed #bdbdbd;
+}
+
+.connection-line.error {
+  background-color: #e53935;
+  animation: pulse-line 2s infinite;
+}
+
+@keyframes pulse-line {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.connection-type {
+  position: absolute;
+  bottom: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.8rem;
+  background-color: #f5f7fa;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  color: #546e7a;
+  border: 1px solid #e0e0e0;
+}
+
+.node.websocket .connection-type {
+  background-color: #e3f2fd;
+  color: #1976d2;
+  border-color: #bbdefb;
+}
+
+.node.rest .connection-type {
+  background-color: #fff8e1;
+  color: #ff8f00;
+  border-color: #ffe082;
+}
+
 /* 響應式調整 */
 @media (max-width: 992px) {
   .trade-test-container {
@@ -1487,6 +1687,25 @@ tbody tr:hover {
   .connection-info, .connection-actions {
     margin-left: 0;
     width: 100%;
+  }
+  
+  .diagram-container {
+    flex-direction: column;
+    gap: 5px;
+  }
+  
+  .connection-line {
+    width: 4px;
+    height: 30px;
+  }
+  
+  .node {
+    width: 70px;
+    height: 70px;
+  }
+  
+  .node-icon {
+    font-size: 20px;
   }
 }
 
@@ -1708,5 +1927,31 @@ tbody tr:hover {
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
+}
+
+.connection-status.binance-connection .connection-info span {
+  font-size: 0.9rem;
+  color: #7f8c8d;
+}
+
+.connection-status .connection-detail {
+  font-size: 0.85rem;
+  color: #546e7a;
+  background-color: #f1f1f1;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-left: 8px;
+}
+
+.connection-status .last-update {
+  font-size: 0.85rem;
+  color: #546e7a;
+  margin-left: 8px;
+}
+
+.connection-status.binance-connection .connection-info .connection-type {
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: 4px;
 }
 </style> 

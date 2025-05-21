@@ -97,14 +97,17 @@ const mainContentStyle = computed(() => {
   
   // 根据侧边栏状态和设备类型调整内容区域
   if (isMobile.value) {
-    return { paddingLeft: `var(--content-padding)` };
+    return {}; // 移動設備直接使用中心對齊
   }
   
-  // 根据侧边栏状态调整内容区域
+  // 非移動設備，根據側邊欄狀態調整內容區域
   return {
-    paddingLeft: isSidebarCollapsed.value 
-      ? `calc(var(--sidebar-collapsed-width) + var(--content-padding))` 
-      : `calc(var(--sidebar-width) + var(--content-padding))`
+    marginLeft: isSidebarCollapsed.value 
+      ? `calc(var(--sidebar-collapsed-width) + var(--spacing-md))` 
+      : `calc(var(--sidebar-width) + var(--spacing-md))`,
+    width: isSidebarCollapsed.value
+      ? `calc(100% - var(--sidebar-collapsed-width) - var(--spacing-md) * 2)`
+      : `calc(100% - var(--sidebar-width) - var(--spacing-md) * 2)`
   };
 });
 
@@ -677,7 +680,7 @@ onUnmounted(() => {
           @close-mobile-sidebar="isSidebarVisible = false"
         />
         
-        <div class="app-content" :class="{'sidebar-collapsed': isSidebarCollapsed && !isMobile}">
+        <div class="app-content">
           <main class="main-content" :style="mainContentStyle" @click="closeMenuOnContentClick">
             <!-- 麵包屑導航 -->
             <div class="main-content-header">
@@ -699,7 +702,7 @@ onUnmounted(() => {
         </div>
         
         <!-- 确保底部状态栏在侧边栏之外 -->
-        <div class="status-bar" :class="{'sidebar-collapsed': isSidebarCollapsed && !isMobile}">
+        <div class="status-bar" :style="mainContentStyle">
           <div class="status-bar-content">
             <div class="status-bar-section">
               <span class="connection-dot" :class="{ 'connected': wsStatus.main, 'disconnected': !wsStatus.main }"></span>
@@ -793,7 +796,7 @@ onUnmounted(() => {
       </div>
       
       <!-- 认证布局也显示底部状态栏 -->
-      <div class="status-bar">
+      <div class="status-bar" :style="mainContentStyle">
         <div class="status-bar-content">
           <div class="status-bar-section">
             <span class="connection-dot" :class="{ 'connected': wsStatus.main, 'disconnected': !wsStatus.main }"></span>
@@ -909,17 +912,68 @@ html, body {
   flex: 1;
   position: relative;
   overflow: hidden; /* 確保內容區不會滾動 */
-  margin-left: var(--sidebar-width); /* 為側邊欄留出空間 */
-  width: calc(100% - var(--sidebar-width)); /* 調整寬度以適應側邊欄 */
+  margin-left: 0; /* 移除左側邊距，由內部內容控制 */
+  width: 100%; /* 使用全部可用寬度 */
   margin-top: calc(var(--navbar-height) + var(--spacing-sm)); /* 增加與導航欄之間的間距 */
   padding-top: 0; /* 移除頂部padding */
   background-color: var(--background-color); /* 使用應用整體背景色，而非卡片背景色 */
+  transition: all var(--transition-normal) ease;
 }
 
 /* 側邊欄折疊時調整 app-content */
 .app-content.sidebar-collapsed {
-  margin-left: var(--sidebar-collapsed-width); /* 為折疊的側邊欄留出空間 */
-  width: calc(100% - var(--sidebar-collapsed-width)); /* 調整寬度 */
+  margin-left: 0; /* 移除左側邊距，由內部內容控制 */
+}
+
+.main-content {
+  flex: 1;
+  margin: var(--spacing-md); /* 恢復頂部邊距 */
+  margin-bottom: calc(var(--spacing-md) + var(--status-bar-height, 24px) + 8px); /* 增加底部間距，確保不被狀態欄遮擋 */
+  border-radius: var(--border-radius-lg);
+  transition: all var(--transition-normal) ease;
+  max-height: calc(100vh - var(--navbar-height) - var(--spacing-sm) - var(--spacing-md) * 2 - var(--status-bar-height, 24px)); /* 更新高度計算，考慮頂部間距 */
+  background-color: var(--card-background);
+  position: relative;
+  box-shadow: var(--box-shadow-sm);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* 防止整個卡片滾動 */
+  height: auto; /* 讓卡片高度根據內容自適應，而不是固定高度 */
+  min-height: 300px; /* 設置最小高度，確保卡片不會太小 */
+  max-width: calc(100% - var(--spacing-md) * 2); /* 確保卡片寬度不超過可用空間 */
+  margin-left: auto;
+  margin-right: auto;
+  padding-top: var(--spacing-xs); /* 為卡片頂部添加間距 */
+}
+
+.main-content-header {
+  padding: var(--spacing-xs) 0 0; /* 為頂部添加間距 */
+  flex-shrink: 0;
+  z-index: 10; /* 確保始終在頂部 */
+  position: relative; /* 使z-index生效 */
+  background-color: var(--card-background); /* 確保背景色與卡片一致 */
+  margin: 0 var(--spacing-sm); /* 左右添加適當外邊距 */
+  border-radius: var(--border-radius-lg) var(--border-radius-lg) 0 0; /* 頂部圓角與卡片一致 */
+}
+
+.breadcrumb-container {
+  margin: 0; /* 移除所有外邊距 */
+  position: relative;
+  padding: var(--spacing-xs) var(--spacing-sm); /* 調整內邊距，增加頂部和底部空間 */
+  background-color: transparent;
+  border-bottom: 1px solid var(--border-color-light); /* 添加底部邊框分隔線 */
+  margin-bottom: var(--spacing-xs); /* 添加底部外邊距增加與內容的間距 */
+}
+
+.content-scrollable {
+  flex: 1;
+  overflow-y: auto; /* 只有內容區域滾動 */
+  overflow-x: hidden; /* 防止水平滾動 */
+  padding: var(--spacing-xs) var(--spacing-sm); /* 左右增加間距 */
+  position: relative; /* 添加相對定位 */
+  -webkit-overflow-scrolling: touch; /* 在iOS上改善滾動體驗 */
+  height: calc(100% - var(--breadcrumb-height, 42px)); /* 調整高度計算，考慮增加的麵包屑高度 */
+  margin: 0 var(--spacing-sm); /* 增加左右外邊距 */
 }
 
 /* 移動設備上的調整 */
@@ -933,35 +987,24 @@ html, body {
     margin: var(--spacing-sm); /* 恢復移動設備上的頂部邊距 */
     margin-bottom: calc(var(--spacing-sm) + var(--status-bar-height-mobile, 20px) + 8px); /* 調整移動設備上的底部間距 */
     min-height: 200px; /* 移動設備上的最小高度可以更小 */
+    max-width: calc(100% - var(--spacing-sm) * 2); /* 移動設備上的最大寬度 */
+    padding-top: var(--spacing-xs); /* 為卡片頂部添加間距 */
   }
-}
-
-.main-content {
-  flex: 1;
-  margin: var(--spacing-md); /* 恢復頂部邊距 */
-  margin-bottom: calc(var(--spacing-md) + var(--status-bar-height, 24px) + 8px); /* 增加底部間距，確保不被狀態欄遮擋 */
-  border-radius: var(--border-radius-lg);
-  transition: padding-left var(--transition-normal) ease, margin-left var(--transition-normal) ease;
-  max-height: calc(100vh - var(--navbar-height) - var(--spacing-sm) - var(--spacing-md) * 2 - var(--status-bar-height, 24px)); /* 更新高度計算，考慮頂部間距 */
-  background-color: var(--card-background);
-  position: relative;
-  box-shadow: var(--box-shadow-sm);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden; /* 防止整個卡片滾動 */
-  height: auto; /* 讓卡片高度根據內容自適應，而不是固定高度 */
-  min-height: 300px; /* 設置最小高度，確保卡片不會太小 */
-}
-
-/* 更新 NavBar 樣式確保它佔據正確空間 */
-.navbar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: var(--navbar-height);
-  z-index: 1000;
-  background-color: var(--navbar-bg);
+  
+  .main-content-header {
+    padding: var(--spacing-xs) 0 0; /* 為頂部添加間距 */
+    margin: 0 var(--spacing-xs); /* 左右添加適當外邊距 */
+  }
+  
+  .breadcrumb-container {
+    padding: var(--spacing-xs) var(--spacing-xs); /* 移動版上使用更小的內邊距 */
+    margin-bottom: var(--spacing-xs); /* 添加底部外邊距 */
+  }
+  
+  .content-scrollable {
+    padding: var(--spacing-xs) var(--spacing-xs); /* 在移動設備上減少內邊距 */
+    margin: 0 var(--spacing-xs); /* 保持一致的外邊距 */
+  }
 }
 
 /* 更新側邊欄樣式，確保它與導航欄無縫銜接 */
@@ -991,24 +1034,6 @@ html, body {
   .sidebar.visible {
     transform: translateX(0);
   }
-}
-
-.main-content-header {
-  padding: var(--spacing-sm) var(--spacing-lg) 0; /* 減少頂部內邊距 */
-  flex-shrink: 0;
-  z-index: 10; /* 確保始終在頂部 */
-  position: relative; /* 使z-index生效 */
-  background-color: var(--card-background); /* 確保背景色與卡片一致 */
-}
-
-.content-scrollable {
-  flex: 1;
-  overflow-y: auto; /* 只有內容區域滾動 */
-  overflow-x: hidden; /* 防止水平滾動 */
-  padding: var(--spacing-sm) var(--spacing-lg) var(--spacing-lg); /* 調整頂部內邊距 */
-  padding-bottom: calc(var(--spacing-lg) + 8px); /* 增加內容底部的間距 */
-  position: relative; /* 添加相對定位 */
-  -webkit-overflow-scrolling: touch; /* 在iOS上改善滾動體驗 */
 }
 
 /* 修改路由視圖的包裝方式 */
@@ -1041,9 +1066,9 @@ html, body {
 .status-bar {
   position: fixed;
   bottom: 0;
-  left: var(--sidebar-width);
+  left: 0;
   right: 0;
-  width: calc(100% - var(--sidebar-width));
+  width: 100%; /* 默認全寬 */
   height: var(--status-bar-height, 24px);
   background-color: var(--background-color);
   border-top: none;
@@ -1054,28 +1079,15 @@ html, body {
   font-size: 12px;
   color: var(--text-secondary);
   z-index: 50; /* 降低z-index，確保模態對話框覆蓋層能覆蓋狀態欄 */
-  transition: left var(--transition-normal) ease, width var(--transition-normal) ease;
+  transition: all var(--transition-normal) ease;
   box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.05); /* 添加輕微的頂部陰影，使狀態欄更明顯 */
 }
 
-/* 侧边栏折叠时状态栏位置变化 */
-.status-bar.sidebar-collapsed {
-  left: var(--sidebar-collapsed-width);
-  width: calc(100% - var(--sidebar-collapsed-width));
-}
-
-/* 认证布局下状态栏占据全宽 */
+/* 認證布局下状态栏样式 */
 .auth-layout + .status-bar {
-  left: 0;
-  width: 100%;
-}
-
-/* 移动设备上状态栏占据全宽 */
-@media (max-width: 768px) {
-  .status-bar {
-    left: 0;
-    width: 100%;
-  }
+  left: 0 !important;
+  width: 100% !important;
+  margin-left: 0 !important;
 }
 
 .status-bar-content {
@@ -1256,25 +1268,6 @@ html, body {
 
 /* 响应式布局调整 */
 @media (max-width: 768px) {
-  .app-content {
-    padding-top: calc(var(--navbar-height) + 1px);
-  }
-  
-  .main-content {
-    margin: 0 var(--spacing-sm) var(--spacing-sm); /* 移除頂部 margin */
-    margin-bottom: calc(var(--spacing-sm) + var(--status-bar-height-mobile, 20px) + 8px); /* 調整移動設備上的底部間距 */
-    min-height: 200px; /* 移動設備上的最小高度可以更小 */
-  }
-  
-  .main-content-header {
-    padding: var(--spacing-xs) var(--spacing-md) 0; /* 在移動設備上減少頂部間距 */
-  }
-  
-  .content-scrollable {
-    padding: var(--spacing-xs) var(--spacing-md) var(--spacing-md); /* 在移動設備上減少內邊距 */
-    padding-bottom: calc(var(--spacing-md) + 8px); /* 調整移動設備上的內容底部間距 */
-  }
-  
   .status-bar {
     padding: 0 var(--spacing-sm);
     font-size: 10px;
@@ -1296,16 +1289,10 @@ html, body {
   color: var(--text-secondary);
 }
 
-.breadcrumb-container {
-  margin-bottom: var(--spacing-sm); /* 減少麵包屑的底部間距 */
-  position: relative;
-  top: 0; /* 移除頂部的負邊距 */
-  background-color: transparent;
-}
-
 :root {
   --status-bar-height: 24px;
   --status-bar-height-mobile: 20px;
+  --breadcrumb-height: 36px;
 }
 
 /* 网络测试区域样式 */

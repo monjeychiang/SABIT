@@ -63,7 +63,7 @@
   --content-padding: 24px;
   
   /* 字体 - 使用系统字体栈 */
-  --font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-family: 'Noto Sans TC', '思源黑體', '微軟正黑體', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.875rem;
   --font-size-md: 1rem;
@@ -142,6 +142,8 @@ body {
 h1, h2, h3, h4, h5, h6 {
   color: var(--text-primary);
   transition: color 0.3s ease;
+  font-family: 'Noto Sans TC', '思源黑體', sans-serif;
+  font-weight: 700;
 }
 
 p, span, div {
@@ -520,4 +522,38 @@ input:focus, select:focus, textarea:focus {
   h3 {
     font-size: var(--font-size-md);
   }
+}
+
+/* 添加自定义字体类 */
+.font-sans {
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+.font-tc {
+  font-family: 'Noto Sans TC', '思源黑體', '微軟正黑體', sans-serif;
+}
+
+.font-serif {
+  font-family: Georgia, Cambria, 'Times New Roman', Times, serif;
+}
+
+.font-mono {
+  font-family: SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+}
+
+/* 字體粗細類 */
+.font-light {
+  font-weight: 300;
+}
+
+.font-normal {
+  font-weight: 400;
+}
+
+.font-medium {
+  font-weight: 500;
+}
+
+.font-bold {
+  font-weight: 700;
 }

@@ -70,7 +70,6 @@ from app.db.database import engine, Base, create_tables
 from app.api.endpoints import system
 
 # 在合適的位置添加以下導入和配置
-from .middlewares.activity_tracker import ActivityTrackerMiddleware, active_session_store
 from .api.endpoints import users as users_router
 
 # 簡單的記憶體速率限制器
@@ -254,9 +253,6 @@ app.include_router(
     tags=["users"]
 )
 
-# 添加活躍追蹤中間件（在其他中間件之後添加）
-app.add_middleware(ActivityTrackerMiddleware)
-
 # 創建數據庫表（使用database.py中的create_tables函數，而不是直接調用Base.metadata.create_all）
 create_tables()
 logger.info("數據庫表創建完成")
@@ -300,9 +296,6 @@ async def startup_event():
 async def shutdown_event():
     """應用關閉事件處理"""
     logger.info("應用正在關閉...")
-    
-    # 關閉活躍會話清理任務
-    await active_session_store.stop_cleanup_task()
     
     # 關閉線上狀態管理器
     try:

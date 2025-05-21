@@ -1,4 +1,3 @@
-from ...middlewares.activity_tracker import active_session_store
 from ...core.online_status_manager import online_status_manager
 from fastapi import Depends, HTTPException, status, APIRouter
 from typing import List, Dict, Any
