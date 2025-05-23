@@ -37,21 +37,8 @@
           <p class="stat-description" v-if="userCount > 0">活躍率: {{ Math.round((onlineUserCount / userCount) * 100) }}%</p>
         </div>
       </div>
-
-      <div class="stat-card">
-        <div class="stat-icon notifications-icon">
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M22 17H2a3 3 0 0 0 3-3V9a7 7 0 0 1 14 0v5a3 3 0 0 0 3 3zm-8.27 4a2 2 0 0 1-3.46 0"></path>
-          </svg>
-        </div>
-        <div class="stat-content">
-          <h3>通知數量</h3>
-          <p class="stat-value">{{ notificationCount }}</p>
-          <p class="stat-description">全局通知: {{ globalNotificationCount }}</p>
-        </div>
-      </div>
       
-      <!-- 添加發送通知按鈕 -->
+      <!-- 發送通知按鈕 -->
       <div class="notification-action-card">
         <button class="notification-send-btn" @click="openSendNotificationModal">
           <div class="btn-icon">
@@ -1226,18 +1213,9 @@ const fetchStatistics = async () => {
     
     activeUserCount.value = activeUsersResponse.data.total || 0;
     
-    // 獲取通知數量
-    const notificationsResponse = await axios.get('/api/v1/admin/notifications/stats', {
-      headers: { 'Authorization': `Bearer ${authStore.token}` }
-    }).catch(() => {
-      // 如果API不存在，使用模拟數據
-      return { data: { total: 0, global: 0 } };
-    });
-    
-    if (notificationsResponse && notificationsResponse.data) {
-      notificationCount.value = notificationsResponse.data.total || 0;
-      globalNotificationCount.value = notificationsResponse.data.global || 0;
-    }
+    // 獲取通知數量 - 移除API調用，使用固定值
+    notificationCount.value = 0;
+    globalNotificationCount.value = 0;
   } catch (error) {
     console.error('獲取統計數據失敗:', error);
   }

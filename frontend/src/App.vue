@@ -15,6 +15,7 @@ import latencyService from '@/services/latencyService'
 import authService from '@/services/authService'
 import { useUserStore } from '@/stores/user'
 import { accountWebSocketService } from '@/services/accountWebSocketService'
+import axios from 'axios'
 
 const router = useRouter();
 const route = useRoute();
@@ -385,6 +386,18 @@ const formatTestTime = (timestamp: number): string => {
   });
 };
 
+// 獲取系統性能狀態文本
+const getPerformanceStatusText = (status: string): string => {
+  const statusTexts: Record<string, string> = {
+    'excellent': '極佳',
+    'good': '良好',
+    'fair': '一般',
+    'poor': '較差',
+    'unknown': '未知'
+  };
+  return statusTexts[status] || '未知';
+};
+
 // 新增：处理URL中的认证令牌参数
 const handleAuthTokensFromUrl = async () => {
   try {
@@ -460,6 +473,45 @@ const handleAuthTokensFromUrl = async () => {
 
 // 定义timeInterval变量，用于在onUnmounted中清除
 let timeInterval: number | undefined;
+
+// 新增：添加伺服器公共狀態和在線用戶數
+const serverPublicStatus = ref({
+  status: 'running',
+  cpu_percent: 0,
+  performance_status: 'unknown',
+  system: { system: '', version: '' }
+});
+
+// 在線用戶數
+const onlineUserCount = ref(0);
+
+// 新增：獲取伺服器公共狀態
+const fetchServerPublicStatus = async () => {
+  try {
+    if (authStore.isAuthenticated) {
+      const response = await axios.get('/api/v1/system/public-status', {
+        headers: { 'Authorization': `Bearer ${authStore.token}` }
+      });
+      serverPublicStatus.value = response.data;
+    }
+  } catch (error) {
+    console.error('獲取伺服器公共狀態失敗:', error);
+  }
+};
+
+// 新增：獲取在線用戶數
+const fetchOnlineUsersCount = async () => {
+  try {
+    if (authStore.isAuthenticated) {
+      const response = await axios.get('/api/v1/online/public-stats', {
+        headers: { 'Authorization': `Bearer ${authStore.token}` }
+      });
+      onlineUserCount.value = response.data.total_online || 0;
+    }
+  } catch (error) {
+    console.error('獲取在線用戶數失敗:', error);
+  }
+};
 
 // 初始化
 onMounted(async () => {
@@ -574,6 +626,12 @@ onMounted(async () => {
     updateServerTime();
     updateWebSocketStatus();
     updateServerLatency();
+    
+    // 每10秒更新公共狀態和在線用戶數
+    if (Date.now() % 10000 < 1000) { // 每10秒執行一次
+      fetchServerPublicStatus();
+      fetchOnlineUsersCount();
+    }
   }, 1000);
 
   // 启动延迟测量服务
@@ -582,6 +640,10 @@ onMounted(async () => {
     latencyStatus.value = result.status;
   });
   latencyService.startAutoMeasurement();
+
+  // 首次獲取公共狀態和在線用戶數
+  fetchServerPublicStatus();
+  fetchOnlineUsersCount();
 
   // 检查是否需要更新冷却倒计时
   if (lastTestTime.value > 0) {
@@ -717,16 +779,50 @@ onUnmounted(() => {
                     <span class="ws-detail-label">伺服器延遲:</span>
                     <span class="ws-detail-status" :class="latencyStatus">{{ serverLatency }}</span>
                   </div>
+                  
+                  <!-- 添加在線用戶數顯示 -->
+                  <div class="ws-detail-item">
+                    <span class="ws-detail-label">在線用戶:</span>
+                    <span class="ws-detail-status">{{ onlineUserCount }} 人</span>
+                  </div>
+                  
+                  <!-- 添加伺服器狀態顯示 -->
+                  <div class="ws-detail-item">
+                    <span class="ws-detail-label">伺服器狀態:</span>
+                    <span class="ws-detail-status" :class="{ 'excellent': serverPublicStatus.status === 'running', 'poor': serverPublicStatus.status !== 'running' }">
+                      {{ serverPublicStatus.status === 'running' ? '運行中' : '異常' }}
+                    </span>
+                  </div>
+                  
+                  <!-- 添加CPU使用率顯示 -->
+                  <div class="ws-detail-item">
+                    <span class="ws-detail-label">系統效能:</span>
+                    <div class="progress-container small">
+                      <div class="progress-bar">
+                        <div class="progress-inner" 
+                            :style="{ width: `${serverPublicStatus.cpu_percent}%` }"
+                            :class="serverPublicStatus.performance_status">
+                        </div>
+                      </div>
+                      <span class="progress-value">
+                        {{ serverPublicStatus.cpu_percent }}% 
+                        <span class="status-text">({{ getPerformanceStatusText(serverPublicStatus.performance_status) }})</span>
+                      </span>
+                    </div>
+                  </div>
+                  
                   <div class="ws-detail-item">
                     <span class="ws-detail-label">主WebSocket:</span>
                     <span class="connection-dot" :class="{ 'connected': wsStatus.main, 'disconnected': !wsStatus.main }"></span>
                     <span class="ws-detail-status">{{ wsStatus.main ? '已連線' : '未連線' }}</span>
                   </div>
+                  
                   <div class="ws-detail-item">
                     <span class="ws-detail-label">賬戶WebSocket:</span>
                     <span class="connection-dot" :class="{ 'connected': wsStatus.account, 'disconnected': !wsStatus.account }"></span>
                     <span class="ws-detail-status">{{ wsStatus.account ? '已連線' : '未連線' }}</span>
                   </div>
+                  
                   <!-- 网络测试区域 -->
                   <div class="network-test-section">
                     <h4>網路測試</h4>
@@ -769,7 +865,7 @@ onUnmounted(() => {
                   </div>
                 </div>
                 <div class="ws-details-footer">
-                  <button class="ws-refresh-button" @click="latencyService.measure(); reconnectWebSockets();">刷新狀態</button>
+                  <button class="ws-refresh-button" @click="latencyService.measure(); reconnectWebSockets(); fetchServerPublicStatus(); fetchOnlineUsersCount();">刷新狀態</button>
                 </div>
               </div>
             </div>
@@ -811,16 +907,50 @@ onUnmounted(() => {
                   <span class="ws-detail-label">伺服器延遲:</span>
                   <span class="ws-detail-status" :class="latencyStatus">{{ serverLatency }}</span>
                 </div>
+                
+                <!-- 添加在線用戶數顯示 -->
+                <div class="ws-detail-item">
+                  <span class="ws-detail-label">在線用戶:</span>
+                  <span class="ws-detail-status">{{ onlineUserCount }} 人</span>
+                </div>
+                
+                <!-- 添加伺服器狀態顯示 -->
+                <div class="ws-detail-item">
+                  <span class="ws-detail-label">伺服器狀態:</span>
+                  <span class="ws-detail-status" :class="{ 'excellent': serverPublicStatus.status === 'running', 'poor': serverPublicStatus.status !== 'running' }">
+                    {{ serverPublicStatus.status === 'running' ? '運行中' : '異常' }}
+                  </span>
+                </div>
+                
+                <!-- 添加CPU使用率顯示 -->
+                <div class="ws-detail-item">
+                  <span class="ws-detail-label">系統效能:</span>
+                  <div class="progress-container small">
+                    <div class="progress-bar">
+                      <div class="progress-inner" 
+                          :style="{ width: `${serverPublicStatus.cpu_percent}%` }"
+                          :class="serverPublicStatus.performance_status">
+                      </div>
+                    </div>
+                    <span class="progress-value">
+                      {{ serverPublicStatus.cpu_percent }}% 
+                      <span class="status-text">({{ getPerformanceStatusText(serverPublicStatus.performance_status) }})</span>
+                    </span>
+                  </div>
+                </div>
+                
                 <div class="ws-detail-item">
                   <span class="ws-detail-label">主WebSocket:</span>
                   <span class="connection-dot" :class="{ 'connected': wsStatus.main, 'disconnected': !wsStatus.main }"></span>
                   <span class="ws-detail-status">{{ wsStatus.main ? '已連線' : '未連線' }}</span>
                 </div>
+                
                 <div class="ws-detail-item">
                   <span class="ws-detail-label">賬戶WebSocket:</span>
                   <span class="connection-dot" :class="{ 'connected': wsStatus.account, 'disconnected': !wsStatus.account }"></span>
                   <span class="ws-detail-status">{{ wsStatus.account ? '已連線' : '未連線' }}</span>
                 </div>
+                
                 <!-- 网络测试区域 -->
                 <div class="network-test-section">
                   <h4>網路測試</h4>
@@ -863,7 +993,7 @@ onUnmounted(() => {
                 </div>
               </div>
               <div class="ws-details-footer">
-                <button class="ws-refresh-button" @click="latencyService.measure(); reconnectWebSockets();">刷新狀態</button>
+                <button class="ws-refresh-button" @click="latencyService.measure(); reconnectWebSockets(); fetchServerPublicStatus(); fetchOnlineUsersCount();">刷新狀態</button>
               </div>
             </div>
           </div>
@@ -890,7 +1020,7 @@ onUnmounted(() => {
   min-height: 100vh;
   background-color: var(--background-color);
   color: var(--text-primary);
-  transition: background-color var(--transition-normal) ease, color var(--transition-normal) ease;
+  transition: background-color 0.3s ease, color 0.3s ease;
   padding-bottom: var(--status-bar-height, 24px);
   position: relative;
   font-family: var(--font-family);
@@ -908,16 +1038,30 @@ html, body {
 }
 
 .app-content {
-  display: flex;
   flex: 1;
-  position: relative;
-  overflow: hidden; /* 確保內容區不會滾動 */
-  margin-left: 0; /* 移除左側邊距，由內部內容控制 */
-  width: 100%; /* 使用全部可用寬度 */
-  margin-top: calc(var(--navbar-height) + var(--spacing-sm)); /* 增加與導航欄之間的間距 */
-  padding-top: 0; /* 移除頂部padding */
-  background-color: var(--background-color); /* 使用應用整體背景色，而非卡片背景色 */
-  transition: all var(--transition-normal) ease;
+  display: flex;
+  min-height: calc(100vh - var(--navbar-height));
+  margin-top: var(--navbar-height);
+  /* 添加過渡效果，確保與側邊欄同步 */
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.main-content {
+  flex: 1;
+  padding: var(--content-padding);
+  padding-top: calc(var(--navbar-height) + var(--content-padding));
+  transition: padding-left 0.3s ease, background-color 0.3s ease, color 0.3s ease;
+  width: 100%;
+}
+
+/* 確保整個應用有統一的過渡效果 */
+#app {
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* 確保深色主題切換更流暢 */
+.dark-theme {
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 /* 側邊欄折疊時調整 app-content */
@@ -1613,5 +1757,64 @@ body,
   max-width: 90%;
   max-height: 90%;
   overflow: hidden;
+}
+
+/* 添加小型進度條樣式 */
+.progress-container.small {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 8px;
+}
+
+.progress-container.small .progress-bar {
+  flex: 1;
+  height: 6px;
+  background-color: var(--border-color);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-container.small .progress-inner {
+  height: 100%;
+  border-radius: 3px;
+}
+
+.progress-container.small .progress-value {
+  font-size: 12px;
+  min-width: 60px;
+  text-align: right;
+}
+
+.status-text {
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+/* 性能狀態顏色 */
+.progress-inner.excellent {
+  background-color: #52c41a; /* 绿色 - 优秀性能 */
+}
+
+.progress-inner.good {
+  background-color: #1890ff; /* 蓝色 - 良好性能 */
+}
+
+.progress-inner.fair {
+  background-color: #faad14; /* 黄色 - 一般性能 */
+}
+
+.progress-inner.poor {
+  background-color: #ff4d4f; /* 红色 - 较差性能 */
+}
+
+.ws-refresh-button {
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: var(--border-radius-sm);
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
 }
 </style>

@@ -212,43 +212,137 @@
               />
             </el-select>
           </div>
-          
-          <form @submit.prevent="updateApiSettings" class="settings-form">
-            <div class="form-group">
-              <label for="api_key">API密鑰</label>
-              <div class="password-field">
-                <input 
-                  type="text" 
-                  id="api_key" 
-                  v-model="apiData.exchanges[apiData.selectedExchange].api_key" 
-                  :placeholder="apiData.exchanges[apiData.selectedExchange].api_key ? '••••••••••••••••••••••' : '輸入您的API密鑰'"
-                  required 
-                  @focus="isEditingKey = true"
-                />
-                <button type="button" class="toggle-button" @click="clearApiKey" v-if="apiData.exchanges[apiData.selectedExchange].api_key && !isEditingKey">
-                  <span>重新輸入</span>
-                </button>
+
+          <!-- API密鑰類型切換 -->
+          <div class="api-type-selector">
+            <label>API密鑰類型</label>
+            <div class="api-type-options">
+              <el-radio-group v-model="apiData.activeApiType">
+                <el-radio-button label="hmac">HMAC-SHA256</el-radio-button>
+                <el-radio-button label="ed25519">Ed25519</el-radio-button>
+              </el-radio-group>
+            </div>
+          </div>
+
+          <div class="api-info-box">
+            <div v-if="apiData.activeApiType === 'hmac'">
+              <div class="api-type-description">
+                <i class="el-icon-info"></i>
+                <span>HMAC-SHA256 是傳統的API認證方式，由API密鑰和密鑰密碼組成。</span>
               </div>
             </div>
-            
-            <div class="form-group">
-              <label for="api_secret">API密鑰密碼</label>
-              <div class="password-field">
-                <input 
-                  :type="showApiSecret ? 'text' : 'password'" 
-                  id="api_secret" 
-                  v-model="apiData.exchanges[apiData.selectedExchange].api_secret" 
-                  :placeholder="apiData.exchanges[apiData.selectedExchange].api_secret ? '••••••••••••••••••••••••••••••••' : '輸入您的API密鑰密碼'"
-                  required 
-                  @focus="isEditingSecret = true"
-                />
-                <button type="button" class="toggle-button" @click="toggleApiSecretVisibility" v-if="isEditingSecret">
-                  <span>{{ showApiSecret ? '隱藏' : '顯示' }}</span>
-                </button>
-                <button type="button" class="toggle-button" @click="clearApiSecret" v-if="apiData.exchanges[apiData.selectedExchange].api_secret && !isEditingSecret">
-                  <span>重新輸入</span>
-                </button>
+            <div v-else>
+              <div class="api-type-description">
+                <i class="el-icon-info"></i>
+                <span>Ed25519 是一種較新的加密簽名算法，提供更高的安全性和更快的性能。</span>
               </div>
+            </div>
+          </div>
+          
+          <!-- API 密鑰狀態顯示 -->
+          <div class="api-status-box">
+            <h4>API密鑰狀態</h4>
+            <div class="api-status-info">
+              <div class="api-status-item" :class="{ active: apiData.exchanges[apiData.selectedExchange].has_hmac }">
+                <i :class="apiData.exchanges[apiData.selectedExchange].has_hmac ? 'el-icon-check' : 'el-icon-close'"></i>
+                <span>HMAC-SHA256：{{ apiData.exchanges[apiData.selectedExchange].has_hmac ? '已設置' : '未設置' }}</span>
+              </div>
+              <div class="api-status-item" :class="{ active: apiData.exchanges[apiData.selectedExchange].has_ed25519 }">
+                <i :class="apiData.exchanges[apiData.selectedExchange].has_ed25519 ? 'el-icon-check' : 'el-icon-close'"></i>
+                <span>Ed25519：{{ apiData.exchanges[apiData.selectedExchange].has_ed25519 ? '已設置' : '未設置' }}</span>
+              </div>
+            </div>
+          </div>
+          
+          <form @submit.prevent="updateApiSettings" class="settings-form">
+            <!-- HMAC-SHA256 密鑰表單 -->
+            <div v-if="apiData.activeApiType === 'hmac'">
+              <div class="form-group">
+                <label for="api_key">API密鑰 <span class="required">*</span></label>
+                <div class="password-field">
+                  <input 
+                    type="text" 
+                    id="api_key" 
+                    v-model="apiData.exchanges[apiData.selectedExchange].hmac.api_key" 
+                    :placeholder="apiData.exchanges[apiData.selectedExchange].hmac.api_key ? '••••••••••••••••••••••' : '輸入您的API密鑰'"
+                    required 
+                    @focus="isEditingHmacKey = true"
+                  />
+                  <button type="button" class="toggle-button" @click="clearHmacKey" v-if="apiData.exchanges[apiData.selectedExchange].hmac.api_key && !isEditingHmacKey">
+                    <span>重新輸入</span>
+                  </button>
+                </div>
+              </div>
+              
+              <div class="form-group">
+                <label for="api_secret">API密鑰密碼 <span class="required">*</span></label>
+                <div class="password-field">
+                  <input 
+                    :type="showHmacSecret ? 'text' : 'password'" 
+                    id="api_secret" 
+                    v-model="apiData.exchanges[apiData.selectedExchange].hmac.api_secret" 
+                    :placeholder="apiData.exchanges[apiData.selectedExchange].hmac.api_secret ? '••••••••••••••••••••••••••••••••' : '輸入您的API密鑰密碼'"
+                    required 
+                    @focus="isEditingHmacSecret = true"
+                  />
+                  <button type="button" class="toggle-button" @click="toggleHmacSecretVisibility" v-if="isEditingHmacSecret">
+                    <span>{{ showHmacSecret ? '隱藏' : '顯示' }}</span>
+                  </button>
+                  <button type="button" class="toggle-button" @click="clearHmacSecret" v-if="apiData.exchanges[apiData.selectedExchange].hmac.api_secret && !isEditingHmacSecret">
+                    <span>重新輸入</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Ed25519 密鑰表單 -->
+            <div v-else>
+              <div class="form-group">
+                <label for="ed25519_key">Ed25519 公鑰 <span class="required">*</span></label>
+                <div class="password-field">
+                  <input 
+                    type="text" 
+                    id="ed25519_key" 
+                    v-model="apiData.exchanges[apiData.selectedExchange].ed25519.public_key" 
+                    :placeholder="apiData.exchanges[apiData.selectedExchange].ed25519.public_key ? '••••••••••••••••••••••' : '輸入您的Ed25519公鑰'"
+                    required 
+                    @focus="isEditingEd25519Key = true"
+                  />
+                  <button type="button" class="toggle-button" @click="clearEd25519Key" v-if="apiData.exchanges[apiData.selectedExchange].ed25519.public_key && !isEditingEd25519Key">
+                    <span>重新輸入</span>
+                  </button>
+                </div>
+              </div>
+              
+              <div class="form-group">
+                <label for="ed25519_secret">Ed25519 私鑰 <span class="required">*</span></label>
+                <div class="password-field">
+                  <input 
+                    :type="showEd25519Secret ? 'text' : 'password'" 
+                    id="ed25519_secret" 
+                    v-model="apiData.exchanges[apiData.selectedExchange].ed25519.private_key" 
+                    :placeholder="apiData.exchanges[apiData.selectedExchange].ed25519.private_key ? '••••••••••••••••••••••••••••••••' : '輸入您的Ed25519私鑰'"
+                    required 
+                    @focus="isEditingEd25519Secret = true"
+                  />
+                  <button type="button" class="toggle-button" @click="toggleEd25519SecretVisibility" v-if="isEditingEd25519Secret">
+                    <span>{{ showEd25519Secret ? '隱藏' : '顯示' }}</span>
+                  </button>
+                  <button type="button" class="toggle-button" @click="clearEd25519Secret" v-if="apiData.exchanges[apiData.selectedExchange].ed25519.private_key && !isEditingEd25519Secret">
+                    <span>重新輸入</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="api_description">API密鑰描述（選填）</label>
+              <input 
+                type="text" 
+                id="api_description" 
+                v-model="apiData.exchanges[apiData.selectedExchange].description" 
+                placeholder="為這組API密鑰添加描述（例如：主要交易帳戶）"
+              />
             </div>
             
             <div class="api-requirements">
@@ -516,12 +610,33 @@ const profileMessage = ref(null);
 // API設置數據
 const apiData = ref({
   selectedExchange: 'binance',
+  activeApiType: 'hmac', // 默認顯示 HMAC-SHA256 表單
   exchanges: {
-    binance: { api_key: '', api_secret: '' },
-    okx: { api_key: '', api_secret: '' },
-    bybit: { api_key: '', api_secret: '' },
-    gate: { api_key: '', api_secret: '' },
-    mexc: { api_key: '', api_secret: '' }
+    binance: { 
+      hmac: { api_key: '', api_secret: '' },
+      ed25519: { public_key: '', private_key: '' },
+      description: ''
+    },
+    okx: { 
+      hmac: { api_key: '', api_secret: '' },
+      ed25519: { public_key: '', private_key: '' },
+      description: ''
+    },
+    bybit: { 
+      hmac: { api_key: '', api_secret: '' },
+      ed25519: { public_key: '', private_key: '' },
+      description: ''
+    },
+    gate: { 
+      hmac: { api_key: '', api_secret: '' },
+      ed25519: { public_key: '', private_key: '' },
+      description: ''
+    },
+    mexc: { 
+      hmac: { api_key: '', api_secret: '' },
+      ed25519: { public_key: '', private_key: '' },
+      description: ''
+    }
   }
 });
 const isApiUpdating = ref(false);
@@ -608,47 +723,62 @@ const loadUserSettings = async () => {
     
     // 獲取API密鑰設置狀態
     try {
+      console.log('開始獲取 API 密鑰設置');
       const apiResponse = await api.get('/api/v1/api-keys');
+      console.log('獲取 API 密鑰成功:', apiResponse.data);
+      
       if (apiResponse.data && Array.isArray(apiResponse.data)) {
         const apiKeys = apiResponse.data;
         
         // 初始化默認結構
-        const exchangeData = {
-          selectedExchange: 'binance',
-          exchanges: {
-            binance: { api_key: '', api_secret: '' },
-            okx: { api_key: '', api_secret: '' },
-            bybit: { api_key: '', api_secret: '' },
-            gate: { api_key: '', api_secret: '' },
-            mexc: { api_key: '', api_secret: '' }
-          }
-        };
+        const exchangeData = initializeExchangeData();
         
         // 填充已存在的 API 密鑰數據
         apiKeys.forEach(apiKey => {
           if (exchangeData.exchanges[apiKey.exchange]) {
-            exchangeData.exchanges[apiKey.exchange] = {
-              api_key: apiKey.api_key ? '••••••••••••••••••••••' : '',
-              api_secret: apiKey.api_key ? '••••••••••••••••••••••••••••••••' : ''
-            };
+            // 設置描述
+            exchangeData.exchanges[apiKey.exchange].description = apiKey.description || '';
+            
+            // 設置密鑰存在狀態
+            exchangeData.exchanges[apiKey.exchange].has_hmac = apiKey.has_hmac;
+            exchangeData.exchanges[apiKey.exchange].has_ed25519 = apiKey.has_ed25519;
+            
+            // 設置 HMAC-SHA256 密鑰
+            if (apiKey.has_hmac) {
+              exchangeData.exchanges[apiKey.exchange].hmac = {
+                api_key: '••••••••••••••••••••••',
+                api_secret: '••••••••••••••••••••••••••••••••'
+              };
+            }
+            
+            // 設置 Ed25519 密鑰
+            if (apiKey.has_ed25519) {
+              exchangeData.exchanges[apiKey.exchange].ed25519 = {
+                public_key: '••••••••••••••••••••••',
+                private_key: '••••••••••••••••••••••••••••••••'
+              };
+            }
+            
+            // 根據存在的密鑰類型設置默認活動類型
+            if (apiKey.has_hmac) {
+              exchangeData.activeApiType = 'hmac';
+            } else if (apiKey.has_ed25519) {
+              exchangeData.activeApiType = 'ed25519';
+            }
           }
         });
         
         apiData.value = exchangeData;
+      } else {
+        console.warn('API 密鑰響應格式不正確:', apiResponse.data);
+        apiData.value = initializeExchangeData();
       }
     } catch (apiError) {
       console.error('載入API設置失敗:', apiError);
+      // 顯示錯誤信息給用戶
+      ElMessage.error('載入API設置失敗，請稍後重試');
       // 設置默認空值
-      apiData.value = {
-        selectedExchange: 'binance',
-        exchanges: {
-          binance: { api_key: '', api_secret: '' },
-          okx: { api_key: '', api_secret: '' },
-          bybit: { api_key: '', api_secret: '' },
-          gate: { api_key: '', api_secret: '' },
-          mexc: { api_key: '', api_secret: '' }
-        }
-      };
+      apiData.value = initializeExchangeData();
     }
     
     // 載入通知設置
@@ -673,6 +803,51 @@ const loadUserSettings = async () => {
   } finally {
     isLoading.value = false;
   }
+};
+
+// 初始化交易所數據結構的輔助函數
+const initializeExchangeData = () => {
+  return {
+    selectedExchange: 'binance',
+    activeApiType: 'hmac',
+    exchanges: {
+      binance: { 
+        hmac: { api_key: '', api_secret: '' },
+        ed25519: { public_key: '', private_key: '' },
+        description: '',
+        has_hmac: false,
+        has_ed25519: false
+      },
+      okx: { 
+        hmac: { api_key: '', api_secret: '' },
+        ed25519: { public_key: '', private_key: '' },
+        description: '',
+        has_hmac: false,
+        has_ed25519: false
+      },
+      bybit: { 
+        hmac: { api_key: '', api_secret: '' },
+        ed25519: { public_key: '', private_key: '' },
+        description: '',
+        has_hmac: false,
+        has_ed25519: false
+      },
+      gate: { 
+        hmac: { api_key: '', api_secret: '' },
+        ed25519: { public_key: '', private_key: '' },
+        description: '',
+        has_hmac: false,
+        has_ed25519: false
+      },
+      mexc: { 
+        hmac: { api_key: '', api_secret: '' },
+        ed25519: { public_key: '', private_key: '' },
+        description: '',
+        has_hmac: false,
+        has_ed25519: false
+      }
+    }
+  };
 };
 
 // 更新個人資料
@@ -892,6 +1067,46 @@ const deleteAvatar = async () => {
   }
 };
 
+// 驗證表單
+const validateForm = () => {
+  // 重設所有錯誤訊息
+  formErrors.value = {
+    hmacKey: '',
+    hmacSecret: '',
+    ed25519Key: '',
+    ed25519Secret: ''
+  };
+
+  const exchange = apiData.value.selectedExchange;
+  let isValid = true;
+
+  if (apiData.value.activeApiType === 'hmac') {
+    // 驗證 HMAC-SHA256 密鑰
+    if (!apiData.value.exchanges[exchange].hmac.api_key) {
+      formErrors.value.hmacKey = 'API 密鑰不能為空';
+      isValid = false;
+    }
+    
+    if (!apiData.value.exchanges[exchange].hmac.api_secret) {
+      formErrors.value.hmacSecret = 'API 密鑰密碼不能為空';
+      isValid = false;
+    }
+  } else {
+    // 驗證 Ed25519 密鑰
+    if (!apiData.value.exchanges[exchange].ed25519.public_key) {
+      formErrors.value.ed25519Key = 'Ed25519 公鑰不能為空';
+      isValid = false;
+    }
+    
+    if (!apiData.value.exchanges[exchange].ed25519.private_key) {
+      formErrors.value.ed25519Secret = 'Ed25519 私鑰不能為空';
+      isValid = false;
+    }
+  }
+
+  return isValid;
+};
+
 // 更新API設置
 const updateApiSettings = async () => {
   const api = createAuthenticatedRequest();
@@ -902,30 +1117,59 @@ const updateApiSettings = async () => {
     apiMessage.value = null;
     
     const exchange = apiData.value.selectedExchange;
-    const { api_key, api_secret } = apiData.value.exchanges[exchange];
+    const apiType = apiData.value.activeApiType;
+    const description = apiData.value.exchanges[exchange].description;
     
     // 檢查交易所名稱
     if (!exchange || !['binance', 'okx', 'bybit', 'gate', 'mexc'].includes(exchange)) {
       throw new Error('無效的交易所名稱');
     }
     
-    // 檢查是否已有API密鑰
+    // 初始化 payload，只包含共通字段
+    let payload = {
+      exchange,
+      description
+    };
+    
+    // 根據當前選中的API類型添加相應的密鑰
+    if (apiType === 'hmac') {
+      // 當前修改的是 HMAC 密鑰
+      const hmacKey = apiData.value.exchanges[exchange].hmac.api_key;
+      const hmacSecret = apiData.value.exchanges[exchange].hmac.api_secret;
+      
+      // 只有在有值時才添加到 payload
+      if (hmacKey && hmacKey !== '••••••••••••••••••••••') {
+        payload.api_key = hmacKey;
+      }
+      
+      if (hmacSecret && hmacSecret !== '••••••••••••••••••••••••••••••••') {
+        payload.api_secret = hmacSecret;
+      }
+    } else {
+      // 當前修改的是 Ed25519 密鑰
+      const ed25519Key = apiData.value.exchanges[exchange].ed25519.public_key;
+      const ed25519Secret = apiData.value.exchanges[exchange].ed25519.private_key;
+      
+      // 只有在有值時才添加到 payload
+      if (ed25519Key && ed25519Key !== '••••••••••••••••••••••') {
+        payload.ed25519_key = ed25519Key;
+      }
+      
+      if (ed25519Secret && ed25519Secret !== '••••••••••••••••••••••••••••••••') {
+        payload.ed25519_secret = ed25519Secret;
+      }
+    }
+    
+    // 檢查是否已有API密鑰，決定創建或更新
     const apiKeyExists = await checkApiKeyExists(exchange);
     
     let response;
     if (apiKeyExists) {
       // 更新現有API密鑰
-      response = await api.put(`/api/v1/api-keys/${exchange}`, {
-        api_key,
-        api_secret
-      });
+      response = await api.put(`/api/v1/api-keys/${exchange}`, payload);
     } else {
       // 創建新的API密鑰
-      response = await api.post('/api/v1/api-keys', {
-        exchange,
-        api_key,
-        api_secret
-      });
+      response = await api.post('/api/v1/api-keys', payload);
     }
     
     if (response.data.success) {
@@ -934,25 +1178,52 @@ const updateApiSettings = async () => {
         text: response.data.message || 'API設置已成功更新'
       };
       
-      // 清除表單
-      apiData.value.exchanges[exchange] = {
-        api_key: '••••••••••••••••••••••',
-        api_secret: '••••••••••••••••••••••••••••••••'
-      };
-      isEditingKey.value = false;
-      isEditingSecret.value = false;
+      // 根據當前操作的 API 類型，重置相應的輸入框
+      if (apiType === 'hmac') {
+        apiData.value.exchanges[exchange].hmac = {
+          api_key: '••••••••••••••••••••••',
+          api_secret: '••••••••••••••••••••••••••••••••'
+        };
+        isEditingHmacKey.value = false;
+        isEditingHmacSecret.value = false;
+      } else {
+        apiData.value.exchanges[exchange].ed25519 = {
+          public_key: '••••••••••••••••••••••',
+          private_key: '••••••••••••••••••••••••••••••••'
+        };
+        isEditingEd25519Key.value = false;
+        isEditingEd25519Secret.value = false;
+      }
     } else {
       throw new Error(response.data.detail || '更新API設置失敗');
     }
     
   } catch (error) {
     console.error('更新API設置時出錯:', error);
-    apiMessage.value = {
-      type: 'error',
-      text: error.response?.data?.detail 
-        ? error.response.data.detail 
-        : '更新API設置失敗，請稍後重試'
-    };
+    
+    // 處理 422 Unprocessable Entity 錯誤 (驗證錯誤)
+    if (error.response && error.response.status === 422 && error.response.data) {
+      // 嘗試提取錯誤信息並顯示
+      const errorDetails = error.response.data;
+      if (Array.isArray(errorDetails) && errorDetails.length > 0) {
+        apiMessage.value = {
+          type: 'error',
+          text: errorDetails[0].msg || '表單驗證錯誤，請檢查您輸入的數據'
+        };
+      } else {
+        apiMessage.value = {
+          type: 'error',
+          text: '表單驗證錯誤，請檢查您輸入的數據'
+        };
+      }
+    } else {
+      apiMessage.value = {
+        type: 'error',
+        text: error.response?.data?.detail 
+          ? error.response.data.detail 
+          : '更新API設置失敗，請稍後重試'
+      };
+    }
   } finally {
     isApiUpdating.value = false;
   }
@@ -964,13 +1235,27 @@ const checkApiKeyExists = async (exchange) => {
   if (!api) return false;
   
   try {
+    console.log(`檢查交易所 ${exchange} 的 API 密鑰是否存在`);
     const response = await api.get('/api/v1/api-keys');
+    
     if (response.data && Array.isArray(response.data)) {
-      return response.data.some(key => key.exchange === exchange);
+      // 檢查是否有匹配的交易所
+      const exists = response.data.some(key => key.exchange === exchange);
+      console.log(`交易所 ${exchange} 的 API 密鑰${exists ? '存在' : '不存在'}`);
+      return exists;
     }
+    
+    console.warn('API 密鑰響應格式不正確:', response.data);
     return false;
   } catch (error) {
-    console.error('檢查API密鑰時出錯:', error);
+    console.error(`檢查 ${exchange} API 密鑰時出錯:`, error);
+    
+    // 如果是 404 錯誤，表示沒有找到密鑰，返回 false
+    if (error.response && error.response.status === 404) {
+      return false;
+    }
+    
+    // 對於其他錯誤，默認假設不存在以便創建新密鑰
     return false;
   }
 };
@@ -1006,8 +1291,9 @@ const deleteApiKeys = async () => {
       
       // 清除表單
       apiData.value.exchanges[exchange] = {
-        api_key: '',
-        api_secret: ''
+        hmac: { api_key: '', api_secret: '' },
+        ed25519: { public_key: '', private_key: '' },
+        description: ''
       };
       isEditingKey.value = false;
       isEditingSecret.value = false;
@@ -1125,9 +1411,72 @@ const initThemeSettings = () => {
   }
 }
 
+// HMAC-SHA256 密鑰顯示控制
+const showHmacSecret = ref(false);
+const isEditingHmacKey = ref(false);
+const isEditingHmacSecret = ref(false);
+
+// Ed25519 密鑰顯示控制
+const showEd25519Secret = ref(false);
+const isEditingEd25519Key = ref(false);
+const isEditingEd25519Secret = ref(false);
+
+// 切換 HMAC-SHA256 API密鑰可見性
+const toggleHmacSecretVisibility = () => {
+  showHmacSecret.value = !showHmacSecret.value;
+};
+
+// 切換 Ed25519 密鑰可見性
+const toggleEd25519SecretVisibility = () => {
+  showEd25519Secret.value = !showEd25519Secret.value;
+};
+
+// 清除 HMAC-SHA256 API密鑰以便重新輸入
+const clearHmacKey = () => {
+  const exchange = apiData.value.selectedExchange;
+  apiData.value.exchanges[exchange].hmac.api_key = '';
+  isEditingHmacKey.value = true;
+};
+
+// 清除 HMAC-SHA256 API密鑰密碼以便重新輸入
+const clearHmacSecret = () => {
+  const exchange = apiData.value.selectedExchange;
+  apiData.value.exchanges[exchange].hmac.api_secret = '';
+  isEditingHmacSecret.value = true;
+};
+
+// 清除 Ed25519 公鑰以便重新輸入
+const clearEd25519Key = () => {
+  const exchange = apiData.value.selectedExchange;
+  apiData.value.exchanges[exchange].ed25519.public_key = '';
+  isEditingEd25519Key.value = true;
+};
+
+// 清除 Ed25519 私鑰以便重新輸入
+const clearEd25519Secret = () => {
+  const exchange = apiData.value.selectedExchange;
+  apiData.value.exchanges[exchange].ed25519.private_key = '';
+  isEditingEd25519Secret.value = true;
+};
+
 onMounted(() => {
   loadUserSettings();
   initThemeSettings();
+});
+
+// 計算表單是否有效
+const isFormValid = computed(() => {
+  const exchange = apiData.value.selectedExchange;
+  
+  if (apiData.value.activeApiType === 'hmac') {
+    // 檢查 HMAC-SHA256 表單是否填寫完整
+    return !!apiData.value.exchanges[exchange].hmac.api_key && 
+           !!apiData.value.exchanges[exchange].hmac.api_secret;
+  } else {
+    // 檢查 Ed25519 表單是否填寫完整
+    return !!apiData.value.exchanges[exchange].ed25519.public_key && 
+           !!apiData.value.exchanges[exchange].ed25519.private_key;
+  }
 });
 </script>
 
@@ -1793,5 +2142,98 @@ body.dark-theme .security-tip {
 .avatar-delete-button:hover {
   background-color: var(--danger-color);
   color: white;
+}
+
+.api-type-selector {
+  margin-bottom: 24px;
+}
+
+.api-type-options {
+  margin-top: 10px;
+}
+
+.api-info-box {
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.api-type-description {
+  display: flex;
+  align-items: flex-start;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.api-type-description i {
+  margin-right: 8px;
+  color: var(--primary-color);
+  font-size: 16px;
+}
+
+.el-radio-button {
+  margin-right: 10px;
+}
+
+body.dark-theme .api-info-box {
+  background-color: rgba(45, 45, 45, 0.5);
+}
+
+.api-status-box {
+  margin-top: 20px;
+  background-color: var(--surface-color);
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.api-status-box h4 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.api-status-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.api-status-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 4px;
+  background-color: rgba(0, 0, 0, 0.05);
+  flex: 1;
+  min-width: 200px;
+}
+
+.api-status-item i {
+  margin-right: 8px;
+  font-size: 16px;
+}
+
+.api-status-item.active {
+  background-color: rgba(76, 175, 80, 0.1);
+  color: #4caf50;
+}
+
+.api-status-item:not(.active) {
+  background-color: rgba(244, 67, 54, 0.1);
+  color: #f44336;
+}
+
+body.dark-theme .api-status-item.active {
+  background-color: rgba(76, 175, 80, 0.2);
+}
+
+body.dark-theme .api-status-item:not(.active) {
+  background-color: rgba(244, 67, 54, 0.2);
 }
 </style> 

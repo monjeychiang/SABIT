@@ -37,9 +37,35 @@ export const useThemeStore = defineStore('theme', {
     },
     
     toggleTheme() {
-      this.isDarkMode = !this.isDarkMode
-      localStorage.setItem('theme', this.currentTheme)
-      this.applyTheme()
+      // 創建過渡覆蓋層
+      const transitionOverlay = document.createElement('div');
+      transitionOverlay.className = 'theme-transition-overlay';
+      document.body.appendChild(transitionOverlay);
+      
+      // 觸發覆蓋層動畫 - 延遲讓DOM更新
+      setTimeout(() => {
+        transitionOverlay.style.opacity = '1';
+        
+        // 在覆蓋層完全不透明後切換主題
+        setTimeout(() => {
+          // 實際主題切換邏輯
+          this.isDarkMode = !this.isDarkMode
+          localStorage.setItem('theme', this.currentTheme)
+          this.applyTheme()
+          
+          // 主題變更後淡出覆蓋層
+          setTimeout(() => {
+            transitionOverlay.style.opacity = '0';
+            
+            // 移除覆蓋層
+            setTimeout(() => {
+              if (document.body.contains(transitionOverlay)) {
+                document.body.removeChild(transitionOverlay);
+              }
+            }, 300);
+          }, 50);
+        }, 300);
+      }, 10);
     },
     
     applyTheme() {
@@ -134,16 +160,16 @@ export const useThemeStore = defineStore('theme', {
         // 基础颜色
         '--el-color-white': '#ffffff',
         '--el-color-black': '#000000',
-        '--el-color-primary-rgb': '64, 64, 64',  // 改為灰色
-        '--el-color-success-rgb': '16, 185, 129',
-        '--el-color-warning-rgb': '245, 158, 11',
-        '--el-color-danger-rgb': '239, 68, 68',
-        '--el-color-error-rgb': '239, 68, 68',
-        '--el-color-info-rgb': '160, 160, 160',  // 改為淺灰色
-        
+        '--el-color-primary-rgb': '24, 144, 255',
+        '--el-color-success-rgb': '82, 196, 26',
+        '--el-color-warning-rgb': '250, 173, 20',
+        '--el-color-danger-rgb': '245, 34, 45',
+        '--el-color-error-rgb': '245, 34, 45',
+        '--el-color-info-rgb': '144, 147, 153',
+
         // 背景颜色
         '--el-bg-color': '#ffffff',
-        '--el-bg-color-page': '#f5f7fa',
+        '--el-bg-color-page': '#f2f3f5',
         '--el-bg-color-overlay': '#ffffff',
         
         // 文本颜色
@@ -169,14 +195,14 @@ export const useThemeStore = defineStore('theme', {
         '--el-fill-color-blank': '#ffffff',
         
         // 特殊颜色
-        '--el-mask-color': 'rgba(255, 255, 255, 0.8)',
-        '--el-mask-color-extra-light': 'rgba(255, 255, 255, 0.3)',
+        '--el-mask-color': 'rgba(0, 0, 0, 0.5)',
+        '--el-mask-color-extra-light': 'rgba(0, 0, 0, 0.05)',
         
         // 阴影
-        '--el-box-shadow': '0 2px 4px rgba(0, 0, 0, 0.12), 0 0 6px rgba(0, 0, 0, 0.04)',
-        '--el-box-shadow-light': '0 2px 4px rgba(0, 0, 0, 0.1)',
-        '--el-box-shadow-lighter': '0 1px 2px rgba(0, 0, 0, 0.05)',
-        '--el-box-shadow-dark': '0 4px 8px rgba(0, 0, 0, 0.2)',
+        '--el-box-shadow': '0 2px 12px 0 rgba(0, 0, 0, 0.1)',
+        '--el-box-shadow-light': '0 2px 8px 0 rgba(0, 0, 0, 0.06)',
+        '--el-box-shadow-lighter': '0 1px 6px 0 rgba(0, 0, 0, 0.05)',
+        '--el-box-shadow-dark': '0 4px 16px 0 rgba(0, 0, 0, 0.15)',
         
         // 禁用状态
         '--el-disabled-bg-color': '#f5f7fa',
@@ -197,11 +223,15 @@ export const useThemeStore = defineStore('theme', {
         '--border-light': '#f3f4f6',
       }
       
-      // 应用CSS变量
+      // 应用CSS变量 - 改用一次性設置所有變量的方式
       const cssVars = isDark ? darkThemeVars : lightThemeVars
-      for (const [key, value] of Object.entries(cssVars)) {
-        document.documentElement.style.setProperty(key, value)
-      }
+      
+      // 批量設置，減少重排和重繪的次數
+      requestAnimationFrame(() => {
+        for (const [key, value] of Object.entries(cssVars)) {
+          document.documentElement.style.setProperty(key, value)
+        }
+      })
     }
   }
 }) 

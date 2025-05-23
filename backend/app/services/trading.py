@@ -91,18 +91,18 @@ class TradingService:
                 detail=f"未找到{exchange}的API密钥配置"
             )
         
-        # 解密API密钥
+        # 解密HMAC-SHA256 API密钥 (REST API使用HMAC-SHA256密钥类型)
         api_key = decrypt_api_key(api_key_record.api_key)
         api_secret = decrypt_api_key(api_key_record.api_secret)
         
         if not api_key or not api_secret:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="API密钥解密失败"
+                detail="HMAC-SHA256 API密钥解密失败或未设置"
             )
         
         try:
-            # 从连接池获取客户端
+            # 从连接池获取客户端 (HMAC-SHA256密钥用于REST API交易操作)
             client = await self.connection_pool.get_client(
                 user.id, exchange, api_key, api_secret
             )
@@ -268,14 +268,14 @@ class TradingService:
                 detail=f"未找到{exchange}的API密钥配置"
             )
         
-        # 解密API密钥
+        # 使用HMAC-SHA256 API密钥 (REST API使用HMAC-SHA256密钥类型)
         api_key = decrypt_api_key(api_key_record.api_key)
         api_secret = decrypt_api_key(api_key_record.api_secret)
         
         if not api_key or not api_secret:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="API密钥解密失败"
+                detail="HMAC-SHA256 API密钥解密失败或未设置"
             )
         
         # 使用REST API获取账户信息
@@ -1426,10 +1426,9 @@ class TradingService:
         exchange: ExchangeEnum
     ) -> bool:
         """
-        延迟加载策略：仅在必要时初始化连接
+        如果需要，初始化用户与交易所的连接
         
-        此方法检查是否已存在连接，如不存在则创建
-        适用于用户首次访问交易页面时调用
+        用于预加载连接，减少首次交易操作的延迟
         
         Args:
             user: 用户模型实例
@@ -1444,10 +1443,9 @@ class TradingService:
             pool_key = f"{user.id}:{exchange.value}"
             connection_exists = False
             
-            # 检查REST API连接
             if hasattr(self.connection_pool, 'pools') and pool_key in self.connection_pool.pools:
                 connection_exists = True
-                logger.info(f"用户{user.id}已有{exchange.value}的REST API连接")
+                logger.info(f"用户{user.id}的{exchange.value}连接已存在")
             
             # 如果没有连接，尝试建立
             if not connection_exists:
@@ -1461,12 +1459,12 @@ class TradingService:
                     logger.warning(f"未找到用户{user.id}的{exchange.value}API密钥配置")
                     return False
                 
-                # 解密API密钥
+                # 使用HMAC-SHA256 API密钥 (REST API使用HMAC-SHA256密钥类型)
                 api_key = decrypt_api_key(api_key_record.api_key)
                 api_secret = decrypt_api_key(api_key_record.api_secret)
                 
                 if not api_key or not api_secret:
-                    logger.error(f"用户{user.id}的API密钥解密失败")
+                    logger.error(f"用户{user.id}的HMAC-SHA256 API密钥解密失败或未设置")
                     return False
                 
                 # 仅检查连接可行性，不执行实际操作
@@ -1515,13 +1513,13 @@ class TradingService:
             logger.warning(f"未找到用户{user.id}的{exchange.value}API密钥配置")
             return {"success": False, "message": f"未找到{exchange.value}的API密钥配置"}
         
-        # 解密API密钥
+        # 使用HMAC-SHA256 API密钥 (REST API使用HMAC-SHA256密钥类型)
         api_key = decrypt_api_key(api_key_record.api_key)
         api_secret = decrypt_api_key(api_key_record.api_secret)
         
         if not api_key or not api_secret:
-            logger.error(f"用户{user.id}的API密钥解密失败")
-            return {"success": False, "message": "API密钥解密失败"}
+            logger.error(f"用户{user.id}的HMAC-SHA256 API密钥解密失败或未设置")
+            return {"success": False, "message": "HMAC-SHA256 API密钥解密失败或未设置"}
         
         try:
             # 使用临时客户端获取基本信息
@@ -1711,9 +1709,10 @@ class TradingService:
         is_high_frequency_trader: bool = False
     ) -> Dict[str, Any]:
         """
-        为高级/VIP用户预初始化所有连接
+        为VIP用户预初始化所有交易所连接
         
-        高频交易用户在登录时可预先建立所有连接，以提供最佳体验
+        高级用户特权功能，提前建立WebSocket和REST连接，
+        确保交易体验流畅，减少首次操作延迟
         
         Args:
             user: 用户模型实例
@@ -1721,17 +1720,16 @@ class TradingService:
             is_high_frequency_trader: 是否为高频交易用户
             
         Returns:
-            Dict[str, Any]: 连接初始化结果
+            Dict[str, Any]: 初始化结果
         """
         results = {
             "success": True,
-            "message": "高级用户连接初始化完成",
             "connections": {},
             "websockets": {}
         }
         
         try:
-            # 查询用户配置的所有API密钥
+            # 获取用户所有已配置API密钥的交易所
             api_keys = db.query(ExchangeAPI).filter(
                 ExchangeAPI.user_id == user.id
             ).all()
@@ -1747,14 +1745,14 @@ class TradingService:
                 exchange = api_key_record.exchange
                 exchange_name = exchange.value
                 
-                # 解密API密钥
+                # 使用HMAC-SHA256 API密钥 (REST API使用HMAC-SHA256密钥类型)
                 api_key = decrypt_api_key(api_key_record.api_key)
                 api_secret = decrypt_api_key(api_key_record.api_secret)
                 
                 if not api_key or not api_secret:
                     results["connections"][exchange_name] = {
                         "success": False,
-                        "message": "API密钥解密失败"
+                        "message": "HMAC-SHA256 API密钥解密失败或未设置"
                     }
                     continue
                 

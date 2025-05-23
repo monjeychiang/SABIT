@@ -1359,6 +1359,9 @@ const showHelp = () => {
   left: 0;
   right: 0;
   z-index: 100;
+  /* 添加與側邊欄一致的過渡效果 */
+  transition: background-color 0.3s ease, color 0.3s ease, 
+              border-color 0.3s ease, box-shadow 0.3s ease;
 }
 
 .left {
@@ -1405,7 +1408,8 @@ const showHelp = () => {
   cursor: pointer;
   border-radius: var(--border-radius-sm);
   color: var(--text-primary);
-  transition: all var(--transition-fast) ease;
+  /* 確保過渡效果一致 */
+  transition: all 0.3s ease;
   display: flex;
   align-items: center;
   justify-content: center;

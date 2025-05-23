@@ -50,10 +50,21 @@ def get_user_api_keys(user: User, db: Session) -> dict:
     db_api_keys = db.query(ExchangeAPI).filter(ExchangeAPI.user_id == user.id).all()
     
     for api_key in db_api_keys:
-        api_keys[api_key.exchange] = {
-            "api_key": decrypt_api_key(api_key.api_key),
-            "api_secret": decrypt_api_key(api_key.api_secret)
-        }
+        api_keys[api_key.exchange] = {}
+        
+        # 添加 HMAC-SHA256 密鑰（如果存在）
+        if api_key.api_key:
+            api_keys[api_key.exchange]["hmac"] = {
+                "api_key": decrypt_api_key(api_key.api_key),
+                "api_secret": decrypt_api_key(api_key.api_secret)
+            }
+        
+        # 添加 Ed25519 密鑰（如果存在）
+        if api_key.ed25519_key:
+            api_keys[api_key.exchange]["ed25519"] = {
+                "public_key": decrypt_api_key(api_key.ed25519_key),
+                "private_key": decrypt_api_key(api_key.ed25519_secret)
+            }
     
     return api_keys
 
@@ -68,6 +79,7 @@ async def get_api_keys(
     
     返回當前登入用戶在各交易所設置的API密鑰列表。
     出於安全考慮，API密鑰只返回末尾4位字符，不會返回完整密鑰。
+    返回結果包括兩種密鑰類型（HMAC-SHA256 和 Ed25519）的存在狀態。
     
     返回:
         包含每個交易所API密鑰部分資訊的列表
@@ -75,14 +87,37 @@ async def get_api_keys(
     try:
         api_keys = []
         for exchange_api in current_user.exchange_apis:
-            api_keys.append(
-                ApiKeyResponse(
-                    exchange=exchange_api.exchange,
-                    api_key=exchange_api.api_key[-4:],  # 只返回最後4位
-                    created_at=exchange_api.created_at,
-                    updated_at=exchange_api.updated_at
-                )
+            # 初始化返回項目，確保所有必填字段都有值
+            response_item = ApiKeyResponse(
+                exchange=exchange_api.exchange,
+                has_hmac=bool(exchange_api.api_key),
+                has_ed25519=bool(exchange_api.ed25519_key),
+                created_at=exchange_api.created_at,
+                updated_at=exchange_api.updated_at,
+                description=exchange_api.description or "",
+                api_key=None,
+                ed25519_key=None
             )
+            
+            # 只在密鑰存在時添加最後4位
+            if exchange_api.api_key:
+                try:
+                    decrypted_key = decrypt_api_key(exchange_api.api_key)
+                    response_item.api_key = "•••••••" + decrypted_key[-4:] if len(decrypted_key) >= 4 else "•••••••"
+                except Exception as e:
+                    logger.warning(f"解密 API 密鑰失敗: {str(e)}")
+                    response_item.api_key = "•••••••" + exchange_api.api_key[-4:] if len(exchange_api.api_key) >= 4 else "•••••••"
+                    
+            if exchange_api.ed25519_key:
+                try:
+                    decrypted_key = decrypt_api_key(exchange_api.ed25519_key)
+                    response_item.ed25519_key = "•••••••" + decrypted_key[-4:] if len(decrypted_key) >= 4 else "•••••••"
+                except Exception as e:
+                    logger.warning(f"解密 Ed25519 密鑰失敗: {str(e)}")
+                    response_item.ed25519_key = "•••••••" + exchange_api.ed25519_key[-4:] if len(exchange_api.ed25519_key) >= 4 else "•••••••"
+                
+            api_keys.append(response_item)
+            
         return api_keys
     except Exception as e:
         logger.error(f"獲取API密鑰失敗: {str(e)}")
@@ -102,16 +137,17 @@ async def create_api_key(
     創建新的交易所API密鑰
     
     為當前用戶添加新的交易所API密鑰。每個用戶在每個交易所只能設置一組API密鑰，
-    若需更改需使用更新端點。API密鑰和密鑰將使用加密算法存儲。
+    若已存在則會更新現有密鑰。API密鑰和密鑰將使用加密算法存儲。
+    
+    支持同時設置 HMAC-SHA256 和 Ed25519 兩種類型的密鑰，可以只提供一種類型。
     
     參數:
         api_key_data: 包含交易所名稱、API密鑰和密鑰的資料
         
     返回:
-        包含操作狀態和新建API密鑰資訊的響應
+        包含操作狀態和新建/更新API密鑰資訊的響應
         
     錯誤:
-        400: 相同交易所的API密鑰已存在
         500: 創建過程中出現伺服器錯誤
     """
     # 檢查是否已存在相同交易所的API密鑰
@@ -120,24 +156,43 @@ async def create_api_key(
         ExchangeAPI.exchange == api_key_data.exchange
     ).first()
     
+    # 如果已存在，則調用更新接口而不是創建新記錄
     if existing_api:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"已存在{api_key_data.exchange}的API密鑰"
+        # 創建更新用的數據模型
+        update_data = ExchangeAPIUpdate(
+            api_key=api_key_data.api_key,
+            api_secret=api_key_data.api_secret,
+            ed25519_key=api_key_data.ed25519_key,
+            ed25519_secret=api_key_data.ed25519_secret,
+            description=api_key_data.description
         )
-    
-    # 加密API密鑰
-    encrypted_key = encrypt_api_key(api_key_data.api_key)
-    encrypted_secret = encrypt_api_key(api_key_data.api_secret)
+        
+        # 轉到更新函數處理
+        return await update_api_key(
+            exchange=api_key_data.exchange,
+            api_key_data=update_data,
+            db=db,
+            current_user=current_user
+        )
     
     # 創建新的API密鑰記錄
     db_api_key = ExchangeAPI(
         user_id=current_user.id,
         exchange=api_key_data.exchange,
-        api_key=encrypted_key,
-        api_secret=encrypted_secret,
         description=api_key_data.description
     )
+    
+    # 添加 HMAC-SHA256 密鑰（如果提供）
+    if api_key_data.api_key:
+        db_api_key.api_key = encrypt_api_key(api_key_data.api_key)
+    if api_key_data.api_secret:
+        db_api_key.api_secret = encrypt_api_key(api_key_data.api_secret)
+    
+    # 添加 Ed25519 密鑰（如果提供）
+    if api_key_data.ed25519_key:
+        db_api_key.ed25519_key = encrypt_api_key(api_key_data.ed25519_key)
+    if api_key_data.ed25519_secret:
+        db_api_key.ed25519_secret = encrypt_api_key(api_key_data.ed25519_secret)
     
     try:
         db.add(db_api_key)
@@ -166,8 +221,8 @@ async def update_api_key(
     """
     更新交易所API密鑰
     
-    更新用戶在指定交易所的API密鑰。支援部分更新，可以只更新密鑰或描述。
-    更新的API密鑰將使用加密算法重新加密存儲。
+    更新用戶在指定交易所的API密鑰。支援部分更新，可以只更新某種類型的密鑰或描述。
+    更新的API密鑰將使用加密算法重新加密存儲。可以同時存在兩種類型的密鑰。
     
     參數:
         exchange: 要更新的交易所名稱
@@ -192,18 +247,35 @@ async def update_api_key(
         )
     
     try:
-        if api_key_data.api_key:
-            db_api_key.api_key = encrypt_api_key(api_key_data.api_key)
-        if api_key_data.api_secret:
-            db_api_key.api_secret = encrypt_api_key(api_key_data.api_secret)
+        # 更新描述（如果提供）
         if api_key_data.description is not None:
             db_api_key.description = api_key_data.description
             
+        # 更新 HMAC-SHA256 密鑰（如果提供）
+        if api_key_data.api_key is not None:
+            db_api_key.api_key = encrypt_api_key(api_key_data.api_key)
+        if api_key_data.api_secret is not None:
+            db_api_key.api_secret = encrypt_api_key(api_key_data.api_secret)
+            
+        # 更新 Ed25519 密鑰（如果提供）
+        if api_key_data.ed25519_key is not None:
+            db_api_key.ed25519_key = encrypt_api_key(api_key_data.ed25519_key)
+        if api_key_data.ed25519_secret is not None:
+            db_api_key.ed25519_secret = encrypt_api_key(api_key_data.ed25519_secret)
+            
         db.commit()
         db.refresh(db_api_key)
+        
+        # 構建響應消息
+        message = f"成功更新{exchange}的API密鑰"
+        if api_key_data.api_key is not None or api_key_data.api_secret is not None:
+            message += "（HMAC-SHA256）"
+        if api_key_data.ed25519_key is not None or api_key_data.ed25519_secret is not None:
+            message += "（Ed25519）"
+            
         return {
             "success": True,
-            "message": f"成功更新{exchange}的API密鑰",
+            "message": message,
             "data": db_api_key
         }
     except Exception as e:

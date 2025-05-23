@@ -118,10 +118,7 @@ def main():
         from app.db.models.notification import Notification
         logger.info("导入通知模型完成")
         
-        # 导入通知设置相关模型
-        from app.db.models.notification_settings import NotificationSetting
-        logger.info("导入通知设置模型完成")
-        
+       
         # 在新数据库中创建所有表
         logger.info("创建所有表...")
         Base.metadata.create_all(bind=new_engine)

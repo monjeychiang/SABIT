@@ -82,6 +82,13 @@ class BinanceWebSocketClient:
         self.recv_lock = None
         self.ping_task = None
         self.response_handler_task = None
+        
+        # 添加連接管理和健康狀態相關屬性
+        self.consecutive_errors = 0
+        self.max_consecutive_errors = 5  # 連續錯誤閾值，超過此值將重新連接
+        self.connection_start_time = None  # 記錄連接建立時間
+        self.max_connection_age = 12 * 3600  # 連接最大存活時間（12小時）
+        self.last_health_check = 0  # 上次健康檢查時間
 
     def sign_parameters(self, params: Dict[str, Any]) -> str:
         """
@@ -260,6 +267,9 @@ class BinanceWebSocketClient:
             )
             
             self.connected = True
+            # 記錄連接建立時間
+            self.connection_start_time = time.time()
+            self.consecutive_errors = 0  # 重置錯誤計數
             logger.info("WebSocket 連接成功")
             
             # 初始化同步鎖，用於防止多個協程同時接收消息
@@ -474,9 +484,15 @@ class BinanceWebSocketClient:
             
             while not self.closed and self.ws is not None:
                 try:
+                    # 檢查連接是否需要預防性重建
+                    await self._check_connection_health()
+                    
                     # 使用鎖確保只有一個協程在等待消息
                     async with self.recv_lock:
                         message = await self.ws.recv()
+                    
+                    # 成功接收消息，重置連續錯誤計數
+                    self.consecutive_errors = 0
                     
                     # 解析消息
                     try:
@@ -512,9 +528,62 @@ class BinanceWebSocketClient:
                 except Exception as e:
                     if self.closed:
                         break
-                    logger.error(f"處理 WebSocket 響應時出錯: {str(e)}")
-                    # 等待一段時間再繼續
-                    await asyncio.sleep(1)
+                        
+                    error_msg = str(e)
+                    logger.error(f"處理 WebSocket 響應時出錯: {error_msg}")
+                    
+                    # 增加連續錯誤計數
+                    self.consecutive_errors += 1
+                    
+                    # 識別連接問題的特定錯誤
+                    connection_error = False
+                    if "no close frame received or sent" in error_msg:
+                        logger.warning(f"檢測到無關閉幀錯誤 (第 {self.consecutive_errors} 次)")
+                        connection_error = True
+                    elif "connection is closed" in error_msg.lower() or "not connected" in error_msg.lower():
+                        logger.warning(f"檢測到連接已關閉錯誤 (第 {self.consecutive_errors} 次)")
+                        connection_error = True
+                    elif "cancelled" in error_msg.lower() or "timeout" in error_msg.lower():
+                        logger.warning(f"檢測到取消或超時錯誤 (第 {self.consecutive_errors} 次)")
+                        connection_error = True
+                    
+                    # 連續錯誤超過閾值或連接問題，嘗試主動重連
+                    if (self.consecutive_errors >= self.max_consecutive_errors) or connection_error:
+                        logger.warning(f"連續錯誤達到閾值 ({self.consecutive_errors}/{self.max_consecutive_errors}) 或檢測到連接錯誤，觸發重新連接")
+                        
+                        # 如果自己不在重連過程中，發信號通知需要重新連接
+                        if self.connected and self.ws is not None:
+                            logger.info("主動關閉問題連接並嘗試重新連接")
+                            self.connected = False
+                            try:
+                                # 使用指數退避等待時間
+                                wait_time = min(2 ** (self.consecutive_errors - 1), 30)
+                                logger.info(f"等待 {wait_time} 秒後重新連接")
+                                await asyncio.sleep(wait_time)
+                                
+                                # 關閉當前問題連接
+                                try:
+                                    await self.ws.close(code=1006, reason="檢測到連接錯誤，主動關閉")
+                                except:
+                                    pass  # 忽略關閉時的錯誤
+                                
+                                self.ws = None
+                                
+                                # 嘗試重新連接
+                                connected = await self.connect()
+                                if connected:
+                                    logger.info("成功重新連接")
+                                    self.consecutive_errors = 0
+                                else:
+                                    logger.error("重新連接失敗")
+                            except Exception as reconnect_error:
+                                logger.error(f"嘗試重新連接時出錯: {str(reconnect_error)}")
+                        break  # 跳出循環，響應處理器將終止並由_start_background_tasks重新啟動
+                    
+                    # 普通錯誤，等待後繼續嘗試
+                    wait_time = min(1 * self.consecutive_errors, 5)  # 隨著連續錯誤增加等待時間，但最多5秒
+                    logger.debug(f"等待 {wait_time} 秒後繼續")
+                    await asyncio.sleep(wait_time)
         except asyncio.CancelledError:
             logger.info("響應處理器被取消")
         except Exception as e:
@@ -522,6 +591,74 @@ class BinanceWebSocketClient:
         finally:
             logger.debug("響應處理器已停止")
     
+    async def _check_connection_health(self) -> None:
+        """
+        檢查連接健康狀態並實施預防性連接重建
+        
+        當連接存活時間超過預設閾值（默認12小時）時，主動重建連接，
+        以避免接近幣安的連接時間限制，並減少非正常斷開的風險。
+        
+        為了優化資源使用，此函數僅每5分鐘執行一次檢查。
+        """
+        current_time = time.time()
+        # 每5分鐘執行一次健康檢查，避免頻繁檢查
+        if current_time - self.last_health_check < 300:  # 300秒 = 5分鐘
+            return
+            
+        self.last_health_check = current_time
+        
+        # 如果連接時間未記錄，則記錄當前時間
+        if not self.connection_start_time:
+            self.connection_start_time = current_time
+            return
+            
+        # 計算連接已存活的時間
+        connection_age = current_time - self.connection_start_time
+        
+        # 減少日誌輸出 - 只在關鍵時刻記錄健康檢查信息
+        is_debug_mode = logger.getEffectiveLevel() <= logging.DEBUG
+        
+        # 如果連接存活時間超過預設閾值，主動重建連接
+        if connection_age > self.max_connection_age:
+            logger.info(f"連接已存活 {connection_age/3600:.2f} 小時，超過預設閾值 {self.max_connection_age/3600} 小時，開始預防性重建")
+            
+            try:
+                # 先嘗試正常斷開當前連接
+                old_connection = self.ws
+                self.connected = False
+                self.ws = None
+                
+                if old_connection:
+                    try:
+                        await old_connection.close(code=1000, reason="預防性連接重建")
+                    except Exception as close_error:
+                        logger.warning(f"關閉舊連接時出錯: {str(close_error)}")
+                
+                # 等待一小段時間確保連接完全關閉
+                await asyncio.sleep(2)
+                
+                # 建立新連接
+                connected = await self.connect()
+                if connected:
+                    logger.info("預防性連接重建成功")
+                    # 確保其他響應處理器和ping任務已關閉
+                    self._start_background_tasks()
+                else:
+                    logger.error("預防性連接重建失敗")
+            except Exception as rebuild_error:
+                logger.error(f"預防性連接重建時出錯: {str(rebuild_error)}")
+        else:
+            # 定期記錄連接狀態但頻率更低（只有連接時間超過1小時且在調試模式下）
+            if is_debug_mode and connection_age > 3600:  # 1小時以上才記錄
+                # 計算距離需要重建的時間
+                hours_until_rebuild = (self.max_connection_age - connection_age) / 3600
+                if hours_until_rebuild < 1:  # 距離重建不到1小時
+                    logger.debug(f"連接健康狀態良好，已存活 {connection_age/3600:.2f} 小時，將在 {hours_until_rebuild:.2f} 小時後進行預防性重建")
+                elif connection_age > 3600 * 6:  # 存活超過6小時才記錄
+                    # 每隔6小時記錄一次長時間連接的狀態
+                    if int(connection_age / 3600) % 6 == 0:
+                        logger.debug(f"連接長時間保持活躍，已存活 {connection_age/3600:.2f} 小時，運行正常")
+
     async def get_account_info(self) -> Dict[str, Any]:
         """
         通過 WebSocket 獲取U本位合約賬戶信息

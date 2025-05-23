@@ -186,7 +186,9 @@ const logout = () => {
   top: 0;
   bottom: 0;
   z-index: 50;
-  transition: width 0.3s ease, transform 0.3s ease;
+  transition: width 0.3s ease, transform 0.3s ease, 
+              background-color 0.3s ease, color 0.3s ease, 
+              border-color 0.3s ease, box-shadow 0.3s ease;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -206,6 +208,7 @@ const logout = () => {
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--text-tertiary) transparent;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 .sidebar-content::-webkit-scrollbar {
@@ -219,6 +222,7 @@ const logout = () => {
 .sidebar-content::-webkit-scrollbar-thumb {
   background-color: var(--text-tertiary);
   border-radius: 3px;
+  transition: background-color 0.3s ease;
 }
 
 .sidebar-menu {
@@ -234,7 +238,7 @@ const logout = () => {
   color: var(--text-primary);
   text-decoration: none;
   border-radius: 0 24px 24px 0;
-  transition: background-color 0.2s ease;
+  transition: all 0.3s ease;
   margin-bottom: 4px;
   margin-right: 12px;
 }
@@ -257,6 +261,7 @@ const logout = () => {
   align-items: center;
   justify-content: center;
   color: inherit;
+  transition: color 0.3s ease;
 }
 
 .menu-text {
@@ -264,12 +269,13 @@ const logout = () => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.3s ease, color 0.3s ease;
 }
 
 .sidebar-section {
   margin-top: var(--spacing-lg);
   margin-bottom: var(--spacing-md);
+  transition: color 0.3s ease, background-color 0.3s ease;
 }
 
 .section-title {
@@ -280,7 +286,7 @@ const logout = () => {
   color: var(--text-tertiary);
   text-transform: uppercase;
   letter-spacing: 1px;
-  transition: opacity var(--transition-normal) ease;
+  transition: opacity 0.3s ease, color 0.3s ease;
 }
 
 .sidebar.sidebar-collapsed .section-title {
@@ -291,14 +297,17 @@ const logout = () => {
   margin-top: auto;
   border-top: 1px solid var(--border-color);
   padding-top: var(--spacing-md);
+  transition: border-color 0.3s ease, background-color 0.3s ease;
 }
 
 .logout {
   color: var(--danger-color);
+  transition: all 0.3s ease;
 }
 
 .logout .menu-icon {
   color: var(--danger-color);
+  transition: color 0.3s ease;
 }
 
 .logout:hover {
@@ -314,6 +323,9 @@ const logout = () => {
   transform: translateX(-100%);
   width: 280px;
   box-shadow: var(--box-shadow-lg);
+  transition: transform 0.3s ease, width 0.3s ease, 
+              background-color 0.3s ease, color 0.3s ease,
+              box-shadow 0.3s ease, border-color 0.3s ease;
 }
 
 .sidebar.mobile.visible {
@@ -325,6 +337,9 @@ const logout = () => {
     transform: translateX(-100%);
     box-shadow: var(--box-shadow-lg);
     width: 280px;
+    transition: transform 0.3s ease, width 0.3s ease,
+                background-color 0.3s ease, color 0.3s ease,
+                box-shadow 0.3s ease, border-color 0.3s ease;
   }
 
   .sidebar.visible {
@@ -353,7 +368,9 @@ const logout = () => {
 
 /* 侧边栏展开/收起动画 */
 .sidebar {
-  transition: width 0.3s ease, transform 0.3s ease;
+  transition: width 0.3s ease, transform 0.3s ease,
+              background-color 0.3s ease, color 0.3s ease,
+              border-color 0.3s ease, box-shadow 0.3s ease;
 }
 
 .sidebar-collapsed {
@@ -363,7 +380,8 @@ const logout = () => {
 /* 侧边栏显示/隐藏动画 */
 .sidebar-enter-active,
 .sidebar-leave-active {
-  transition: transform 0.3s ease, opacity 0.3s ease;
+  transition: transform 0.3s ease, opacity 0.3s ease, 
+              background-color 0.3s ease, color 0.3s ease;
 }
 
 .sidebar-enter-from,
@@ -374,7 +392,7 @@ const logout = () => {
 
 /* 菜单项悬停动画 */
 .sidebar-item {
-  transition: all 0.2s ease;
+  transition: all 0.3s ease;
 }
 
 .sidebar-item:hover {
@@ -388,7 +406,7 @@ const logout = () => {
 
 /* 图标旋转动画 */
 .collapse-icon {
-  transition: transform 0.3s ease;
+  transition: transform 0.3s ease, color 0.3s ease;
 }
 
 .sidebar-collapsed .collapse-icon {

@@ -119,22 +119,34 @@ async def get_or_create_ws_client(api_key, api_secret, exchange="binance", testn
     return client, True
 
 # 新增心跳維護函數，用於長連接保持
-async def _maintain_client_heartbeat(client, cache_key, heartbeat_interval=30):
+async def _maintain_client_heartbeat(client, cache_key, heartbeat_interval=300):  # 從30秒改為300秒(5分鐘)
     """
     維護客戶端心跳，確保長連接不斷開
     
     根據幣安文檔，服務器會每3分鐘發送一次ping frame，客戶端只需回應pong即可。
     本函數監控連接狀態並主動發送定期ping，確保WebSocket連接保持活躍。
+    只需要定期檢查確保連線維持即可，無需頻繁檢查。
     
     Args:
         client: WebSocket客戶端
         cache_key: 緩存鍵
-        heartbeat_interval: 心跳檢查間隔（秒）
+        heartbeat_interval: 心跳檢查間隔（秒），默認300秒(5分鐘)
     """
     try:
         max_reconnect_attempts = 5  # 最大重連嘗試次數
         reconnect_attempts = 0  # 當前重連嘗試次數
         backoff_multiplier = 1.5  # 重連間隔倍增因子
+        
+        # 連接健康管理參數
+        max_connection_age = 20 * 3600  # 連接最大存活時間（20小時）
+        last_health_check = time.time()
+        connection_start_time = time.time()  # 初始化連接開始時間
+        
+        # 檢查連接狀態的間隔
+        idle_check_interval = heartbeat_interval  # 閒置連接檢查間隔: 5分鐘
+        active_check_interval = 60  # 活躍連接檢查間隔: 1分鐘（僅用於最近使用的連接）
+        
+        logger.info(f"[AccountWS] 啟動心跳維護任務 - key:{cache_key}，閒置檢查間隔: {heartbeat_interval}秒")
         
         while cache_key in ws_clients:
             # 檢查客戶端是否已從緩存中移除
@@ -142,17 +154,81 @@ async def _maintain_client_heartbeat(client, cache_key, heartbeat_interval=30):
                 logger.debug(f"[AccountWS] 客戶端已從緩存中移除，停止心跳監控 - key:{cache_key}")
                 break
                 
-            # 定期檢查連接狀態並發送心跳
+            # 獲取當前時間
             current_time = time.time()
+            
+            # 根據連接活躍度調整檢查間隔
+            check_interval = idle_check_interval  # 默認使用閒置檢查間隔
+            
+            if hasattr(client, 'last_activity_time'):
+                idle_time = current_time - client.last_activity_time
+                # 如果連接最近活躍（過去10分鐘內有活動），使用更短的檢查間隔
+                if idle_time < 600:  # 10分鐘內有活動的連接
+                    check_interval = active_check_interval
+            
+            # 健康檢查 - 僅在間隔足夠長時執行（5分鐘一次）
+            if current_time - last_health_check > 300:  # 每5分鐘檢查一次
+                last_health_check = current_time
+                
+                # 檢查連接是否超過最大存活時間
+                connection_age = current_time - connection_start_time
+                if connection_age > max_connection_age:
+                    logger.info(f"[AccountWS] 連接已存活 {connection_age/3600:.2f} 小時，超過預設閾值 {max_connection_age/3600} 小時，進行預防性重建 - key:{cache_key}")
+                    
+                    try:
+                        # 清理現有連接
+                        old_client = ws_clients.get(cache_key)
+                        
+                        # 創建新的連接
+                        from_api_key = getattr(old_client, 'api_key', None)
+                        from_api_secret = getattr(old_client, 'api_secret', None)
+                        
+                        if from_api_key and from_api_secret:
+                            # 斷開舊連接但不從緩存中移除
+                            try:
+                                await old_client.disconnect()
+                                logger.info(f"[AccountWS] 已斷開舊連接，準備重建 - key:{cache_key}")
+                            except Exception as disc_err:
+                                logger.warning(f"[AccountWS] 斷開舊連接時出錯: {str(disc_err)}")
+                            
+                            # 創建新連接
+                            logger.info(f"[AccountWS] 開始預防性重建連接 - key:{cache_key}")
+                            new_client, is_new = await get_or_create_ws_client(
+                                from_api_key, from_api_secret, exchange="binance", testnet=False, user_id=cache_key.split(':')[0] if ':' in cache_key else None
+                            )
+                            
+                            if is_new and new_client.is_connected():
+                                # 更新緩存
+                                ws_clients[cache_key] = new_client
+                                # 更新連接開始時間
+                                connection_start_time = time.time()
+                                logger.info(f"[AccountWS] 預防性重建連接成功 - key:{cache_key}")
+                                reconnect_attempts = 0  # 重置重連計數
+                            else:
+                                logger.error(f"[AccountWS] 預防性重建連接失敗 - key:{cache_key}")
+                        else:
+                            logger.warning(f"[AccountWS] 無法獲取API密鑰，無法進行預防性重建 - key:{cache_key}")
+                    except Exception as e:
+                        logger.error(f"[AccountWS] 預防性重建連接時出錯: {str(e)}")
+                else:
+                    # 只有在連接超過1小時時才記錄存活信息，減少日誌量
+                    if connection_age > 3600:  # 1小時
+                        logger.debug(f"[AccountWS] 連接存活 {connection_age/3600:.2f} 小時，運行正常 - key:{cache_key}")
+            
+            # 連接狀態檢查 - 根據動態間隔執行
             if hasattr(client, 'last_activity_time'):
                 idle_time = current_time - client.last_activity_time
                 # 檢查上次活動時間，如果超過一定時間沒有活動，檢查連接狀態
-                if idle_time > heartbeat_interval:
+                if idle_time > check_interval:
                     logger.debug(f"[AccountWS] 檢查連接狀態 - key:{cache_key}, 閒置時間:{idle_time:.1f}秒")
                     try:
                         # 檢查連接狀態
                         connection_status = client.is_connected()
-                        logger.debug(f"[AccountWS] 連接狀態檢查結果: {connection_status} - key:{cache_key}")
+                        
+                        # 只有在非調試模式時才記錄冗長的連接狀態信息
+                        is_debug_mode = logger.getEffectiveLevel() <= logging.DEBUG
+                        if is_debug_mode:
+                            logger.debug(f"[AccountWS] 連接狀態檢查結果: {connection_status} - key:{cache_key}")
                         
                         if not connection_status:
                             # 連接可能斷開 - 添加雙重檢查機制
@@ -169,39 +245,83 @@ async def _maintain_client_heartbeat(client, cache_key, heartbeat_interval=30):
                                 
                                 # 如果超過最大重連嘗試次數，不再嘗試重連
                                 if reconnect_attempts >= max_reconnect_attempts:
-                                    logger.warning(f"[AccountWS] 超過最大重連嘗試次數，暫時放棄重連 - key:{cache_key}")
-                                    reconnect_attempts = 0  # 重置重連計數，允許將來再次嘗試
-                                    # 不從緩存中移除，只記錄狀態
-                                    await asyncio.sleep(heartbeat_interval * backoff_multiplier)  # 增加等待時間
+                                    logger.warning(f"[AccountWS] 超過最大重連嘗試次數，放棄當前連接並嘗試完全重建 - key:{cache_key}")
+                                    
+                                    # 完全重建連接而不是繼續嘗試
+                                    try:
+                                        # 從緩存中獲取客戶端
+                                        problem_client = ws_clients.get(cache_key)
+                                        if problem_client:
+                                            # 獲取API密鑰信息
+                                            from_api_key = getattr(problem_client, 'api_key', None)
+                                            from_api_secret = getattr(problem_client, 'api_secret', None)
+                                            
+                                            if from_api_key and from_api_secret:
+                                                # 先從緩存中移除
+                                                try:
+                                                    await problem_client.disconnect()
+                                                except:
+                                                    pass
+                                                
+                                                if cache_key in ws_clients:
+                                                    del ws_clients[cache_key]
+                                                
+                                                # 創建全新連接
+                                                logger.info(f"[AccountWS] 嘗試重新創建WebSocket客戶端 - key:{cache_key}")
+                                                new_client, is_new = await get_or_create_ws_client(
+                                                    from_api_key, from_api_secret, exchange="binance", testnet=False, 
+                                                    user_id=cache_key.split(':')[0] if ':' in cache_key else None
+                                                )
+                                                
+                                                if is_new and new_client.is_connected():
+                                                    # 更新緩存
+                                                    ws_clients[cache_key] = new_client
+                                                    # 更新連接開始時間
+                                                    connection_start_time = time.time()
+                                                    reconnect_attempts = 0  # 重置重連計數
+                                                    logger.info(f"[AccountWS] 完全重建連接成功 - key:{cache_key}")
+                                                    # 繼續處理後續的心跳檢查
+                                                    await asyncio.sleep(check_interval)
+                                                    continue
+                                            else:
+                                                logger.error(f"[AccountWS] 無法從客戶端獲取API密鑰，無法重建連接 - key:{cache_key}")
+                                        else:
+                                            logger.error(f"[AccountWS] 無法從緩存中獲取客戶端 - key:{cache_key}")
+                                    except Exception as rebuilding_error:
+                                        logger.error(f"[AccountWS] 重建連接時出錯: {str(rebuilding_error)}")
+                                    
+                                    # 如果重建失敗，重置嘗試次數並等待下一輪
+                                    reconnect_attempts = 0
+                                    await asyncio.sleep(check_interval * backoff_multiplier)
                                     continue
                                 
-                                # 嘗試重連
-                                # BinanceWebSocketClient 沒有 reconnect 方法，使用 connect 替代
+                                # 嘗試使用客戶端自身的重連機制
                                 logger.info(f"[AccountWS] 嘗試重新連接 - key:{cache_key}")
                                 try:
-                                    # 先嘗試斷開舊連接
-                                    try:
-                                        await client.disconnect()
-                                        logger.debug(f"[AccountWS] 已斷開舊連接，準備重新連接 - key:{cache_key}")
-                                    except Exception as disconnect_error:
-                                        # 斷開連接出錯可能是因為已經斷開
-                                        logger.warning(f"[AccountWS] 斷開舊連接時出錯 - key:{cache_key}, error:{str(disconnect_error)}")
-                                    
-                                    # 重新連接
-                                    reconnected = await client.connect()
+                                    # 首先檢查是否有內部的重連機制 (BinanceWebSocketClient.connect)
+                                    if hasattr(client, 'connect') and callable(getattr(client, 'connect')):
+                                        reconnected = await client.connect()
+                                        if reconnected:
+                                            logger.info(f"[AccountWS] 使用客戶端內部機制重新連接成功 - key:{cache_key}")
+                                            client.last_activity_time = time.time()
+                                            connection_start_time = time.time()  # 重置連接開始時間
+                                            reconnect_attempts = 0  # 重置重連計數
+                                            continue
+                                        else:
+                                            logger.error(f"[AccountWS] 重新連接失敗 - key:{cache_key}")
+                                            reconnect_attempts += 1  # 增加重連嘗試次數
+                                    else:
+                                        logger.warning(f"[AccountWS] 客戶端沒有可用的connect方法 - key:{cache_key}")
+                                        reconnect_attempts += 1
                                 except Exception as connect_error:
                                     logger.error(f"[AccountWS] 重新連接操作失敗 - key:{cache_key}, error:{str(connect_error)}")
-                                    reconnected = False
-                                if reconnected:
-                                    logger.info(f"[AccountWS] 重新連接成功 - key:{cache_key}")
-                                    client.last_activity_time = time.time()
-                                    reconnect_attempts = 0  # 重置重連計數
-                                else:
-                                    logger.error(f"[AccountWS] 重新連接失敗 - key:{cache_key}")
                                     reconnect_attempts += 1  # 增加重連嘗試次數
-                                    # 使用指數退避策略增加等待時間
-                                    await asyncio.sleep(heartbeat_interval * (backoff_multiplier ** reconnect_attempts))
-                                    continue
+                                
+                                # 使用指數退避策略增加等待時間
+                                backoff_time = check_interval * (backoff_multiplier ** reconnect_attempts)
+                                logger.info(f"[AccountWS] 等待 {backoff_time:.1f} 秒後再次檢查連接狀態 - key:{cache_key}")
+                                await asyncio.sleep(backoff_time)
+                                continue
                             else:
                                 # 假陽性，連接實際上是正常的
                                 logger.info(f"[AccountWS] 連接狀態假陽性：第一次檢查報告斷開，但第二次檢查正常 - key:{cache_key}")
@@ -209,30 +329,42 @@ async def _maintain_client_heartbeat(client, cache_key, heartbeat_interval=30):
                                 reconnect_attempts = 0
                         else:
                             # 連接正常，更新最後活動時間
-                            # 注意：我們不調用 ping() 方法，因為 BinanceWebSocketClient 沒有此方法
-                            # 幣安 WebSocket 服務器每3分鐘會發送 ping frame，客戶端會自動響應
-                            # 所以我們只需要更新最後活動時間即可
                             client.last_activity_time = time.time()
                             reconnect_attempts = 0  # 重置重連計數
-                            logger.debug(f"[AccountWS] 連接正常，更新最後活動時間 - key:{cache_key}")
+                            
+                            # 只在調試模式下記錄常規的連接正常訊息
+                            if is_debug_mode:
+                                logger.debug(f"[AccountWS] 連接正常，更新最後活動時間 - key:{cache_key}")
+                            
+                            # 檢測是否支持ping/pong
+                            try:
+                                if hasattr(client.ws, 'pong') and callable(getattr(client.ws, 'pong')):
+                                    # 每10分鐘發送一次ping以確保連接活躍
+                                    if idle_time > 600:  # 10分鐘
+                                        await client.ws.pong()
+                                        logger.debug(f"[AccountWS] 發送pong幀以保持連接 - key:{cache_key}")
+                            except Exception as ping_error:
+                                logger.warning(f"[AccountWS] 發送ping/pong時出錯: {str(ping_error)}")
                     except Exception as e:
                         logger.error(f"[AccountWS] 檢查連接狀態出錯 - key:{cache_key}, error:{str(e)}")
                         # 增加重連嘗試次數
                         reconnect_attempts += 1
                         
                         # 使用指數退避策略
-                        reconnect_wait = heartbeat_interval * (backoff_multiplier ** reconnect_attempts) 
+                        reconnect_wait = check_interval * (backoff_multiplier ** reconnect_attempts) 
                         logger.info(f"[AccountWS] 將在 {reconnect_wait:.1f} 秒後嘗試重新連接 - key:{cache_key}")
                         await asyncio.sleep(reconnect_wait)
                         continue
             
             # 等待下一次檢查
-            await asyncio.sleep(heartbeat_interval)
+            await asyncio.sleep(check_interval)
     except asyncio.CancelledError:
         logger.info(f"[AccountWS] 心跳維護任務被取消 - key:{cache_key}")
     except Exception as e:
         # 捕獲並記錄任何未處理的異常
         logger.error(f"[AccountWS] 心跳維護任務發生未預期錯誤: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
     finally:
         # 無論如何確保在任務結束時記錄
         logger.info(f"[AccountWS] 心跳維護任務結束 - key:{cache_key}")
@@ -405,20 +537,31 @@ async def futures_account_websocket(
                 from ...core.security import decrypt_api_key, clean_api_key
                 
                 # 記錄加密API密鑰的長度（不記錄實際內容以保護安全）
-                encrypted_key_length = len(api_key.api_key) if api_key.api_key else 0
-                encrypted_secret_length = len(api_key.api_secret) if api_key.api_secret else 0
-                logger.debug(f"[AccountWS] 加密的API密鑰長度: {encrypted_key_length}, 加密的API密鑰密碼長度: {encrypted_secret_length}")
+                encrypted_key_length = len(api_key.ed25519_key) if api_key.ed25519_key else 0
+                encrypted_secret_length = len(api_key.ed25519_secret) if api_key.ed25519_secret else 0
+                logger.debug(f"[AccountWS] 加密的Ed25519 API密鑰長度: {encrypted_key_length}, 加密的Ed25519 API密鑰密碼長度: {encrypted_secret_length}")
                 
-                # 解密API密鑰
-                decrypted_key = decrypt_api_key(api_key.api_key)
-                decrypted_secret = decrypt_api_key(api_key.api_secret)
+                # 解密Ed25519 API密鑰
+                decrypted_key = decrypt_api_key(api_key.ed25519_key)
+                decrypted_secret = decrypt_api_key(api_key.ed25519_secret)
                 
                 # 檢查解密結果
                 if not decrypted_key or not decrypted_secret:
-                    error_msg = "API密鑰解密失敗"
+                    error_msg = "Ed25519 API密鑰解密失敗"
                     logger.error(f"[AccountWS] {error_msg}")
-                    await websocket.send_json({"success": False, "message": error_msg})
-                    return
+                    
+                    # 嘗試使用HMAC作為後備方案
+                    logger.info(f"[AccountWS] 嘗試使用HMAC-SHA256 API密鑰作為後備")
+                    decrypted_key = decrypt_api_key(api_key.api_key)
+                    decrypted_secret = decrypt_api_key(api_key.api_secret)
+                    
+                    if not decrypted_key or not decrypted_secret:
+                        error_msg = "API密鑰解密失敗（Ed25519和HMAC均失敗）"
+                        logger.error(f"[AccountWS] {error_msg}")
+                        await websocket.send_json({"success": False, "message": error_msg})
+                        return
+                    
+                    logger.info(f"[AccountWS] 成功使用HMAC-SHA256 API密鑰作為後備方案")
                 
                 # 確保API密鑰格式正確
                 api_key_data = {

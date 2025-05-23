@@ -362,28 +362,3 @@ async def update_user_tag(
     
     return user
 
-# 獲取通知統計資訊的端點
-@router.get("/notifications/stats", response_model=dict)
-async def get_notifications_stats(
-    db: Session = Depends(get_db),
-    current_admin: User = Depends(get_current_admin_user)
-) -> Any:
-    """
-    獲取通知統計資訊，包括總數量和全局通知數量
-    
-    提供系統通知相關的統計指標，幫助管理員了解通知系統的使用情況。
-    返回通知總數量以及其中的全局通知數量。
-    
-    返回:
-        包含total和global計數的字典
-    """
-    # 查詢所有通知數量
-    total_notifications = db.query(Notification).count()
-    
-    # 查詢全局通知數量
-    global_notifications = db.query(Notification).filter(Notification.is_global == True).count()
-    
-    return {
-        "total": total_notifications,
-        "global": global_notifications
-    } 

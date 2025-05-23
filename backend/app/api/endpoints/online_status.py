@@ -211,3 +211,14 @@ async def get_online_stats(
     stats = online_status_manager.get_stats()
     
     return stats 
+
+@router.get("/public-stats", response_model=Dict[str, Any])
+async def get_public_online_stats(
+    current_user: User = Depends(get_current_user),
+):
+    """获取公开的在线状态统计信息，供所有用户查看"""
+    
+    # 只返回必要的統計信息：在線用戶總數
+    return {
+        "total_online": online_status_manager.get_total_online_users()
+    } 

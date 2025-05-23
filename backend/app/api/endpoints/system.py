@@ -12,7 +12,7 @@ import logging
 
 from ...db.database import get_db
 from ...db.models import User, get_china_time
-from ...core.security import get_current_admin_user
+from ...core.security import get_current_admin_user, get_current_user
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -268,3 +268,55 @@ async def get_user_login_history(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"獲取用戶 {user_id} 的登入歷史失敗"
         ) 
+
+@router.get("/public-status")
+async def get_public_server_status(
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """
+    獲取面向普通用戶的簡化伺服器狀態資訊
+    
+    此端點提供系統運行狀態的簡化概覽，包含：
+    - 服務器狀態（運行中/維護中）
+    - CPU使用率（用於判斷系統是否流暢）
+    - 系統版本信息
+    
+    所有已登入用戶均可訪問。
+    """
+    try:
+        # CPU使用率
+        cpu_percent = psutil.cpu_percent(interval=0.5)
+        
+        # 系統資訊 (簡化版本)
+        system_info = {
+            "system": platform.system(),
+            "version": platform.version(),
+        }
+        
+        # 判斷系統流暢度
+        performance_status = "excellent"  # 默認為優秀
+        if cpu_percent >= 90:
+            performance_status = "poor"
+        elif cpu_percent >= 70:
+            performance_status = "fair"
+        elif cpu_percent >= 40:
+            performance_status = "good"
+        
+        return {
+            "status": "running",  # 如果服務正在響應請求，則為運行中
+            "cpu_percent": cpu_percent,
+            "performance_status": performance_status,  # 性能狀態：excellent, good, fair, poor
+            "system": system_info
+        }
+    except Exception as e:
+        logger.error(f"Error getting public server status: {str(e)}", exc_info=True)
+        # 即使出錯也返回一個基本狀態
+        return {
+            "status": "running",
+            "cpu_percent": 0,
+            "performance_status": "unknown",
+            "system": {
+                "system": "unknown",
+                "version": "unknown"
+            }
+        } 
