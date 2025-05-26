@@ -24,6 +24,12 @@ from fastapi.security import OAuth2PasswordBearer  # 導入OAuth2密碼授權機
 from fastapi.responses import JSONResponse  # 導入JSON響應類
 from websockets.exceptions import ConnectionClosed, ConnectionClosedOK, ConnectionClosedError  # 導入WebSocket連接相關異常
 from ...services.market_data import market_data_service  # 導入市場數據服務
+import os  # 導入操作系統模組，用於環境變數
+from bs4 import BeautifulSoup  # 導入BeautifulSoup，用於解析HTML
+from dotenv import load_dotenv  # 導入dotenv以載入環境變數
+
+# 載入環境變數
+load_dotenv()
 
 # 設置日誌記錄
 logger = logging.getLogger("market_api")  # 建立專屬於市場API的日誌記錄器
@@ -1796,3 +1802,482 @@ async def websocket_ticker(websocket: WebSocket, symbol: str):
             await data_task
         except asyncio.CancelledError:
             pass 
+
+# 新增CoinMarketCap API配置
+COINMARKETCAP_API_KEY = os.getenv("COINMARKETCAP_API_KEY", "")
+COINMARKETCAP_API_URL = "https://pro-api.coinmarketcap.com"
+
+# 新增獲取全球加密貨幣市場數據端點
+@router.get("/global-metrics", response_model=Dict[str, Any])
+async def get_global_metrics():
+    """
+    獲取全球加密貨幣市場指標數據
+    
+    此端點從CoinMarketCap獲取全球加密貨幣市場指標數據，包括:
+    - 總市值
+    - 24小時交易量
+    - 比特幣佔比
+    - 以太坊佔比
+    - 活躍加密貨幣數量
+    - 活躍市場數量
+    
+    同時，會從alternative.me網站爬取恐懼與貪婪指數，提供市場情緒指標。
+    
+    返回:
+        包含全球市場指標和恐懼與貪婪指數的JSON物件
+    """
+    try:
+        # 獲取CoinMarketCap全球指標數據
+        global_metrics = await get_coinmarketcap_global_metrics()
+        
+        # 獲取恐懼與貪婪指數
+        fear_greed_data = await get_fear_greed_index()
+        
+        # 合併數據
+        result = {
+            "success": True,
+            "timestamp": datetime.now().isoformat(),
+            "global_metrics": global_metrics,
+            "fear_greed_index": fear_greed_data
+        }
+        
+        return result
+    except Exception as e:
+        logger.error(f"獲取全球市場數據失敗: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"獲取全球市場數據失敗: {str(e)}")
+
+async def get_coinmarketcap_global_metrics() -> Dict[str, Any]:
+    """
+    從CoinMarketCap API獲取全球加密貨幣市場指標
+    
+    調用CoinMarketCap的v1/global-metrics/quotes/latest端點，獲取全球加密貨幣市場指標數據
+    
+    返回:
+        Dict[str, Any]: 包含全球加密貨幣市場指標數據的字典
+    """
+    # 直接從環境變數中獲取API金鑰
+    api_key = os.getenv("COINMARKETCAP_API_KEY", "")
+    
+    # 記錄API金鑰是否成功載入的日誌
+    if api_key:
+        logger.info(f"已成功讀取 CoinMarketCap API 金鑰 (前4字元: {api_key[:4]}...)")
+    else:
+        logger.warning("未找到 CoinMarketCap API 金鑰環境變數，將使用模擬數據")
+    
+    # 如果API密鑰為空，使用模擬數據
+    if not api_key:
+        logger.warning("缺少CoinMarketCap API密鑰，使用模擬數據")
+        # 返回模擬數據，如果未設置API密鑰
+        return {
+            "total_market_cap_usd": 2500000000000,
+            "total_volume_24h_usd": 150000000000,
+            "bitcoin_dominance": 48.5,
+            "ethereum_dominance": 18.7,
+            "active_cryptocurrencies": 10000,
+            "active_exchanges": 500,
+            "last_updated": datetime.now().isoformat(),
+            "note": "模擬數據 - 未配置CoinMarketCap API密鑰"
+        }
+    
+    url = f"{COINMARKETCAP_API_URL}/v1/global-metrics/quotes/latest"
+    headers = {
+        "X-CMC_PRO_API_KEY": api_key,
+        "Accept": "application/json"
+    }
+    
+    try:
+        logger.info(f"正在發送請求到 CoinMarketCap API: {url}")
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            
+            # 檢查API響應是否成功
+            if "data" not in data:
+                error_message = data.get("status", {}).get("error_message", "Unknown error")
+                logger.error(f"CoinMarketCap API返回錯誤: {error_message}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"獲取CoinMarketCap數據失敗: {error_message}"
+                )
+            
+            # 處理並格式化數據
+            quotes = data["data"]["quote"]["USD"]
+            result = {
+                "total_market_cap_usd": quotes["total_market_cap"],
+                "total_volume_24h_usd": quotes["total_volume_24h"],
+                "bitcoin_dominance": data["data"]["btc_dominance"],
+                "ethereum_dominance": data["data"]["eth_dominance"],
+                "active_cryptocurrencies": data["data"]["active_cryptocurrencies"],
+                "active_exchanges": data["data"]["active_exchanges"],
+                "last_updated": data["data"]["last_updated"],
+            }
+            
+            logger.info("成功獲取CoinMarketCap全球市場數據")
+            return result
+    
+    except httpx.HTTPError as e:
+        logger.error(f"獲取CoinMarketCap全球指標數據時HTTP錯誤: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"獲取CoinMarketCap數據時發生HTTP錯誤: {str(e)}")
+    except Exception as e:
+        logger.error(f"獲取CoinMarketCap全球指標數據時發生錯誤: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"獲取CoinMarketCap數據時發生錯誤: {str(e)}")
+
+async def get_fear_greed_index() -> Dict[str, Any]:
+    """
+    從Alternative.me獲取加密貨幣恐懼與貪婪指數
+    
+    優先使用官方API獲取數據，如果失敗則嘗試網頁抓取和備用來源
+    
+    返回:
+        Dict[str, Any]: 包含恐懼與貪婪指數數據的字典
+    """
+    try:
+        # 定義多個可能的數據源
+        sources = [
+            # 優先使用Alternative.me官方API
+            {
+                "type": "api",
+                "name": "Alternative.me API",
+                "url": "https://api.alternative.me/fng/",
+                "headers": {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "application/json"
+                }
+            },
+            # 備用: Alternative.me網頁抓取
+            {
+                "type": "scrape",
+                "name": "Alternative.me Website",
+                "url": "https://alternative.me/crypto/fear-and-greed-index/",
+                "headers": {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                    "Referer": "https://google.com",
+                }
+            },
+            # 備用: CNN資料
+            {
+                "type": "api",
+                "name": "CNN Fear & Greed",
+                "url": "https://production.dataviz.cnn.io/index/fearandgreed/graphdata",
+                "headers": {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                }
+            }
+        ]
+        
+        # 結果值，如果爬取失敗則提供預設值
+        fear_greed_value = 0
+        classification = "unknown"
+        historical_data = {}
+        success = False
+        error_messages = []
+        
+        # 1. 嘗試使用Alternative.me官方API
+        logger.info("正在使用Alternative.me官方API獲取恐懼與貪婪指數...")
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(sources[0]["url"], headers=sources[0]["headers"], params={"limit": "3"})
+                response.raise_for_status()
+                data = response.json()
+                
+                # 檢查API響應是否成功
+                if "data" in data and len(data["data"]) > 0:
+                    # 獲取最新數據
+                    current_data = data["data"][0]
+                    
+                    fear_greed_value = int(current_data.get("value", 0))
+                    classification = current_data.get("value_classification", "").lower().replace(" ", "-")
+                    logger.info(f"從官方API成功獲取恐懼與貪婪指數: {fear_greed_value} ({classification})")
+                    
+                    # 獲取歷史數據
+                    if len(data["data"]) > 1:
+                        historical_data["yesterday"] = int(data["data"][1].get("value", 0))
+                    
+                    if len(data["data"]) > 2:
+                        historical_data["last_week"] = int(data["data"][2].get("value", 0))
+                        
+                    # 額外請求獲取月度數據 (如果沒有在前面獲取到)
+                    if "last_month" not in historical_data:
+                        try:
+                            month_response = await client.get(sources[0]["url"], headers=sources[0]["headers"], params={"limit": "30"})
+                            month_response.raise_for_status()
+                            month_data = month_response.json()
+                            
+                            if "data" in month_data and len(month_data["data"]) >= 30:
+                                historical_data["last_month"] = int(month_data["data"][29].get("value", 0))
+                        except Exception as e:
+                            logger.warning(f"獲取月度歷史數據時出錯: {str(e)}")
+                    
+                    success = True
+                else:
+                    error_messages.append("API回應未包含預期的數據結構")
+                    logger.warning("Alternative.me API回應未包含預期的數據結構")
+        except Exception as e:
+            error_messages.append(f"Alternative.me API 獲取失敗: {str(e)}")
+            logger.error(f"從Alternative.me API獲取恐懼與貪婪指數失敗: {str(e)}")
+        
+        # 2. 如果API失敗，嘗試網頁抓取方法
+        if not success:
+            logger.info("API方法失敗，嘗試從Alternative.me網頁抓取恐懼與貪婪指數...")
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.get(sources[1]["url"], headers=sources[1]["headers"], follow_redirects=True)
+                    response.raise_for_status()
+                    html = response.text
+                    
+                    # 使用BeautifulSoup解析HTML
+                    soup = BeautifulSoup(html, 'html.parser')
+                    logger.debug(f"成功獲取Alternative.me頁面，HTML長度: {len(html)}字元")
+                    
+                    # 檢查新網頁結構
+                    now_section = soup.find("div", string="Now")
+                    if now_section:
+                        # 尋找 Now 後面的值
+                        greed_section = now_section.find_next("div")
+                        if greed_section and greed_section.text.strip():
+                            # 找到分類和值
+                            classification = greed_section.text.strip().lower()
+                            value_section = greed_section.find_next("div")
+                            if value_section and value_section.text.strip().isdigit():
+                                fear_greed_value = int(value_section.text.strip())
+                                success = True
+                                logger.info(f"成功從網頁新結構獲取恐懼與貪婪指數值: {fear_greed_value} ({classification})")
+                                
+                                # 獲取歷史數據
+                                historical_sections = {
+                                    "Yesterday": "yesterday",
+                                    "Last week": "last_week",
+                                    "Last month": "last_month"
+                                }
+                                
+                                for label, key in historical_sections.items():
+                                    section = soup.find("div", string=label)
+                                    if section:
+                                        # 跳過分類，直接獲取值
+                                        value_div = section.find_next("div")
+                                        if value_div:
+                                            value_div = value_div.find_next("div")
+                                            if value_div and value_div.text.strip().isdigit():
+                                                historical_data[key] = int(value_div.text.strip())
+                    
+                    # 如果新方法失敗，嘗試舊的選擇器
+                    if not success:
+                        # 嘗試各種選擇器
+                        selectors = [
+                            '.fng-circle .fng-value',
+                            '.fng-value',
+                            'div[class*="fng-circle"] div[class*="fng-value"]',
+                            'div.fng-circle',
+                        ]
+                        
+                        for selector in selectors:
+                            try:
+                                fear_greed_element = soup.select_one(selector)
+                                if fear_greed_element and fear_greed_element.text:
+                                    value_text = fear_greed_element.text.strip()
+                                    import re
+                                    number_match = re.search(r'\d+', value_text)
+                                    if number_match:
+                                        fear_greed_value = int(number_match.group())
+                                        logger.info(f"成功獲取恐懼與貪婪指數值: {fear_greed_value} (選擇器: {selector})")
+                                        success = True
+                                        break
+                            except Exception as e:
+                                logger.warning(f"使用選擇器 {selector} 提取數值時失敗: {str(e)}")
+                        
+                        # 嘗試從JavaScript變量提取
+                        if not success:
+                            try:
+                                logger.debug("嘗試從JavaScript變量中提取數據...")
+                                js_pattern = r'var\s+fng_value\s*=\s*(\d+)'
+                                js_match = re.search(js_pattern, html)
+                                if js_match:
+                                    fear_greed_value = int(js_match.group(1))
+                                    logger.info(f"從JavaScript變量成功獲取恐懼與貪婪指數: {fear_greed_value}")
+                                    success = True
+                            except Exception as e:
+                                logger.warning(f"從JavaScript提取恐懼與貪婪指數失敗: {str(e)}")
+                        
+                        # 如果成功獲取值，嘗試提取分類
+                        if success:
+                            try:
+                                classification_element = soup.select_one('.fng-circle')
+                                if classification_element:
+                                    classes = classification_element.get('class', [])
+                                    classification = next((cls for cls in classes if cls.startswith('fng-') and cls != 'fng-circle' and cls != 'fng-value'), 'unknown')
+                                    classification = classification.replace('fng-', '')
+                                
+                                # 根據值推斷分類
+                                if classification == 'unknown':
+                                    if fear_greed_value >= 90:
+                                        classification = "extreme-greed"
+                                    elif fear_greed_value >= 75:
+                                        classification = "greed"
+                                    elif fear_greed_value >= 55:
+                                        classification = "neutral-greed"
+                                    elif fear_greed_value >= 45:
+                                        classification = "neutral"
+                                    elif fear_greed_value >= 25:
+                                        classification = "neutral-fear"
+                                    elif fear_greed_value >= 10:
+                                        classification = "fear"
+                                    else:
+                                        classification = "extreme-fear"
+                            except Exception as e:
+                                logger.warning(f"提取恐懼與貪婪指數分類時出錯: {str(e)}")
+                            
+                            # 嘗試獲取歷史數據 (舊方法)
+                            if not historical_data:
+                                try:
+                                    timeframes = soup.select('.fng-verbiage')
+                                    for timeframe in timeframes:
+                                        period_text = timeframe.select_one('.gray')
+                                        if not period_text:
+                                            continue
+                                            
+                                        period_text_lower = period_text.text.lower()
+                                        value_element = timeframe.select_one('.fng-value')
+                                        if not value_element:
+                                            continue
+                                            
+                                        try:
+                                            value = int(value_element.text.strip())
+                                            
+                                            if "yesterday" in period_text_lower or "day" in period_text_lower:
+                                                historical_data["yesterday"] = value
+                                            elif "week" in period_text_lower:
+                                                historical_data["last_week"] = value
+                                            elif "month" in period_text_lower:
+                                                historical_data["last_month"] = value
+                                        except (ValueError, AttributeError):
+                                            continue
+                                except Exception as e:
+                                    logger.warning(f"提取恐懼與貪婪指數歷史數據時出錯: {str(e)}")
+            
+            except Exception as e:
+                error_messages.append(f"Alternative.me 網頁抓取失敗: {str(e)}")
+                logger.error(f"從Alternative.me網頁抓取恐懼與貪婪指數失敗: {str(e)}")
+        
+        # 3. 如果前兩個來源都失敗，嘗試CNN的備用資料源
+        if not success:
+            logger.info("嘗試從CNN獲取恐懼與貪婪指數...")
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.get(sources[2]["url"], headers=sources[2]["headers"])
+                    response.raise_for_status()
+                    data = response.json()
+                    
+                    # 檢查CNN數據格式
+                    if data and "fear_and_greed" in data and len(data["fear_and_greed"]) > 0 and "score" in data["fear_and_greed"][-1]:
+                        fear_greed_value = int(data["fear_and_greed"][-1]["score"])
+                        logger.info(f"從CNN API成功獲取恐懼與貪婪指數值: {fear_greed_value}")
+                        
+                        # 根據值推斷分類
+                        if fear_greed_value >= 80:
+                            classification = "extreme-greed"
+                        elif fear_greed_value >= 65:
+                            classification = "greed"
+                        elif fear_greed_value >= 50:
+                            classification = "neutral-greed"
+                        elif fear_greed_value >= 35:
+                            classification = "neutral"
+                        elif fear_greed_value >= 20:
+                            classification = "neutral-fear"
+                        elif fear_greed_value >= 10:
+                            classification = "fear"
+                        else:
+                            classification = "extreme-fear"
+                        
+                        success = True
+                        
+                        # 提取歷史數據
+                        if len(data["fear_and_greed"]) > 1:
+                            historical_data["yesterday"] = int(data["fear_and_greed"][-2]["score"])
+                        
+                        if len(data["fear_and_greed"]) > 7:
+                            historical_data["last_week"] = int(data["fear_and_greed"][-8]["score"])
+                            
+                        if len(data["fear_and_greed"]) > 30:
+                            historical_data["last_month"] = int(data["fear_and_greed"][-31]["score"])
+                    else:
+                        error_messages.append("CNN API回應未包含預期的數據結構")
+                        logger.warning("CNN API回應未包含預期的數據結構")
+            except Exception as e:
+                error_messages.append(f"CNN 數據提取失敗: {str(e)}")
+                logger.error(f"從CNN獲取恐懼與貪婪指數失敗: {str(e)}")
+        
+        # 4. 如果所有來源都失敗，使用模擬數據
+        if not success:
+            logger.warning(f"所有來源均獲取恐懼與貪婪指數失敗，使用模擬數據。錯誤: {error_messages}")
+            fear_greed_value = 45  # 假設中性值
+            classification = "neutral"
+            historical_data = {
+                "yesterday": 47,
+                "last_week": 50,
+                "last_month": 40
+            }
+        
+        # 格式化為易讀的分類
+        classification_map = {
+            "extreme-fear": "極度恐懼",
+            "fear": "恐懼",
+            "neutral-fear": "偏向恐懼",
+            "neutral": "中性",
+            "neutral-greed": "偏向貪婪",
+            "greed": "貪婪",
+            "extreme-greed": "極度貪婪",
+            "unknown": "未知"
+        }
+        readable_classification = classification_map.get(classification, "未知")
+        
+        # 構建結果
+        result = {
+            "value": fear_greed_value,
+            "classification": classification,
+            "readable_classification": readable_classification,
+            "timestamp": datetime.now().isoformat(),
+            "historical_data": historical_data,
+            "source": "alternative.me api" if success and not error_messages else "alternative.me web" if success and "API" in error_messages[0] else "cnn" if success else "simulation"
+        }
+        
+        return result
+    
+    except Exception as e:
+        logger.error(f"獲取恐懼與貪婪指數時發生未捕獲的錯誤: {str(e)}")
+        # 返回默認值
+        return {
+            "value": 50,
+            "classification": "neutral",
+            "readable_classification": "中性",
+            "timestamp": datetime.now().isoformat(),
+            "historical_data": {},
+            "source": "simulation",
+            "error": str(e)
+        }
+
+@router.get("/fear-greed-index", response_model=Dict[str, Any])
+async def get_fear_and_greed():
+    """
+    獲取加密貨幣恐懼與貪婪指數
+    
+    返回當前加密貨幣市場的恐懼與貪婪指數，這是一個市場情緒指標，
+    範圍從0（極度恐懼）到100（極度貪婪）。
+    
+    該指數通過爬取Alternative.me網站獲取，包含當前值、分類和最近的歷史數據。
+    
+    返回:
+        包含恐懼與貪婪指數數據的JSON物件
+    """
+    try:
+        fear_greed_data = await get_fear_greed_index()
+        return {
+            "success": True,
+            "timestamp": datetime.now().isoformat(),
+            "data": fear_greed_data
+        }
+    except Exception as e:
+        logger.error(f"獲取恐懼與貪婪指數失敗: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"獲取恐懼與貪婪指數失敗: {str(e)}")

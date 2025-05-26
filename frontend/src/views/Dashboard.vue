@@ -39,6 +39,103 @@
       </div>
     </div>
 
+    <!-- 全球市場數據 -->
+    <div class="global-market-data">
+      <div class="section-header">
+        <h2>全球市場數據</h2>
+        <div class="refresh-section">
+          <span class="last-updated">{{ formattedLastUpdate }}</span>
+          <div class="refresh-button" @click="loadGlobalMarketData" :disabled="isLoadingGlobalData">
+            <i class="fas fa-sync-alt" :class="{ 'fa-spin': isLoadingGlobalData }"></i>
+          </div>
+        </div>
+      </div>
+      <div class="global-data-grid">
+        <!-- 比特幣市佔率卡片 -->
+        <div class="global-data-card card">
+          <div class="data-header">
+            <h3>比特幣市佔率</h3>
+          </div>
+          <div v-if="isLoadingGlobalData" class="loading-indicator">
+            <div class="spinner"></div>
+          </div>
+          <div v-else class="data-content">
+            <div class="data-value">{{ bitcoinDominance.toFixed(2) }}%</div>
+            <div class="data-chart">
+              <div class="progress-bar">
+                <div class="progress" :style="{ width: `${bitcoinDominance}%` }"></div>
+              </div>
+            </div>
+            <div class="data-info">
+              <span>以太坊佔比: {{ ethereumDominance.toFixed(2) }}%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 恐懼貪婪指數卡片 -->
+        <div class="global-data-card card">
+          <div class="data-header">
+            <h3>恐懼貪婪指數</h3>
+          </div>
+          <div v-if="isLoadingGlobalData" class="loading-indicator">
+            <div class="spinner"></div>
+          </div>
+          <div v-else class="data-content">
+            <div class="fear-greed-container">
+              <div class="fear-greed-meter">
+                <div class="meter-gauge">
+                  <div class="meter-value" :style="{ transform: `rotate(${(fearGreedIndex - 50) * 1.8}deg)` }"></div>
+                </div>
+                <div class="meter-labels">
+                  <span class="fear">極度恐懼</span>
+                  <span class="greed">極度貪婪</span>
+                </div>
+              </div>
+              <div class="fear-greed-value">{{ fearGreedIndex }}</div>
+              <div class="fear-greed-label">{{ fearGreedLabel }}</div>
+            </div>
+            <div class="historical-data">
+              <div class="historical-item">
+                <span>昨天:</span>
+                <span>{{ fearGreedHistory.yesterday }}</span>
+              </div>
+              <div class="historical-item">
+                <span>上週:</span>
+                <span>{{ fearGreedHistory.lastWeek }}</span>
+              </div>
+              <div class="historical-item">
+                <span>上月:</span>
+                <span>{{ fearGreedHistory.lastMonth }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 全球市值卡片 -->
+        <div class="global-data-card card">
+          <div class="data-header">
+            <h3>全球加密貨幣市值</h3>
+          </div>
+          <div v-if="isLoadingGlobalData" class="loading-indicator">
+            <div class="spinner"></div>
+          </div>
+          <div v-else class="data-content">
+            <div class="data-value">{{ formatCurrency(totalMarketCap) }}</div>
+            <div class="data-info">
+              <div class="info-item">
+                <span>24小時交易量:</span>
+                <span>{{ formatCurrency(totalVolume24h) }}</span>
+              </div>
+              <div class="info-item">
+                <span>活躍加密貨幣:</span>
+                <span>{{ activeCoins }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 市場概況部分 -->
     <div class="market-overview">
       <div class="section-header">
@@ -108,6 +205,7 @@
 <script setup>
 import { ref, computed, onMounted, watch, onUnmounted } from 'vue';
 import LineChart from '@/components/LineChart.vue';
+import axios from 'axios';
 
 // 基礎數據
 const isLoading = ref(true);
@@ -120,6 +218,22 @@ const availableBalance = ref(0);
 const usdtBalance = ref(0);
 const btcBalance = ref(0);
 const positionValue = ref(0);
+
+// 全球市場數據
+const isLoadingGlobalData = ref(false);
+const bitcoinDominance = ref(42.5);
+const ethereumDominance = ref(18.2);
+const fearGreedIndex = ref(55);
+const fearGreedLabel = ref('中性');
+const fearGreedHistory = ref({
+  yesterday: 53,
+  lastWeek: 48,
+  lastMonth: 60
+});
+const totalMarketCap = ref(2300000000000);
+const totalVolume24h = ref(85000000000);
+const activeCoins = ref(10384);
+const lastGlobalDataUpdate = ref(null);
 
 // 市場數據
 const selectedPeriod = ref('24h');
@@ -222,6 +336,30 @@ const formatVolume = (value) => {
   return value.toString();
 };
 
+const formatCurrency = (value) => {
+  if (value >= 1000000000000) {
+    return '$' + (value / 1000000000000).toFixed(2) + ' 兆';
+  }
+  if (value >= 1000000000) {
+    return '$' + (value / 1000000000).toFixed(2) + ' 十億';
+  }
+  if (value >= 1000000) {
+    return '$' + (value / 1000000).toFixed(2) + ' 百萬';
+  }
+  return '$' + value.toFixed(2);
+};
+
+// 獲取恐懼和貪婪指數對應的描述和顏色
+const getFearGreedInfo = (value) => {
+  if (value <= 10) return { label: '極度恐懼', color: '#E53E3E' };
+  if (value <= 25) return { label: '恐懼', color: '#F6AD55' };
+  if (value <= 45) return { label: '偏向恐懼', color: '#F6E05E' };
+  if (value <= 55) return { label: '中性', color: '#68D391' };
+  if (value <= 75) return { label: '偏向貪婪', color: '#4FD1C5' };
+  if (value <= 90) return { label: '貪婪', color: '#3182CE' };
+  return { label: '極度貪婪', color: '#805AD5' };
+};
+
 // 數據加載函數
 const loadData = async () => {
   try {
@@ -242,11 +380,73 @@ const loadData = async () => {
   }
 };
 
+// 加載全球市場數據
+const loadGlobalMarketData = async () => {
+  try {
+    isLoadingGlobalData.value = true;
+    
+    // 呼叫全球市場數據API
+    const response = await axios.get('/api/v1/markets/global-metrics');
+    
+    if (response.data && response.data.success) {
+      // 更新比特幣市佔率數據
+      const globalMetrics = response.data.global_metrics;
+      bitcoinDominance.value = globalMetrics.bitcoin_dominance || 0;
+      ethereumDominance.value = globalMetrics.ethereum_dominance || 0;
+      totalMarketCap.value = globalMetrics.total_market_cap_usd || 0;
+      totalVolume24h.value = globalMetrics.total_volume_24h_usd || 0;
+      activeCoins.value = globalMetrics.active_cryptocurrencies || 0;
+      
+      // 更新恐懼貪婪指數數據
+      const fearGreedData = response.data.fear_greed_index;
+      fearGreedIndex.value = fearGreedData.value || 0;
+      fearGreedLabel.value = fearGreedData.readable_classification || '未知';
+      
+      // 更新歷史數據
+      const historyData = fearGreedData.historical_data || {};
+      fearGreedHistory.value = {
+        yesterday: historyData.yesterday || 0,
+        lastWeek: historyData.last_week || 0,
+        lastMonth: historyData.last_month || 0
+      };
+      
+      // 記錄最後更新時間
+      lastGlobalDataUpdate.value = new Date();
+    } else {
+      console.error('Invalid response format from global metrics API');
+      errorMessage.value = '獲取全球市場數據失敗，返回數據格式不正確';
+    }
+  } catch (error) {
+    console.error('Failed to load global market data:', error);
+    errorMessage.value = '獲取全球市場數據失敗，請重試';
+  } finally {
+    isLoadingGlobalData.value = false;
+  }
+};
+
+// 格式化最後更新時間
+const formattedLastUpdate = computed(() => {
+  if (!lastGlobalDataUpdate.value) return '尚未更新';
+  
+  const now = new Date();
+  const diff = now - lastGlobalDataUpdate.value;
+  const minutes = Math.floor(diff / (1000 * 60));
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  
+  if (days > 0) return `${days} 天前更新`;
+  if (hours > 0) return `${hours} 小時前更新`;
+  if (minutes > 0) return `${minutes} 分鐘前更新`;
+  return '剛剛更新';
+});
+
 // 生命週期鉤子
 let dataRefreshInterval;
 
 onMounted(() => {
   loadData();
+  loadGlobalMarketData(); // 僅在頁面載入時獲取一次
+  
   // 設置定時刷新，但間隔時間較長
   dataRefreshInterval = setInterval(() => {
     loadData();
@@ -316,6 +516,222 @@ onUnmounted(() => {
   font-size: 14px;
   margin-top: 8px;
   color: var(--text-secondary);
+}
+
+/* 全球市場數據樣式 */
+.global-market-data {
+  margin-bottom: 24px;
+}
+
+.refresh-section {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.last-updated {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.global-data-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+.global-data-card {
+  padding: 20px;
+  min-height: 250px;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.data-header {
+  margin-bottom: 15px;
+}
+
+.data-header h3 {
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.data-content {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+}
+
+.data-value {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 15px;
+  word-break: break-word;
+}
+
+.data-chart {
+  margin: 15px 0;
+}
+
+.data-info {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-top: auto;
+  word-break: break-word;
+}
+
+.info-item {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.info-item > span:first-child {
+  margin-right: 5px;
+}
+
+.info-item > span:last-child {
+  font-weight: 500;
+}
+
+/* 進度條樣式 */
+.progress-bar {
+  height: 8px;
+  background-color: #e9ecef;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress {
+  height: 100%;
+  background-color: var(--primary-color);
+  border-radius: 4px;
+}
+
+/* 恐懼貪婪指數儀表盤樣式 */
+.fear-greed-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.fear-greed-meter {
+  position: relative;
+  width: 140px;
+  height: 80px;
+  margin-bottom: 10px;
+}
+
+.meter-gauge {
+  position: relative;
+  width: 140px;
+  height: 80px;
+  background: conic-gradient(
+    #E53E3E 0deg 36deg,
+    #F6AD55 36deg 72deg,
+    #F6E05E 72deg 108deg,
+    #68D391 108deg 144deg,
+    #4FD1C5 144deg 180deg
+  );
+  border-radius: 90px 90px 0 0;
+  overflow: hidden;
+}
+
+.meter-value {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  height: 70px;
+  width: 3px;
+  background-color: #000;
+  transform-origin: bottom center;
+  transition: transform 0.5s ease;
+}
+
+.meter-labels {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 5px;
+  font-size: 11px;
+}
+
+.meter-labels .fear {
+  color: #E53E3E;
+}
+
+.meter-labels .greed {
+  color: #4FD1C5;
+}
+
+.fear-greed-value {
+  font-size: 28px;
+  font-weight: 600;
+  margin: 5px 0;
+  line-height: 1;
+}
+
+.fear-greed-label {
+  font-size: 14px;
+  color: var(--text-secondary);
+  text-align: center;
+  margin-bottom: 5px;
+}
+
+.historical-data {
+  margin-top: auto;
+  width: 100%;
+}
+
+.historical-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin: 5px 0;
+  color: var(--text-secondary);
+}
+
+/* 加載動畫 */
+.loading-indicator {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+}
+
+.spinner {
+  width: 30px;
+  height: 30px;
+  border: 3px solid rgba(0, 0, 0, 0.1);
+  border-radius: 50%;
+  border-top-color: var(--primary-color);
+  animation: spin 1s infinite ease-in-out;
+}
+
+.refresh-button {
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 50%;
+  transition: background-color 0.3s;
+}
+
+.refresh-button:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.refresh-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .market-overview {
@@ -412,7 +828,8 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
-  .asset-overview {
+  .asset-overview,
+  .global-data-grid {
     grid-template-columns: 1fr;
   }
   

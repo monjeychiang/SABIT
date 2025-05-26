@@ -55,6 +55,7 @@ prometheus-fastapi-instrumentator==6.0.0
 # 网页爬虫和数据提取
 crawl4ai>=0.6.0
 playwright>=1.49.0
+beautifulsoup4>=4.12.0
 
 # 添加Cython相关依赖
 numpy>=1.20.0
