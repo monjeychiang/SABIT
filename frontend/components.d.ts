@@ -8,7 +8,9 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AccountSummary: typeof import('./src/components/dashboard/AccountSummary.vue')['default']
     AccountWebSocketDemo: typeof import('./src/components/AccountWebSocketDemo.vue')['default']
+    AssetDistribution: typeof import('./src/components/dashboard/AssetDistribution.vue')['default']
     Breadcrumb: typeof import('./src/components/Breadcrumb.vue')['default']
     ChatInput: typeof import('./src/components/chat/ChatInput.vue')['default']
     ChatMessage: typeof import('./src/components/chat/ChatMessage.vue')['default']
@@ -56,6 +58,7 @@ declare module 'vue' {
     OnlineUsersWidget: typeof import('./src/components/OnlineUsersWidget.vue')['default']
     PageHeader: typeof import('./src/components/PageHeader.vue')['default']
     PriceView: typeof import('./src/components/PriceView.vue')['default']
+    RecentTrades: typeof import('./src/components/dashboard/RecentTrades.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     Sidebar: typeof import('./src/components/Sidebar.vue')['default']
@@ -63,6 +66,7 @@ declare module 'vue' {
     StatisticChart: typeof import('./src/components/StatisticChart.vue')['default']
     TheWelcome: typeof import('./src/components/TheWelcome.vue')['default']
     TradePanel: typeof import('./src/components/TradePanel.vue')['default']
+    TradingViewWidget: typeof import('./src/components/dashboard/TradingViewWidget.vue')['default']
     TransactionsTable: typeof import('./src/components/TransactionsTable.vue')['default']
     UserAvatar: typeof import('./src/components/UserAvatar.vue')['default']
     UserProfile: typeof import('./src/components/UserProfile.vue')['default']

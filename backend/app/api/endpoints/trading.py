@@ -537,10 +537,9 @@ async def get_connection_status(
     返回REST API连接的状态
     """
     try:
-        # 准备结果
+        # 准备结果，移除websocket字段
         result = {
             "exchange": exchange.value,
-            "websocket": {"connected": False, "is_healthy": False},
             "rest_api": {},
         }
         

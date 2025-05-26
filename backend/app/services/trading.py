@@ -28,7 +28,6 @@ from ..schemas.trading import (
 )
 from ..utils.exchange import get_exchange_client
 from ..utils.connection_pool import ExchangeConnectionPool
-from ..utils.websocket_manager import WebSocketManager
 
 logger = logging.getLogger(__name__)
 
@@ -42,21 +41,18 @@ class TradingService:
     """
     
     def __init__(self):
-        """初始化交易服务，创建连接池和WebSocket管理器"""
+        """初始化交易服务，创建连接池"""
         self.connection_pool = ExchangeConnectionPool(
             max_idle_time=300,  # 5分钟无活动自动清理
             cleanup_interval=120  # 2分钟清理一次
         )
         
-        # 创建 WebSocket 管理器，用于实时账户数据推送
-        self.ws_manager = WebSocketManager()
+        # 移除WebSocket管理器初始化
         
-        # 账户数据缓存，用于优化账户信息查询
-        self.account_data_cache = {}
+        # 移除account_data_cache，已不再需要
         
-        # 任务标记
-        self._ws_cleanup_task = None
-    
+        # 移除WebSocket相關任務標記
+
     async def _get_exchange_client_for_user(
         self, 
         user: User, 
@@ -345,7 +341,7 @@ class TradingService:
         """
         获取用户在特定交易所的特定资产余额
         
-        尝试先从WebSocket数据获取，如果不可用则使用REST API
+        使用REST API获取资产余额
         
         Args:
             user: 用户模型实例
@@ -358,28 +354,7 @@ class TradingService:
         """
         asset = asset.upper()  # 确保大写
         
-        # 尝试从WebSocket缓存获取数据
-        cache_key = f"{user.id}:{exchange.value}"
-        cached_data = self.account_data_cache.get(cache_key)
-        
-        # 如果WebSocket数据可用并且新鲜，优先使用
-        if cached_data and (datetime.now().timestamp() - cached_data['timestamp']) < 10:
-            ws_data = cached_data['data']
-            
-            try:
-                # 转换为AccountInfo并查找指定资产
-                account_info = self._convert_ws_data_to_account_info(exchange, ws_data)
-                
-                # 查找指定资产
-                for balance in account_info.balances:
-                    if balance.asset == asset:
-                        logger.info(f"使用WebSocket数据获取{asset}余额")
-                        return balance
-            except Exception as e:
-                logger.error(f"处理WebSocket资产数据异常: {str(e)}")
-                # 出错时回退到REST API
-        
-        # 使用REST API获取余额
+        # 直接使用REST API获取余额，移除WebSocket缓存相关代码
         async def _operation(client):
             # 获取账户余额
             balance_data = await client.fetch_balance()
@@ -1408,14 +1383,13 @@ class TradingService:
 
     # 当应用关闭时需要清理所有连接
     async def cleanup(self):
-        """清理所有交易所连接和WebSocket连接"""
+        """清理所有交易所连接"""
         logger.info("正在关闭交易服务，清理所有连接...")
         
         # 清理REST API连接
         await self.connection_pool.cleanup_all()
         
-        # 清理WebSocket连接
-        await self.ws_manager.cleanup()
+        # 移除WebSocket連接清理代碼
         
         logger.info("交易服务已关闭")
 
@@ -1675,7 +1649,9 @@ class TradingService:
         exchange: ExchangeEnum
     ) -> Dict[str, Any]:
         """
-        为账户页面初始化WebSocket连接
+        為賬戶頁面初始化連接
+        
+        WebSocket功能已移除，此方法僅返回REST API狀態
         
         Args:
             user: 用户模型实例
@@ -1686,7 +1662,7 @@ class TradingService:
             Dict[str, Any]: 连接状态信息
         """
         try:
-            # 由於不再使用WebSocket獲取帳戶資訊，返回基本的REST API狀態
+            # 返回使用REST API狀態
             return {
                 "success": True,
                 "message": "使用REST API獲取帳戶數據",
@@ -1695,12 +1671,12 @@ class TradingService:
                 "websocket": False
             }
         except Exception as e:
-            logger.error(f"初始化WebSocket连接失败: {str(e)}")
+            logger.error(f"初始化連接失敗: {str(e)}")
             return {
                 "success": False,
-                "message": f"初始化WebSocket失败: {str(e)}",
+                "message": f"初始化連接失敗: {str(e)}",
                 "exchange": exchange.value
-            } 
+            }
 
     async def initialize_connections_for_vip_user(
         self, 
@@ -1711,7 +1687,7 @@ class TradingService:
         """
         为VIP用户预初始化所有交易所连接
         
-        高级用户特权功能，提前建立WebSocket和REST连接，
+        高级用户特权功能，提前建立REST连接，
         确保交易体验流畅，减少首次操作延迟
         
         Args:
@@ -1724,8 +1700,7 @@ class TradingService:
         """
         results = {
             "success": True,
-            "connections": {},
-            "websockets": {}
+            "connections": {}
         }
         
         try:
@@ -1756,14 +1731,9 @@ class TradingService:
                     }
                     continue
                 
-                # 初始化WebSocket连接
-                # 对于所有高级用户都优先初始化WebSocket
-                ws_status = await self.initialize_websocket_for_account_page(
-                    user, db, exchange
-                )
-                results["websockets"][exchange_name] = ws_status
+                # 移除WebSocket初始化代碼，只使用REST連接
                 
-                # 对于高频交易用户，同时初始化REST API连接
+                # 对于高频交易用户，初始化REST API连接
                 if is_high_frequency_trader:
                     # 初始化REST API连接
                     try:
@@ -1801,12 +1771,7 @@ class TradingService:
             all_success = True
             failed_exchanges = []
             
-            # 检查WebSocket连接结果
-            for exchange, status in results["websockets"].items():
-                if not status.get("success", False):
-                    all_success = False
-                    failed_exchanges.append(f"{exchange}(WS)")
-            
+            # 移除WebSocket連接結果檢查，只檢查REST連接
             # 检查REST连接结果(如果是高频交易用户)
             if is_high_frequency_trader:
                 for exchange, status in results["connections"].items():
@@ -1826,7 +1791,7 @@ class TradingService:
                 "success": False,
                 "message": f"连接初始化过程异常: {str(e)}"
             }
-            
+
     async def is_vip_or_high_frequency_user(self, user: User, db: Session) -> Dict[str, bool]:
         """
         检查用户是否为VIP用户或高频交易用户
