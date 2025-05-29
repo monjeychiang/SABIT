@@ -45,7 +45,7 @@
         <h2>全球市場數據</h2>
         <div class="refresh-section">
           <span class="last-updated">{{ formattedLastUpdate }}</span>
-          <div class="refresh-button" @click="loadGlobalMarketData" :disabled="isLoadingGlobalData">
+          <div class="refresh-button" @click="loadGlobalMarketData(true)" :disabled="isLoadingGlobalData">
             <i class="fas fa-sync-alt" :class="{ 'fa-spin': isLoadingGlobalData }"></i>
           </div>
         </div>
@@ -234,6 +234,8 @@ const totalMarketCap = ref(2300000000000);
 const totalVolume24h = ref(85000000000);
 const activeCoins = ref(10384);
 const lastGlobalDataUpdate = ref(null);
+const isCachedData = ref(true);
+const nextDataUpdateTime = ref(null);
 
 // 市場數據
 const selectedPeriod = ref('24h');
@@ -381,12 +383,14 @@ const loadData = async () => {
 };
 
 // 加載全球市場數據
-const loadGlobalMarketData = async () => {
+const loadGlobalMarketData = async (forceRefresh = false) => {
   try {
     isLoadingGlobalData.value = true;
     
-    // 呼叫全球市場數據API
-    const response = await axios.get('/api/v1/markets/global-metrics');
+    // 呼叫全球市場數據API，添加强制刷新參數
+    const response = await axios.get('/api/v1/markets/global-metrics', {
+      params: { force_refresh: forceRefresh }
+    });
     
     if (response.data && response.data.success) {
       // 更新比特幣市佔率數據
@@ -412,6 +416,21 @@ const loadGlobalMarketData = async () => {
       
       // 記錄最後更新時間
       lastGlobalDataUpdate.value = new Date();
+      
+      // 處理緩存信息
+      if (globalMetrics.cache_info) {
+        isCachedData.value = globalMetrics.cache_info.is_cached;
+        
+        // 如果有下次更新時間信息，計算並儲存
+        if (globalMetrics.cache_info.next_update_in_seconds) {
+          const nextUpdateSeconds = globalMetrics.cache_info.next_update_in_seconds;
+          if (nextUpdateSeconds > 0) {
+            nextDataUpdateTime.value = new Date(Date.now() + nextUpdateSeconds * 1000);
+          } else {
+            nextDataUpdateTime.value = null;
+          }
+        }
+      }
     } else {
       console.error('Invalid response format from global metrics API');
       errorMessage.value = '獲取全球市場數據失敗，返回數據格式不正確';
@@ -434,10 +453,13 @@ const formattedLastUpdate = computed(() => {
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
   
-  if (days > 0) return `${days} 天前更新`;
-  if (hours > 0) return `${hours} 小時前更新`;
-  if (minutes > 0) return `${minutes} 分鐘前更新`;
-  return '剛剛更新';
+  // 添加緩存狀態信息
+  const cacheStatus = isCachedData.value ? '(緩存)' : '(實時)';
+  
+  if (days > 0) return `${days} 天前更新 ${cacheStatus}`;
+  if (hours > 0) return `${hours} 小時前更新 ${cacheStatus}`;
+  if (minutes > 0) return `${minutes} 分鐘前更新 ${cacheStatus}`;
+  return `剛剛更新 ${cacheStatus}`;
 });
 
 // 生命週期鉤子
@@ -445,7 +467,7 @@ let dataRefreshInterval;
 
 onMounted(() => {
   loadData();
-  loadGlobalMarketData(); // 僅在頁面載入時獲取一次
+  loadGlobalMarketData(false); // 頁面載入時使用緩存數據
   
   // 設置定時刷新，但間隔時間較長
   dataRefreshInterval = setInterval(() => {

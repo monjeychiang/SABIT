@@ -87,14 +87,14 @@ async def status_websocket_endpoint(
         except:
             pass
 
-# 获取聊天室在线用户
+# 获取聊天室在線用戶
 @router.get("/rooms/{room_id}/online", response_model=Dict[str, Any])
 async def get_room_online_users(
     room_id: int = Path(..., ge=1),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """获取特定聊天室的在线用户列表"""
+    """获取特定聊天室的在線用戶列表"""
     # 验证聊天室存在
     room = db.query(ChatRoom).filter(ChatRoom.id == room_id).first()
     if not room:
@@ -123,7 +123,7 @@ async def get_room_online_users(
             detail="您没有权限查看此聊天室"
         )
     
-    # 获取在线用户ID列表
+    # 获取在線用戶ID列表
     online_user_ids = online_status_manager.get_room_online_users(room_id)
     
     # 获取用户详细信息

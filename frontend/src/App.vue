@@ -513,6 +513,31 @@ const fetchOnlineUsersCount = async () => {
   }
 };
 
+// 新增：詳情彈窗的定時器
+let detailsUpdateInterval: number | undefined;
+
+// 監聽詳情彈窗的開關狀態
+watch(showWsDetails, (newValue) => {
+  if (newValue) {
+    // 彈窗打開時，立即獲取數據
+    fetchServerPublicStatus();
+    fetchOnlineUsersCount();
+    
+    // 設置定時器，每 10 秒更新一次數據
+    detailsUpdateInterval = window.setInterval(() => {
+      console.log('詳情彈窗開啟中，更新系統狀態和在線用戶數');
+      fetchServerPublicStatus();
+      fetchOnlineUsersCount();
+    }, 10000);
+  } else {
+    // 彈窗關閉時，清除定時器
+    if (detailsUpdateInterval) {
+      clearInterval(detailsUpdateInterval);
+      detailsUpdateInterval = undefined;
+    }
+  }
+});
+
 // 初始化
 onMounted(async () => {
   // 监听加载动画开始和结束事件
@@ -626,12 +651,6 @@ onMounted(async () => {
     updateServerTime();
     updateWebSocketStatus();
     updateServerLatency();
-    
-    // 每10秒更新公共狀態和在線用戶數
-    if (Date.now() % 10000 < 1000) { // 每10秒執行一次
-      fetchServerPublicStatus();
-      fetchOnlineUsersCount();
-    }
   }, 1000);
 
   // 启动延迟测量服务
@@ -641,7 +660,7 @@ onMounted(async () => {
   });
   latencyService.startAutoMeasurement();
 
-  // 首次獲取公共狀態和在線用戶數
+  // 首次獲取公共狀態和在線用戶數（保留一次性初始化）
   fetchServerPublicStatus();
   fetchOnlineUsersCount();
 
@@ -694,6 +713,12 @@ onUnmounted(() => {
   if (timeInterval !== undefined) {
     clearInterval(timeInterval);
   }
+  
+  // 確保清除詳情彈窗定時器
+  if (detailsUpdateInterval !== undefined) {
+    clearInterval(detailsUpdateInterval);
+  }
+  
   latencyService.stopAutoMeasurement();
   
   // 斷開賬戶WebSocket連接

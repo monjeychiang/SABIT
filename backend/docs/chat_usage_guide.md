@@ -531,7 +531,7 @@ chatManager.onMessage(message => {
     // 显示用户正在输入指示器
     showTypingIndicator(message.username);
   } else if (message.type === 'user_online' || message.type === 'user_offline') {
-    // 更新在线用户列表
+    // 更新在線用戶列表
     updateOnlineUsersList();
   }
 });

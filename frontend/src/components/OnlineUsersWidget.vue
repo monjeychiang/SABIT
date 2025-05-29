@@ -1,8 +1,8 @@
 <template>
   <div class="online-users-widget">
     <div class="widget-header">
-      <h3>在线用户 ({{ onlineUsersCount }})</h3>
-      <button class="refresh-button" @click="fetchOnlineUsers" title="刷新在线用户列表">
+      <h3>在線用戶 ({{ onlineUsersCount }})</h3>
+      <button class="refresh-button" @click="fetchOnlineUsers" title="刷新在線用戶列表">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M23 4v6h-6"></path>
           <path d="M1 20v-6h6"></path>
@@ -107,7 +107,7 @@ const formatLastActive = (lastActiveTime) => {
   }
 };
 
-// 获取在线用户数据
+// 获取在線用戶数据
 const fetchOnlineUsers = async () => {
   loading.value = true;
   loadingStartTime.value = Date.now(); // 記錄載入開始時間
@@ -120,11 +120,11 @@ const fetchOnlineUsers = async () => {
     // 设置请求头 - 修正Authorization header格式
     const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
     
-    // 获取在线用户计数
+    // 获取在線用戶计数
     const countResponse = await axios.get('/api/v1/users/active-users-count', { headers });
     onlineUsersCount.value = countResponse.data.active_users || 0;
     
-    // 获取在线用户详情 - 使用新的公共API端点
+    // 获取在線用戶详情 - 使用新的公共API端点
     const detailsResponse = await axios.get('/api/v1/users/active-users-public', { headers });
     
     // 按最后活跃时间排序
@@ -145,8 +145,8 @@ const fetchOnlineUsers = async () => {
       loading.value = false;
     }
   } catch (err) {
-    console.error('获取在线用户信息失败:', err);
-    error.value = '获取在线用户信息失败';
+    console.error('获取在線用戶信息失败:', err);
+    error.value = '获取在線用戶信息失败';
     
     // 確保錯誤情況下也至少顯示0.5秒的載入動畫
     const loadingDuration = Date.now() - loadingStartTime.value;

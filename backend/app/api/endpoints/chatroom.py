@@ -594,7 +594,7 @@ async def list_chat_rooms(
             room_response.is_member = room.id in user_room_ids
             room_response.is_admin = room.id in user_admin_room_ids
             
-            # 添加在线用户数
+            # 添加在線用戶数
             room_response.online_users = manager.get_room_connections_count(room.id)
             
             result.append(room_response)
@@ -684,7 +684,7 @@ async def get_chat_room(
                 message_response.user = UserBasic.from_orm(message.user)
             result.latest_messages.append(message_response)
             
-        # 添加在线用户数
+        # 添加在線用戶数
         result.online_users = manager.get_room_connections_count(room_id)
         
         return result

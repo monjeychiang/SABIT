@@ -859,6 +859,13 @@ class BinanceWebSocketClient:
             "recvWindow": 60000  # 延長接收窗口，避免時間同步問題
         }
         
+        # 如果沒有提供 positionSide，則根據 side 自動添加
+        if "positionSide" not in kwargs:
+            if side == "BUY":
+                params["positionSide"] = "LONG"
+            elif side == "SELL":
+                params["positionSide"] = "SHORT"
+        
         # 添加其他參數
         params.update(kwargs)
         
@@ -1044,12 +1051,9 @@ class BinanceWebSocketClient:
     
     def is_connected(self) -> bool:
         """
-        檢查是否已連接到WebSocket
-        
-        Returns:
-            是否已連接
+        檢查WebSocket連接是否仍然連接
         """
-        return self.connected and self.ws is not None
+        return self.ws and self.ws.open
 
     def _format_params(self, params: Dict[str, Any]) -> Dict[str, str]:
         """
@@ -1070,7 +1074,7 @@ class BinanceWebSocketClient:
                 
             # 將布爾值轉換為 'true' 或 'false'
             if isinstance(value, bool):
-                formatted[key] = 'TRUE' if value else 'FALSE'
+                formatted[key] = 'true' if value else 'false'
             # 將列表轉換為逗號分隔的字符串
             elif isinstance(value, list):
                 formatted[key] = ','.join([str(item) for item in value])
@@ -1268,6 +1272,102 @@ class BinanceWebSocketClient:
         
         # 超過最大重試次數
         raise ApiError("獲取U本位合約賬戶餘額失敗: 超過最大重試次數")
+
+    async def refresh_auth(self):
+        """
+        重新進行身份驗證
+        
+        當使用長期連接時，認證可能會過期
+        此方法用於重新進行身份驗證，以確保 API 請求能夠正常處理
+        
+        Returns:
+            bool: 重新認證是否成功
+        """
+        try:
+            logger.info("開始重新進行身份驗證")
+            
+            # 構建認證請求參數
+            params = {
+                "apiKey": self.api_key,
+                "timestamp": str(int(time.time() * 1000)),
+                "recvWindow": "15000"  # 增加接收窗口時間到15秒，避免時間同步問題
+            }
+            
+            # 按參數名稱排序
+            sorted_params = {key: params[key] for key in sorted(params.keys())}
+            
+            try:
+                # 生成簽名
+                logger.debug("正在生成重新認證簽名")
+                signature = self.sign_parameters(sorted_params)
+                sorted_params["signature"] = signature
+                
+                # 構建認證請求
+                request_id = str(uuid.uuid4())
+                auth_request = {
+                    "id": request_id,
+                    "method": "session.logon",
+                    "params": sorted_params
+                }
+                
+                # 關鍵修改：創建一個Future對象並存儲在response_futures中
+                future = asyncio.get_event_loop().create_future()
+                self.response_futures[request_id] = future
+                
+                # 發送認證請求
+                await self.ws.send(json.dumps(auth_request))
+                
+                # 等待認證響應
+                try:
+                    # 使用future等待響應，而不是直接等待接收消息
+                    response_data = await asyncio.wait_for(future, timeout=15)
+                    
+                    # 檢查認證是否成功
+                    if 'error' in response_data:
+                        error_code = response_data.get('error', {}).get('code', 'unknown')
+                        error_msg = response_data.get('error', {}).get('msg', 'Unknown error')
+                        logger.error(f"重新認證失敗: 錯誤碼 {error_code}, 錯誤信息: {error_msg}")
+                        
+                        if error_code == -4056:
+                            logger.error("HMAC_SHA256 API 密鑰不支持 WebSocket API，請在幣安 API 管理界面創建 Ed25519 密鑰")
+                        elif error_code == -1022 or "signature" in error_msg.lower():
+                            logger.error("簽名無效，請檢查 API Secret 格式和正確性")
+                        elif error_code == -1099:
+                            logger.error("API密鑰無權限或未找到，請檢查 API Key 和權限設置")
+                            
+                        self.authenticated = False
+                        return False
+                    elif 'result' in response_data and response_data.get('result', None) is not None:
+                        logger.info("重新認證成功")
+                        self.authenticated = True
+                        return True
+                    else:
+                        logger.error("重新認證響應格式異常")
+                        self.authenticated = False
+                        return False
+                except asyncio.TimeoutError:
+                    logger.error("重新認證響應超時")
+                    self.authenticated = False
+                    return False
+                except Exception as e:
+                    logger.error(f"重新認證過程中發生錯誤: {str(e)}")
+                    self.authenticated = False
+                    return False
+                finally:
+                    # 清理：確保無論成功失敗都從response_futures中移除
+                    if request_id in self.response_futures:
+                        del self.response_futures[request_id]
+            except Exception as e:
+                logger.error(f"生成重新認證簽名時出錯: {str(e)}")
+                self.authenticated = False
+                return False
+                
+        except Exception as e:
+            logger.error(f"重新認證過程中發生錯誤: {str(e)}")
+            self.authenticated = False
+            return False
+            
+        return self.authenticated
 
 
 class ConnectionError(Exception):

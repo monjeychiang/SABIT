@@ -100,7 +100,7 @@ def init_db():
         logger.error(f"初始化資料庫時出錯：{str(e)}")
         raise
 
-# 只建立表格，不清除現有數據（適用於第一次運行或添加新表時）
+
 def create_tables():
     """
     僅創建不存在的表，不刪除現有數據或表結構

@@ -22,7 +22,7 @@ async def get_active_users_count(current_user: User = Depends(get_current_active
     """
     return {"active_users": online_status_manager.get_total_online_users()}
 
-# 添加一个新的API端点，允许普通用户访问在线用户列表的基本信息，但不包含敏感数据
+# 添加一个新的API端点，允许普通用户访问在線用戶列表的基本信息，但不包含敏感数据
 @router.get("/active-users-public")
 async def get_active_users_public(current_user: User = Depends(get_current_active_user)):
     """獲取在線用戶基本公開信息（適用於普通用戶）

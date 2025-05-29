@@ -143,12 +143,12 @@ function handleSystemMessage(data: any) {
     isSystem: true
   })
   
-  // 如果是用户加入/离开等消息，可能需要更新在线用户列表
+  // 如果是用户加入/离开等消息，可能需要更新在線用戶列表
   if (data.event === 'user_joined' || data.event === 'user_left') {
-    // 这里可以触发更新在线用户列表的逻辑
-    // 如果后端提供了更新后的在线用户列表，可以直接更新
+    // 这里可以触发更新在線用戶列表的逻辑
+    // 如果后端提供了更新后的在線用戶列表，可以直接更新
     if (data.onlineUsers) {
-      // 更新在线用户列表的逻辑
+      // 更新在線用戶列表的逻辑
       // onlineUsers.value = data.onlineUsers
     }
   }

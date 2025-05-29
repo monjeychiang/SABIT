@@ -655,26 +655,27 @@ async def background_price_updater():
             await asyncio.sleep(5)
 
 # 启动后台更新任务
-@router.on_event("startup")
-async def startup_event():
+async def initialize_market_services():
     """
-    服務啟動事件處理器
+    市場數據服務初始化函數
     
-    當API服務啟動時自動執行以下初始化工作：
+    注意：此函數不再使用 router.on_event 裝飾器，而是作為普通函數，
+    以便在 main.py 的應用啟動流程中被呼叫，避免重複初始化。
+    
+    功能：
     1. 初始化價格緩存，預先載入幣安的現貨和期貨價格
     2. 啟動後台價格更新任務，持續獲取和廣播最新市場數據
     
     這確保了服務一啟動就能提供有效的市場數據。
     """
-    logger.info("初始化服務...")
+    logger.info("初始化市場數據服務...")
     await price_cache.get_prices("binance", "spot")
     await price_cache.get_prices("binance", "futures")
     
     task = asyncio.create_task(background_price_updater())
     manager.add_background_task(task)
-    logger.info("初始化完成")
+    logger.info("市場數據價格緩存和後台更新任務初始化完成")
 
-# REST API端点
 @router.get("/prices", response_model=Dict[str, Any])
 async def get_all_prices(
     exchange: str = Query("binance", description="交易所名稱"),
@@ -750,9 +751,9 @@ async def get_symbols(
         "symbols": symbols
     }
 
-@router.get("/ticker/24h", response_model=Dict[str, Any])
-async def get_24h_ticker(
-    symbols: List[str] = Query(..., description="交易對列表，例如 ['BTCUSDT', 'ETHUSDT']"),
+@router.get("/tickers/24h", response_model=Dict[str, Any])
+async def get_multiple_24h_tickers(
+    symbols: List[str] = Query([], description="交易對列表，例如 ['BTCUSDT', 'ETHUSDT']"),
     exchange: str = Query("binance", description="交易所名稱")
 ):
     """
@@ -762,19 +763,15 @@ async def get_24h_ticker(
     交易量等信息。可同時請求多個交易對的數據。
     
     參數:
-        symbols: 要查詢的交易對列表，例如 ["BTCUSDT", "ETHUSDT"]，必填
+        symbols: 要查詢的交易對列表，例如 ["BTCUSDT", "ETHUSDT"]，可選，默認為空列表
         exchange: 交易所名稱，目前僅支持 "binance"，默認為 "binance"
         
     返回:
         包含交易所名稱、交易對數量、時間戳和24小時行情數據的JSON物件
         
     錯誤:
-        400: 未提供交易對
         500: 獲取行情數據失敗
     """
-    if not symbols:
-        raise HTTPException(status_code=400, detail="必須指定至少一個交易對")
-    
     data = await price_cache.get_24h_data(exchange, symbols)
     
     if not data:
@@ -786,8 +783,6 @@ async def get_24h_ticker(
         "timestamp": datetime.now().isoformat(),
         "data": data
     }
-
-
 
 # WebSocket 端點 - 允許訪客模式
 @router.websocket("/ws/all")
@@ -1484,17 +1479,21 @@ async def websocket_custom_symbols(
             manager.disconnect(websocket, "custom", symbol_list)
             logger.info(f"自定義WebSocket連接已清理：{client_id}") 
 
-@router.on_event("startup")
-async def startup_event():
-    """启动时初始化市场数据服务"""
-    await market_data_service.start()
-    logger.info("市场数据服务已启动")
-
-@router.on_event("shutdown")
-async def shutdown_event():
-    """关闭时停止市场数据服务"""
+# 改為普通的清理函數，由 main.py 調用
+# @router.on_event("shutdown")
+async def cleanup_market_services():
+    """關閉市場數據服務資源
+    
+    注意：此函數不再使用 router.on_event 裝飾器，而是作為普通函數，
+    以便在 main.py 的應用關閉流程中被呼叫，確保資源正確釋放。
+    
+    功能：
+    - 停止市場數據服務
+    - 關閉所有活躍的WebSocket連接
+    - 取消後台任務
+    """
     await market_data_service.stop()
-    logger.info("市场数据服务已停止")
+    logger.info("市場數據服務已停止")
 
 @router.get("/prices/all")
 async def get_all_prices(
@@ -1809,36 +1808,44 @@ COINMARKETCAP_API_URL = "https://pro-api.coinmarketcap.com"
 
 # 新增獲取全球加密貨幣市場數據端點
 @router.get("/global-metrics", response_model=Dict[str, Any])
-async def get_global_metrics():
+async def get_global_metrics(force_refresh: bool = Query(False, description="強制刷新數據，忽略緩存")):
     """
     獲取全球加密貨幣市場指標數據
     
-    此端點從CoinMarketCap獲取全球加密貨幣市場指標數據，包括:
+    此端點從緩存中獲取全球加密貨幣市場指標數據，包括:
     - 總市值
     - 24小時交易量
     - 比特幣佔比
     - 以太坊佔比
     - 活躍加密貨幣數量
     - 活躍市場數量
+    - 恐懼與貪婪指數
     
-    同時，會從alternative.me網站爬取恐懼與貪婪指數，提供市場情緒指標。
+    為了減少API請求次數，數據會被緩存:
+    - 全球市場數據每小時更新一次
+    - 恐懼與貪婪指數每3小時更新一次
+    
+    參數:
+        force_refresh (bool): 是否強制刷新數據，忽略緩存
     
     返回:
-        包含全球市場指標和恐懼與貪婪指數的JSON物件
+        包含全球市場指標、恐懼與貪婪指數和緩存信息的JSON物件
     """
     try:
-        # 獲取CoinMarketCap全球指標數據
-        global_metrics = await get_coinmarketcap_global_metrics()
-        
-        # 獲取恐懼與貪婪指數
-        fear_greed_data = await get_fear_greed_index()
+        # 從緩存獲取數據
+        global_metrics = await global_market_cache.get_global_metrics(force_update=force_refresh)
+        fear_greed_data = await global_market_cache.get_fear_greed_index(force_update=force_refresh)
         
         # 合併數據
         result = {
             "success": True,
             "timestamp": datetime.now().isoformat(),
             "global_metrics": global_metrics,
-            "fear_greed_index": fear_greed_data
+            "fear_greed_index": fear_greed_data,
+            "cache_info": {
+                "was_cached": not force_refresh,
+                "last_forced_refresh": datetime.now().isoformat() if force_refresh else None
+            }
         }
         
         return result
@@ -2281,3 +2288,376 @@ async def get_fear_and_greed():
     except Exception as e:
         logger.error(f"獲取恐懼與貪婪指數失敗: {str(e)}")
         raise HTTPException(status_code=500, detail=f"獲取恐懼與貪婪指數失敗: {str(e)}")
+
+# 在 PriceCache 類後添加一個新的緩存類
+class GlobalMarketDataCache:
+    """
+    全球市場數據緩存類
+    
+    用於緩存全球市場數據和恐懼與貪婪指數，減少對外部API的請求頻率。
+    提供智能更新機制和緩存時效管理。
+    
+    主要特點:
+    - 支援全球市場數據緩存
+    - 支援恐懼與貪婪指數緩存
+    - 可設置不同數據類型的緩存時間
+    - 提供強制更新機制
+    - 自動數據過期檢查
+    """
+    def __init__(self):
+        """初始化全球市場數據緩存"""
+        # 主數據存儲
+        self.data = {
+            "global_metrics": None,
+            "fear_greed_index": None
+        }
+        # 緩存時間設置（秒）
+        self.cache_times = {
+            "global_metrics": 3600,  # 1小時更新一次全球指標
+            "fear_greed_index": 3600 * 3  # 3小時更新一次恐懼貪婪指數
+        }
+        # 最後更新時間
+        self.last_update = {
+            "global_metrics": None,
+            "fear_greed_index": None
+        }
+        # 數據更新鎖，防止並發更新
+        self.locks = {
+            "global_metrics": asyncio.Lock(),
+            "fear_greed_index": asyncio.Lock()
+        }
+        # 更新計數器
+        self.update_counts = {
+            "global_metrics": 0,
+            "fear_greed_index": 0
+        }
+        # 日誌記錄時間
+        self.last_log_time = datetime.now()
+        self.log_interval = 3600  # 每小時記錄一次統計
+        
+    async def get_global_metrics(self, force_update=False) -> Dict[str, Any]:
+        """
+        獲取全球市場指標數據，如果數據過期或強制更新則重新獲取
+        
+        參數:
+            force_update (bool): 是否強制更新數據，忽略緩存
+            
+        返回:
+            Dict[str, Any]: 全球市場指標數據
+        """
+        current_time = datetime.now()
+        data_type = "global_metrics"
+        
+        # 檢查是否需要更新數據
+        if (force_update or 
+            self.data[data_type] is None or 
+            self.last_update[data_type] is None or
+            (current_time - self.last_update[data_type]).total_seconds() > self.cache_times[data_type]):
+            
+            # 使用鎖確保同一時間只有一個更新操作
+            async with self.locks[data_type]:
+                # 再次檢查，避免在等待鎖期間已被其他請求更新
+                if (force_update or 
+                    self.data[data_type] is None or 
+                    self.last_update[data_type] is None or
+                    (current_time - self.last_update[data_type]).total_seconds() > self.cache_times[data_type]):
+                    
+                    try:
+                        logger.info("緩存過期或強制更新，正在獲取新的全球市場數據")
+                        new_data = await get_coinmarketcap_global_metrics()
+                        
+                        # 更新緩存
+                        self.data[data_type] = new_data
+                        self.last_update[data_type] = datetime.now()
+                        self.update_counts[data_type] += 1
+                        
+                        # 記錄統計信息
+                        current_time = datetime.now()
+                        if (current_time - self.last_log_time).total_seconds() >= self.log_interval:
+                            logger.info(f"全球市場數據更新統計: 總更新次數 {self.update_counts[data_type]}")
+                            self.last_log_time = current_time
+                    
+                    except Exception as e:
+                        logger.error(f"更新全球市場數據失敗: {str(e)}")
+                        # 如果更新失敗但有舊數據，繼續使用舊數據
+                        if self.data[data_type] is None:
+                            # 如果沒有舊數據，創建一個模擬數據
+                            self.data[data_type] = {
+                                "total_market_cap_usd": 2500000000000,
+                                "total_volume_24h_usd": 150000000000,
+                                "bitcoin_dominance": 48.5,
+                                "ethereum_dominance": 18.7,
+                                "active_cryptocurrencies": 10000,
+                                "active_exchanges": 500,
+                                "last_updated": datetime.now().isoformat(),
+                                "note": "模擬數據 - 更新失敗"
+                            }
+        
+        # 添加緩存信息
+        result = self.data[data_type].copy()
+        result["cache_info"] = {
+            "is_cached": True,
+            "last_update": self.last_update[data_type].isoformat() if self.last_update[data_type] else None,
+            "cache_time_seconds": self.cache_times[data_type],
+            "next_update_in_seconds": max(0, self.cache_times[data_type] - 
+                                         (datetime.now() - self.last_update[data_type]).total_seconds()) 
+                                     if self.last_update[data_type] else 0
+        }
+        return result
+            
+    async def get_fear_greed_index(self, force_update=False) -> Dict[str, Any]:
+        """
+        獲取恐懼與貪婪指數數據，如果數據過期或強制更新則重新獲取
+        
+        參數:
+            force_update (bool): 是否強制更新數據，忽略緩存
+            
+        返回:
+            Dict[str, Any]: 恐懼與貪婪指數數據
+        """
+        current_time = datetime.now()
+        data_type = "fear_greed_index"
+        
+        # 檢查是否需要更新數據
+        if (force_update or 
+            self.data[data_type] is None or 
+            self.last_update[data_type] is None or
+            (current_time - self.last_update[data_type]).total_seconds() > self.cache_times[data_type]):
+            
+            # 使用鎖確保同一時間只有一個更新操作
+            async with self.locks[data_type]:
+                # 再次檢查，避免在等待鎖期間已被其他請求更新
+                if (force_update or 
+                    self.data[data_type] is None or 
+                    self.last_update[data_type] is None or
+                    (current_time - self.last_update[data_type]).total_seconds() > self.cache_times[data_type]):
+                    
+                    try:
+                        logger.info("緩存過期或強制更新，正在獲取新的恐懼與貪婪指數")
+                        new_data = await get_fear_greed_index()
+                        
+                        # 更新緩存
+                        self.data[data_type] = new_data
+                        self.last_update[data_type] = datetime.now()
+                        self.update_counts[data_type] += 1
+                        
+                        # 記錄統計信息
+                        current_time = datetime.now()
+                        if (current_time - self.last_log_time).total_seconds() >= self.log_interval:
+                            logger.info(f"恐懼與貪婪指數更新統計: 總更新次數 {self.update_counts[data_type]}")
+                            self.last_log_time = current_time
+                    
+                    except Exception as e:
+                        logger.error(f"更新恐懼與貪婪指數失敗: {str(e)}")
+                        # 如果更新失敗但有舊數據，繼續使用舊數據
+                        if self.data[data_type] is None:
+                            # 如果沒有舊數據，創建一個模擬數據
+                            self.data[data_type] = {
+                                "value": 50,
+                                "classification": "neutral",
+                                "readable_classification": "中性",
+                                "timestamp": datetime.now().isoformat(),
+                                "source": "simulation",
+                                "note": "模擬數據 - 更新失敗"
+                            }
+        
+        # 添加緩存信息
+        result = self.data[data_type].copy()
+        result["cache_info"] = {
+            "is_cached": True,
+            "last_update": self.last_update[data_type].isoformat() if self.last_update[data_type] else None,
+            "cache_time_seconds": self.cache_times[data_type],
+            "next_update_in_seconds": max(0, self.cache_times[data_type] - 
+                                         (datetime.now() - self.last_update[data_type]).total_seconds())
+                                     if self.last_update[data_type] else 0
+        }
+        return result
+
+# 初始化全球市場數據緩存
+global_market_cache = GlobalMarketDataCache()
+
+@router.get("/diagnostic", response_model=Dict[str, Any])
+async def diagnostic_check(
+    exchange: str = Query("binance", description="交易所名稱")
+):
+    """
+    診斷檢查交易所連接和數據流
+    
+    此端點執行詳細的連接診斷，包括:
+    1. DNS 解析檢查
+    2. WebSocket 連接測試
+    3. REST API 連接測試
+    
+    結果包含每一步的成功/失敗狀態和診斷建議。
+    """
+    logger.info(f"執行診斷檢查: {exchange}")
+    results = {
+        "timestamp": datetime.now().isoformat(),
+        "exchange": exchange,
+        "tests": {},
+        "market_data_service": {},
+        "direct_connection": {},
+        "suggestions": []
+    }
+    
+    # 1. 檢查 market_data_service 狀態
+    try:
+        from app.services.market_data import market_data_service
+        results["market_data_service"] = {
+            "initialized": exchange in market_data_service.exchanges,
+            "exchange_count": len(market_data_service.exchanges)
+        }
+        
+        if exchange in market_data_service.exchanges:
+            exchange_obj = market_data_service.exchanges[exchange]
+            # 檢查連接狀態
+            ws_connections = {
+                market_type: (ws is not None and hasattr(ws, 'open') and ws.open) 
+                for market_type, ws in exchange_obj.ws_connections.items()
+            }
+            results["market_data_service"]["ws_connections"] = ws_connections
+            results["market_data_service"]["is_running"] = exchange_obj.is_running
+            
+            # 檢查數據
+            data_counts = {
+                market_type: len(data)
+                for market_type, data in exchange_obj.market_data.items()
+            }
+            results["market_data_service"]["data_counts"] = data_counts
+            
+            # 如果沒有連接，則嘗試啟動
+            if not any(ws_connections.values()):
+                logger.info(f"診斷檢測到 {exchange} 未連接，嘗試啟動連接...")
+                try:
+                    connection_result = await market_data_service.start()
+                    results["market_data_service"]["connection_attempt"] = {
+                        "success": bool(connection_result),
+                        "active_exchanges": connection_result
+                    }
+                except Exception as e:
+                    results["market_data_service"]["connection_attempt"] = {
+                        "success": False,
+                        "error": str(e)
+                    }
+    except Exception as e:
+        results["market_data_service"] = {
+            "error": str(e)
+        }
+        results["suggestions"].append("市場數據服務導入或初始化存在問題")
+    
+    # 2. 嘗試直接連接測試
+    try:
+        from app.core.exchanges.binance import BinanceExchange
+        logger.info("診斷: 創建新的 BinanceExchange 實例進行測試")
+        
+        # 創建新實例
+        test_exchange = BinanceExchange()
+        results["direct_connection"]["instance_created"] = True
+        
+        # 嘗試連接
+        logger.info("診斷: 嘗試直接連接到交易所")
+        try:
+            connect_result = await test_exchange.connect()
+            results["direct_connection"]["connection_success"] = connect_result
+            
+            if connect_result:
+                # 等待短時間以接收一些數據
+                logger.info("診斷: 連接成功，等待3秒接收數據")
+                await asyncio.sleep(3)
+                
+                # 檢查是否有活躍連接
+                ws_connections = {
+                    market_type: (ws is not None and hasattr(ws, 'open') and ws.open) 
+                    for market_type, ws in test_exchange.ws_connections.items()
+                }
+                results["direct_connection"]["ws_connections"] = ws_connections
+                
+                # 檢查是否有數據
+                data_counts = {
+                    market_type: len(data)
+                    for market_type, data in test_exchange.market_data.items()
+                }
+                results["direct_connection"]["data_counts"] = data_counts
+                
+                # 取得樣本數據
+                sample_data = {}
+                for market_type, data in test_exchange.market_data.items():
+                    if data:
+                        symbols = list(data.keys())[:3]  # 取前3個交易對
+                        sample_data[market_type] = {
+                            symbol: {"price": data[symbol].get("price", "N/A")}
+                            for symbol in symbols
+                        }
+                results["direct_connection"]["sample_data"] = sample_data
+                
+                # 關閉測試連接
+                logger.info("診斷: 測試完成，關閉連接")
+                await test_exchange.disconnect()
+                results["direct_connection"]["disconnected"] = True
+            else:
+                results["suggestions"].append("直接連接失敗，可能是網絡問題或API端點不可用")
+        except Exception as e:
+            results["direct_connection"]["connection_error"] = str(e)
+            results["suggestions"].append(f"連接過程發生錯誤: {str(e)}")
+    except Exception as e:
+        results["direct_connection"]["error"] = str(e)
+        results["suggestions"].append("無法創建交易所實例")
+    
+    # 3. DNS 解析檢查
+    try:
+        import socket
+        for ws_type in ["spot", "futures"]:
+            try:
+                if exchange == "binance":
+                    if ws_type == "spot":
+                        host = "stream.binance.com"
+                    else:
+                        host = "fstream.binance.com"
+                    
+                    ip = socket.gethostbyname(host)
+                    results["tests"][f"dns_{ws_type}"] = {
+                        "success": True,
+                        "host": host,
+                        "ip": ip
+                    }
+                    logger.info(f"DNS解析成功: {host} -> {ip}")
+            except Exception as e:
+                results["tests"][f"dns_{ws_type}"] = {
+                    "success": False,
+                    "error": str(e)
+                }
+                results["suggestions"].append(f"DNS解析 {ws_type} 失敗，檢查網絡連接")
+    except Exception as e:
+        results["tests"]["dns"] = {
+            "success": False,
+            "error": str(e)
+        }
+    
+    # 4. HTTP連接檢查
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            if exchange == "binance":
+                url = "https://api.binance.com/api/v3/ping"
+                response = await client.get(url)
+                results["tests"]["http"] = {
+                    "success": response.status_code == 200,
+                    "status_code": response.status_code,
+                    "url": url
+                }
+                logger.info(f"HTTP連接測試: {url} -> {response.status_code}")
+    except Exception as e:
+        results["tests"]["http"] = {
+            "success": False,
+            "error": str(e)
+        }
+        results["suggestions"].append("HTTP連接失敗，可能是網絡問題")
+    
+    # 添加總結建議
+    if not results["suggestions"]:
+        if results.get("direct_connection", {}).get("connection_success"):
+            results["suggestions"].append("診斷顯示直接連接成功，但應用啟動時可能有問題。檢查啟動事件處理函數。")
+        else:
+            results["suggestions"].append("未檢測到明確問題，但連接仍然失敗。可能是網絡環境或代理設置問題。")
+    
+    logger.info(f"診斷檢查完成: {exchange}, 結果: {json.dumps(results, default=str)}")
+    return results

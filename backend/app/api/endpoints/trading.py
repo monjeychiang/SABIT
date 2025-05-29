@@ -386,7 +386,7 @@ async def get_symbol_info(
             detail=f"獲取交易對信息失敗: {str(e)}"
         )
 
-@router.get("/system/connection-pool-stats", tags=["system"])
+@router.post("/system/connection-pool-stats", tags=["system"])
 async def get_connection_pool_stats(
     current_user: User = Depends(get_current_user)
 ) -> Any:
@@ -423,46 +423,6 @@ async def get_connection_pool_stats(
             detail=f"獲取連接池統計信息失敗: {str(e)}"
         )
 
-@router.post("/initialize/trading-page/{exchange}")
-async def initialize_trading_page_connection(
-    exchange: ExchangeEnum,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
-):
-    """
-    优化策略1: 延迟加载策略 - 当用户首次访问交易页面时初始化连接
-    """
-    try:
-        # 在后台任务中初始化连接，不阻塞响应
-        background_tasks.add_task(
-            trading_service.initialize_connection_if_needed,
-            current_user, db, exchange
-        )
-        
-        return {
-            "success": True,
-            "message": f"正在初始化{exchange.value}交易连接",
-            "exchange": exchange.value
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"初始化连接失败: {str(e)}"
-        )
-
-@router.get("/basic-account-info/{exchange}")
-async def get_basic_account_info(
-    exchange: ExchangeEnum,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
-):
-    """
-    优化策略2: 预加载账户信息 - 登录时获取基本账户信息
-    """
-    result = await trading_service.get_basic_account_info(current_user, db, exchange)
-    return result
-
 @router.post("/initialize/account-page/{exchange}")
 async def initialize_account_page_websocket(
     exchange: ExchangeEnum,
@@ -486,91 +446,4 @@ async def initialize_account_page_websocket(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"初始化連接失敗: {str(e)}"
-        )
-
-@router.post("/initialize/vip-user")
-async def initialize_vip_user_connections(
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
-):
-    """
-    优化策略4: 高级用户特殊处理 - 为VIP用户预初始化连接
-    """
-    try:
-        # 检查用户类型
-        user_type = await trading_service.is_vip_or_high_frequency_user(current_user, db)
-        
-        if not user_type.get("custom_connection_strategy", False):
-            return {
-                "success": False,
-                "message": "用户不符合自定义连接策略条件",
-                "user_type": user_type
-            }
-        
-        # 在后台任务中初始化连接，不阻塞响应
-        background_tasks.add_task(
-            trading_service.initialize_connections_for_vip_user,
-            current_user, db, user_type.get("is_high_frequency_trader", False)
-        )
-        
-        return {
-            "success": True,
-            "message": "正在为高级用户初始化连接",
-            "user_type": user_type
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"初始化高级用户连接失败: {str(e)}"
-        )
-
-@router.get("/connection-status/{exchange}")
-async def get_connection_status(
-    exchange: ExchangeEnum,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
-):
-    """
-    获取连接状态信息
-    
-    返回REST API连接的状态
-    """
-    try:
-        # 准备结果，移除websocket字段
-        result = {
-            "exchange": exchange.value,
-            "rest_api": {},
-        }
-        
-        # 檢查REST API連接狀態
-        pool_key = f"{current_user.id}:{exchange.value}"
-        rest_connected = False
-        
-        if hasattr(trading_service.connection_pool, 'pools') and pool_key in trading_service.connection_pool.pools:
-            rest_connected = True
-            # 檢查連接健康狀態
-            is_healthy = await trading_service.connection_pool.check_client_health(
-                current_user.id, exchange
-            )
-            result["rest_api"] = {
-                "connected": rest_connected,
-                "is_healthy": is_healthy
-            }
-        else:
-            result["rest_api"] = {
-                "connected": False,
-                "is_healthy": False
-            }
-            
-        # 添加用户类型信息
-        user_type = await trading_service.is_vip_or_high_frequency_user(current_user, db)
-        result["user_type"] = user_type
-        
-        return result
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"获取连接状态失败: {str(e)}"
         ) 

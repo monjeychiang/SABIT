@@ -40,9 +40,9 @@ os.makedirs(logs_dir, exist_ok=True)
 static_dir = os.path.join(os.path.dirname(current_dir), 'static')
 os.makedirs(static_dir, exist_ok=True)
 
-# 配置日誌 - 解決中文編碼問題
+# 配置日誌 - 設置級別為INFO，減少過度詳細的輸出
 logging.basicConfig(
-    level=logging.DEBUG,  # 改為DEBUG級別，記錄更多日誌資訊
+    level=logging.INFO,  # 將日誌級別從DEBUG改為INFO，減少詳細輸出
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler(
@@ -53,12 +53,14 @@ logging.basicConfig(
     ]
 )
 
-# 設置第三方庫的日誌級別
-logging.getLogger('multipart').setLevel(logging.INFO)  # 降低multipart模組的日誌級別，減少輸出
+# 設置第三方庫的日誌級別為更高級別，減少非必要輸出
+logging.getLogger('multipart').setLevel(logging.WARNING)
 logging.getLogger('uvicorn').setLevel(logging.INFO)
+logging.getLogger('uvicorn.access').setLevel(logging.WARNING)  # 減少請求訪問日誌
+logging.getLogger('passlib').setLevel(logging.WARNING)  # 減少密碼庫的日誌輸出
 
 logger = logging.getLogger(__name__)
-logger.info(f"應用啟動於：{datetime.now(TAIPEI_TZ)}...")
+logger.info("應用啟動中...")
 
 # 導入必要的模組
 from app.api.endpoints import auth, admin, notifications, settings, markets, chat, chatroom
@@ -114,11 +116,100 @@ ping_rate_limiter = RateLimiter(requests_limit=20, window_seconds=60)  # 每分�
 async def lifespan(app: FastAPI):
     # 應用啟動前執行的代碼
     logger.info("應用啟動中...")
+    
+    # 確保日誌目錄存在
+    if not os.path.exists("logs"):
+        os.makedirs("logs")
+    
+    # 初始化市場數據服務
+    try:
+        from app.services.market_data import market_data_service
+        logger.info("正在啟動市場數據服務...")
+        
+        # 顯式調用 start 方法並等待其完成
+        try:
+            active_exchanges = await market_data_service.start()
+            logger.info(f"市場數據服務已成功啟動，活躍交易所: {active_exchanges}")
+        except Exception as e:
+            logger.error(f"市場數據服務啟動失敗: {str(e)}")
+            
+            # 如果 market_data_service.start() 失敗，則嘗試直接連接 BinanceExchange
+            try:
+                logger.info("嘗試直接連接 BinanceExchange...")
+                from app.core.exchanges.binance import BinanceExchange
+                
+                # 創建並連接
+                binance_exchange = BinanceExchange()
+                connect_result = await binance_exchange.connect()
+                
+                if connect_result:
+                    logger.info("備用連接成功: 直接連接 BinanceExchange")
+                else:
+                    logger.error("備用連接失敗: BinanceExchange 連接返回 False")
+            except Exception as binance_error:
+                logger.error(f"備用連接失敗: {str(binance_error)}")
+        
+        # 初始化市場價格緩存和後台更新任務
+        try:
+            from app.api.endpoints.markets import initialize_market_services
+            logger.info("正在初始化市場價格緩存和後台更新任務...")
+            await initialize_market_services()
+            logger.info("市場價格緩存和後台更新任務已初始化")
+        except Exception as e:
+            logger.error(f"初始化市場價格緩存失敗: {str(e)}")
+    except Exception as e:
+        logger.error(f"啟動市場數據服務失敗: {str(e)}")
+    
+    # 初始化在線狀態管理器
+    try:
+        from app.core.online_status_manager import online_status_manager
+        await online_status_manager.start()
+        logger.info("在線狀態管理器已啟動")
+    except Exception as e:
+        logger.error(f"啟動在線狀態管理器失敗: {str(e)}")
+    
+    # 初始化WebSocket管理器
+    try:
+        from app.core.settings import settings
+        node_id = settings.NODE_ID
+        from app.core.websocket_redis import init_redis_ws_manager
+        if settings.REDIS_ENABLED:
+            ws_manager = await init_redis_ws_manager(node_id)
+            if ws_manager:
+                logger.info(f"Redis WebSocket管理器初始化成功")
+            else:
+                logger.warning("Redis WebSocket管理器初始化失敗，將使用本地管理器")
+    except Exception as e:
+        logger.error(f"初始化Redis WebSocket管理器時出錯: {str(e)}")
+        logger.info("將使用本地WebSocket管理器")
+    
     # 在这里可以进行数据库初始化等操作
     yield
+    
     # 應用關閉時執行的代碼
-    logger.info("應用關閉中...")
-    # 在这里可以进行资源清理等操作
+    logger.info("應用正在關閉...")
+    
+    # 關閉市場數據服務及相關資源
+    try:
+        from app.api.endpoints.markets import cleanup_market_services
+        logger.info("正在關閉市場數據服務及相關資源...")
+        await cleanup_market_services()
+        logger.info("市場數據服務及相關資源已關閉")
+    except Exception as e:
+        logger.error(f"關閉市場數據服務及相關資源時出錯: {str(e)}")
+        import traceback
+        logger.error(f"詳細錯誤: {traceback.format_exc()}")
+    
+    # 關閉線上狀態管理器
+    try:
+        from app.core.online_status_manager import online_status_manager
+        logger.info("正在關閉線上狀態管理器...")
+        await online_status_manager.shutdown()
+        logger.info("線上狀態管理器已關閉")
+    except Exception as e:
+        logger.error(f"關閉線上狀態管理器時出錯: {str(e)}")
+    
+    logger.info("應用已完全關閉")
 
 # 創建 FastAPI 應用
 app = FastAPI(
@@ -256,57 +347,6 @@ app.include_router(
 # 創建數據庫表（使用database.py中的create_tables函數，而不是直接調用Base.metadata.create_all）
 create_tables()
 logger.info("數據庫表創建完成")
-
-@app.on_event("startup")
-async def startup_event():
-    """
-    應用程式啟動時的初始化操作
-    """
-    # 確保日誌目錄存在
-    if not os.path.exists("logs"):
-        os.makedirs("logs")
-    
-    # 初始化在線狀態管理器
-    from app.core.online_status_manager import online_status_manager
-    await online_status_manager.start()
-    
-    # 啟用自動清理功能，因前端 ping 已能正確更新活動時間
-    # online_status_manager.disable_auto_cleanup_feature(True)
-    logger.info("在線狀態管理器已啟動，自動清理功能已啟用")
-    
-    # 初始化WebSocket管理器
-    try:
-        node_id = settings.NODE_ID
-        from app.core.websocket_redis import init_redis_ws_manager
-        if settings.REDIS_ENABLED:
-            ws_manager = await init_redis_ws_manager(node_id)
-            if ws_manager:
-                logger.info(f"Redis WebSocket管理器初始化成功，節點ID: {node_id}")
-            else:
-                logger.warning("Redis WebSocket管理器初始化失敗，將使用本地管理器")
-    except Exception as e:
-        logger.error(f"初始化Redis WebSocket管理器時出錯: {str(e)}")
-        logger.info("將使用本地WebSocket管理器")
-    
-    # 注意：暫時移除了掛單管理器和市場數據管理器的啟動代碼
-    # 因為這些模組目前尚未實現
-    logger.info("應用程式啟動完成")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """應用關閉事件處理"""
-    logger.info("應用正在關閉...")
-    
-    # 關閉線上狀態管理器
-    try:
-        from app.core.online_status_manager import online_status_manager
-        logger.info("正在關閉線上狀態管理器...")
-        await online_status_manager.shutdown()
-        logger.info("線上狀態管理器已關閉")
-    except Exception as e:
-        logger.error(f"關閉線上狀態管理器時出錯: {str(e)}")
-    
-    logger.info("應用已完全關閉")
 
 # 在其他路由註冊之後添加
 # 直接導入 WebSocket 路由

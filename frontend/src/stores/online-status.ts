@@ -40,7 +40,7 @@ export const useOnlineStatusStore = defineStore('onlineStatus', {
       return !!state.onlineUsers[userId.toString()];
     },
     
-    // 获取在线用户ID列表
+    // 获取在線用戶ID列表
     onlineUserIds: (state) => {
       return Object.entries(state.onlineUsers)
         .filter(([_, isOnline]) => isOnline)
@@ -161,7 +161,7 @@ export const useOnlineStatusStore = defineStore('onlineStatus', {
       }, 120000); // 2分钟
     },
     
-    // 获取在线用户状态
+    // 获取在線用戶状态
     async fetchOnlineStatus(userIds?: number[]) {
       const authStore = useAuthStore();
       if (!authStore.isAuthenticated) {
@@ -185,7 +185,7 @@ export const useOnlineStatusStore = defineStore('onlineStatus', {
         });
         
         if (response.data) {
-          // 更新在线用户状态
+          // 更新在線用戶状态
           this.onlineUsers = {
             ...this.onlineUsers,
             ...response.data.online_status
@@ -200,11 +200,11 @@ export const useOnlineStatusStore = defineStore('onlineStatus', {
           }));
         }
       } catch (error) {
-        console.error('获取在线用户状态失败:', error);
+        console.error('获取在線用戶状态失败:', error);
       }
     },
     
-    // 获取特定聊天室的在线用户
+    // 获取特定聊天室的在線用戶
     async fetchRoomOnlineUsers(roomId: number) {
       const authStore = useAuthStore();
       if (!authStore.isAuthenticated) {
@@ -220,12 +220,12 @@ export const useOnlineStatusStore = defineStore('onlineStatus', {
         });
         
         if (response.data && response.data.online_users) {
-          // 返回在线用户列表
+          // 返回在線用戶列表
           return response.data.online_users;
         }
         return [];
       } catch (error) {
-        console.error(`获取聊天室 ${roomId} 的在线用户失败:`, error);
+        console.error(`获取聊天室 ${roomId} 的在線用戶失败:`, error);
         return [];
       }
     },

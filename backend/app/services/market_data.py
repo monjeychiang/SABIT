@@ -7,7 +7,7 @@ from app.core.exchanges.binance import BinanceExchange
 try:
     from ..cython_modules import calculate_indicators, CYTHON_ENABLED
     import logging
-    logging.info("使用Cython加速版技术指标计算函数")
+    logging.info("使用Cython加速版技術指標計算函數")
 except ImportError:
     # 如果导入失败，使用原生Python版本
     CYTHON_ENABLED = False
@@ -16,6 +16,8 @@ except ImportError:
 
 # 初始化日誌記錄器，用於記錄市場數據服務的運行情況
 logger = logging.getLogger(__name__)
+# 設置日誌級別為INFO，保留重要訊息
+logger.setLevel(logging.INFO)
 
 class MarketDataService:
     """
@@ -66,18 +68,38 @@ class MarketDataService:
             連接過程是非同步的，需要使用await關鍵字調用。
             連接後會自動訂閱市場數據流，無需額外訂閱操作。
         """
+        # 簡化的開始日誌記錄
+        logger.info("市場數據服務啟動中")
+        logger.info(f"已初始化的交易所數量: {len(self.exchanges)}")
+        
+        # 檢查是否有初始化的交易所
+        if not self.exchanges:
+            logger.warning("沒有初始化任何交易所，市場數據服務啟動完成但無可用數據源")
+            return
+            
+        # 單獨處理每個交易所，防止一個錯誤影響其他交易所
+        active_exchanges = []
         for name, exchange in self.exchanges.items():
             try:
-                # 建立WebSocket連接 - BinanceExchange的connect方法已包含市場類型的訂閱邏輯
-                await exchange.connect()
-                # 不需要在此重複訂閱市場類型
-                # for market_type in ["spot", "futures"]:
-                #     await exchange.subscribe_market_type(market_type)
-                logger.info(f"已啟動{name}交易所的數據服務")
-            except Exception as e:
-                # 記錄啟動過程中的錯誤
-                logger.error(f"啟動{name}交易所數據服務時出錯: {str(e)}")
+                # 簡化日誌輸出
+                logger.info(f"正在啟動 {name} 交易所連接")
                 
+                # 嘗試連接交易所
+                connect_result = await exchange.connect()
+                
+                if connect_result:
+                    logger.info(f"{name} 交易所連接成功")
+                    active_exchanges.append(name)
+                else:
+                    logger.error(f"{name} 交易所連接失敗")
+            except Exception as e:
+                # 記錄啟動過程中的錯誤，但不輸出完整堆疊跟踪，減少日誌量
+                logger.error(f"啟動 {name} 交易所數據服務時出錯: {str(e)}")
+        
+        # 簡化完成日誌
+        logger.info(f"市場數據服務啟動完成，活躍交易所: {', '.join(active_exchanges) if active_exchanges else '無'}")
+        return active_exchanges
+        
     async def stop(self):
         """
         停止所有交易所的數據服務
@@ -89,14 +111,16 @@ class MarketDataService:
             關閉過程是非同步的，需要使用await關鍵字調用。
             確保在應用終止前正確關閉連接，避免資源洩漏。
         """
+        logger.info("正在停止市場數據服務")
         for name, exchange in self.exchanges.items():
             try:
                 # 斷開WebSocket連接
                 await exchange.disconnect()
-                logger.info(f"已停止{name}交易所的數據服務")
+                logger.info(f"{name}交易所連接已關閉")
             except Exception as e:
                 # 記錄停止過程中的錯誤
                 logger.error(f"停止{name}交易所數據服務時出錯: {str(e)}")
+        logger.info("市場數據服務已停止")
                 
     def get_all_tickers(self, exchange: str = "binance", market_type: str = "spot") -> Dict[str, Any]:
         """

@@ -498,7 +498,7 @@ class AccountWebSocketService {
       const timeout = setTimeout(() => {
         this.socket?.removeEventListener('message', handleResponse);
         reject(new Error('請求超時，沒有收到響應'));
-      }, 30000); // 30秒超時
+      }, 30000);
       
       // 發送消息
       const success = this.send(msgWithId);
@@ -516,7 +516,7 @@ class AccountWebSocketService {
     // 確保使用正確的消息格式
     const message = {
       type: 'place_order',
-      order_params: orderParams // 使用order_params作為鍵名
+      params: orderParams // 將 order_params 修改為 params 作為鍵名
     };
     
     return await this.sendMessage(message);
@@ -564,7 +564,7 @@ class AccountWebSocketService {
       // 發送取消訂單請求
       const success = this.send({
         type: 'cancel_order',
-        cancel_params: cancelParams,
+        params: cancelParams,  // 將 cancel_params 改為 params 作為鍵名
         request_id: requestId
       });
       

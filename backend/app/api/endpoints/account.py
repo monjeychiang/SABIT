@@ -614,11 +614,11 @@ async def futures_account_websocket(
             
             # 優先檢查是否已經有現有的 WebSocket 連接
             # 構造緩存鍵
-            cache_key = user_id if user_id else f"{exchange}_{api_key_data['api_key'][:8]}_False"
+            cache_key = user_id if user_id else None
             logger.info(f"[AccountWS] 檢查是否有現有的連接 - key:{cache_key}")
             
             # 檢查緩存中是否有可用的客戶端
-            if cache_key in ws_clients:
+            if cache_key and cache_key in ws_clients:
                 client = ws_clients[cache_key]
                 
                 # 檢查客戶端是否仍然連接
@@ -629,73 +629,178 @@ async def futures_account_websocket(
                     # 更新最後活動時間
                     binance_client.last_activity_time = time.time()
                     
-                    try:
-                        # 使用現有客戶端獲取帳戶數據
-                        account_info = await binance_client.get_account_info()
-                        
-                        # 格式化返回數據
-                        account_data = {
-                            "balances": [],
-                            "positions": [],
-                            "api_type": "WebSocket API (Ed25519)",
-                            "raw_data": account_info
-                        }
-                        
-                        # 處理賬戶資訊
-                        if isinstance(account_info, dict):
-                            if "assets" in account_info:
-                                account_data["balances"] = account_info["assets"]
-                                
-                                # 提取總權益和可用餘額
-                                for asset in account_info["assets"]:
-                                    if asset.get("asset") == "USDT":
-                                        account_data["totalWalletBalance"] = asset.get("walletBalance", "0")
-                                        account_data["availableBalance"] = asset.get("availableBalance", "0")
-                                        break
+                    # 重要：添加重新認證步驟，確保認證有效
+                    auth_success = await binance_client.refresh_auth()
+                    if auth_success:
+                        try:
+                            # 使用現有客戶端獲取帳戶數據
+                            account_info = await binance_client.get_account_info()
                             
-                            if "positions" in account_info:
-                                account_data["positions"] = account_info["positions"]
-                        
-                        logger.info(f"[AccountWS] 成功使用現有WebSocket連接獲取帳戶數據")
-                    except Exception as e:
-                        logger.error(f"[AccountWS] 使用現有連接獲取數據失敗: {str(e)}")
-                        logger.info(f"[AccountWS] 嘗試建立新連接獲取數據")
-                        
-                        # 如果使用現有連接失敗，創建新連接
-                        account_data = await get_account_data(exchange, api_key_data["api_key"], api_key_data["api_secret"], user_id=user_id)
-                        
-                        # 獲取更新的客戶端引用
-                        binance_client, _ = await get_or_create_ws_client(api_key_data["api_key"], api_key_data["api_secret"], exchange, user_id=user_id)
+                            # 格式化返回數據
+                            account_data = {
+                                "balances": [],
+                                "positions": [],
+                                "api_type": "WebSocket API (Ed25519)",
+                                "raw_data": account_info
+                            }
+                            
+                            # 處理賬戶資訊
+                            if isinstance(account_info, dict):
+                                if "assets" in account_info:
+                                    account_data["balances"] = account_info["assets"]
+                                    
+                                    # 提取總權益和可用餘額
+                                    for asset in account_info["assets"]:
+                                        if asset.get("asset") == "USDT":
+                                            account_data["totalWalletBalance"] = asset.get("walletBalance", "0")
+                                            account_data["availableBalance"] = asset.get("availableBalance", "0")
+                                            break
+                                
+                                if "positions" in account_info:
+                                    account_data["positions"] = account_info["positions"]
+                            
+                            logger.info(f"[AccountWS] 成功使用現有WebSocket連接獲取帳戶數據")
+                            
+                            # 更新緩存
+                            last_account_data = account_data
+                
+                            # 發送帳戶數據
+                            await websocket.send_json({
+                                "success": True,
+                                "data": account_data,
+                                "update_type": "full",  # 標記為完整更新
+                                "timestamp": datetime.now().isoformat()
+                            })
+                            
+                            logger.info(f"[AccountWS] 已成功發送 {exchange} 帳戶數據給用戶 {user_id}")
+                            
+                            # 既然已經成功使用現有連接獲取了數據，就不需要再從數據庫獲取API密鑰了
+                            api_key_data = None
+                        except Exception as e:
+                            logger.error(f"[AccountWS] 使用現有連接獲取數據失敗: {str(e)}")
+                            logger.info(f"[AccountWS] 需要從數據庫獲取API密鑰")
+                            binance_client = None  # 重置客戶端引用，後續會重新創建
+                    else:
+                        logger.warning(f"[AccountWS] 重新認證失敗，將創建新連接 - key:{cache_key}")
+                        # 如果重新認證失敗，從緩存中移除該客戶端
+                        try:
+                            await binance_client.disconnect()
+                        except:
+                            pass
+                        if cache_key in ws_clients:
+                            del ws_clients[cache_key]
+                            
+                        # 從數據庫獲取 API 密鑰並創建新連接
+                        logger.info(f"[AccountWS] 認證失效，需要從數據庫獲取API密鑰")
+                        binance_client = None
                 else:
-                    logger.warning(f"[AccountWS] 緩存中的客戶端已斷開，創建新連接 - key:{cache_key}")
+                    logger.warning(f"[AccountWS] 緩存中的客戶端已斷開，需要從數據庫獲取API密鑰")
+            else:
+                logger.info(f"[AccountWS] 無現有連接，需要從數據庫獲取API密鑰")
+            
+            # 如果沒有成功使用現有連接，則需要從數據庫獲取API密鑰
+            if binance_client is None:
+                # 如果沒有直接API模式，從數據庫獲取API密鑰
+                if not direct_api_mode:
+                    # 獲取API密鑰
+                    api_key = db.query(ExchangeAPI).filter(
+                        ExchangeAPI.user_id == user_id, 
+                        ExchangeAPI.exchange == exchange
+                    ).first()
+            
+                    if not api_key:
+                        await websocket.send_json({"success": False, "message": f"未找到{exchange}的API密鑰"})
+                        logger.warning(f"[AccountWS] 用戶 {user_id} 沒有 {exchange} 的API密鑰")
+                        return
                     
-                    # 如果緩存的客戶端已斷開，創建新連接
+                    logger.info(f"[AccountWS] 從數據庫獲取到用戶 {user_id} 的 {exchange} API密鑰，開始解密")
+                    
+                    # 解密API密鑰
+                    from ...core.security import decrypt_api_key, clean_api_key
+                    
+                    # 記錄加密API密鑰的長度（不記錄實際內容以保護安全）
+                    encrypted_key_length = len(api_key.ed25519_key) if api_key.ed25519_key else 0
+                    encrypted_secret_length = len(api_key.ed25519_secret) if api_key.ed25519_secret else 0
+                    logger.debug(f"[AccountWS] 加密的Ed25519 API密鑰長度: {encrypted_key_length}, 加密的Ed25519 API密鑰密碼長度: {encrypted_secret_length}")
+                    
+                    # 解密Ed25519 API密鑰
+                    decrypted_key = decrypt_api_key(api_key.ed25519_key)
+                    decrypted_secret = decrypt_api_key(api_key.ed25519_secret)
+                    
+                    # 檢查解密結果
+                    if not decrypted_key or not decrypted_secret:
+                        error_msg = "Ed25519 API密鑰解密失敗"
+                        logger.error(f"[AccountWS] {error_msg}")
+                        
+                        # 嘗試使用HMAC作為後備方案
+                        logger.info(f"[AccountWS] 嘗試使用HMAC-SHA256 API密鑰作為後備")
+                        decrypted_key = decrypt_api_key(api_key.api_key)
+                        decrypted_secret = decrypt_api_key(api_key.api_secret)
+                        
+                        if not decrypted_key or not decrypted_secret:
+                            error_msg = "API密鑰解密失敗（Ed25519和HMAC均失敗）"
+                            logger.error(f"[AccountWS] {error_msg}")
+                            await websocket.send_json({"success": False, "message": error_msg})
+                            return
+                        
+                        logger.info(f"[AccountWS] 成功使用HMAC-SHA256 API密鑰作為後備方案")
+                    
+                    # 確保API密鑰格式正確
+                    api_key_data = {
+                        "api_key": decrypted_key,
+                        "api_secret": decrypted_secret
+                    }
+                    
+                    logger.info(f"[AccountWS] 成功獲取並解密用戶 {user_id} 的 {exchange} API密鑰")
+                else:
+                    logger.info(f"[AccountWS] 使用直接提供的API密鑰，繞過數據庫加密/解密")
+                
+                # 清理 API 密鑰中可能存在的引號和空白字符
+                if api_key_data:
+                    # 這個步驟可以保留，作為額外的安全措施
+                    for key in ["api_key", "api_secret"]:
+                        if api_key_data[key]:
+                            # 移除首尾引號
+                            if api_key_data[key].startswith('"') and api_key_data[key].endswith('"'):
+                                api_key_data[key] = api_key_data[key][1:-1]
+                            # 清理空白字符
+                            api_key_data[key] = api_key_data[key].strip()
+                    
+                    # 顯示 API 密鑰長度以進行診斷
+                    key_length = len(api_key_data['api_key']) if api_key_data['api_key'] else 0
+                    secret_length = len(api_key_data['api_secret']) if api_key_data['api_secret'] else 0
+                    logger.debug(f"[AccountWS] 最終使用的API密鑰長度: {key_length}, API密鑰密碼長度: {secret_length}")
+                    
+                    # 檢查API密鑰格式，提供更多診斷信息
+                    if key_length < 10 or secret_length < 10:
+                        logger.warning(f"[AccountWS] API密鑰長度異常，可能解密有問題: key={key_length}, secret={secret_length}")
+                    
+                    # 檢查是否包含控制字符或不可打印字符
+                    if api_key_data['api_key'] and any(c not in string.printable for c in api_key_data['api_key']):
+                        logger.warning("[AccountWS] API密鑰包含不可打印字符，可能解密有問題")
+                    if api_key_data['api_secret'] and any(c not in string.printable for c in api_key_data['api_secret']):
+                        logger.warning("[AccountWS] API密鑰密碼包含不可打印字符，可能解密有問題")
+                    
+                    # 使用API密鑰獲取帳戶數據
+                    logger.info(f"[AccountWS] 使用API密鑰創建新連接並獲取帳戶數據")
                     account_data = await get_account_data(exchange, api_key_data["api_key"], api_key_data["api_secret"], user_id=user_id)
                     
-                    # 獲取新的客戶端引用
+                    # 獲取客戶端引用
                     binance_client, _ = await get_or_create_ws_client(api_key_data["api_key"], api_key_data["api_secret"], exchange, user_id=user_id)
-            else:
-                logger.info(f"[AccountWS] 無現有連接，創建新的WebSocket連接 - user:{user_id}")
-                
-                # 沒有現有連接，創建新連接
-                account_data = await get_account_data(exchange, api_key_data["api_key"], api_key_data["api_secret"], user_id=user_id)
-                
-                # 獲取客戶端引用
-                binance_client, _ = await get_or_create_ws_client(api_key_data["api_key"], api_key_data["api_secret"], exchange, user_id=user_id)
-                logger.info(f"[AccountWS] 已獲取WebSocket客戶端引用，用於後續通信")
+                    logger.info(f"[AccountWS] 已獲取WebSocket客戶端引用，用於後續通信")
+                    
+                    # 更新緩存
+                    last_account_data = account_data
             
-            # 更新緩存
-            last_account_data = account_data
-        
-            # 發送帳戶數據
-            await websocket.send_json({
-                "success": True,
-                "data": account_data,
-                "update_type": "full",  # 標記為完整更新
-                "timestamp": datetime.now().isoformat()
-            })
-            
-            logger.info(f"[AccountWS] 已成功發送 {exchange} 帳戶數據給用戶 {user_id}")
+                    # 發送帳戶數據
+                    await websocket.send_json({
+                        "success": True,
+                        "data": account_data,
+                        "update_type": "full",  # 標記為完整更新
+                        "timestamp": datetime.now().isoformat()
+                    })
+                    
+                    logger.info(f"[AccountWS] 已成功發送 {exchange} 帳戶數據給用戶 {user_id}")
             
             # 使用無限循環保持連接（長期連接）
             # 追蹤最後活動時間
@@ -858,18 +963,27 @@ async def futures_account_websocket(
                                 async def place_order_with_timeout():
                                     try:
                                         # 從order_params中提取必要的參數
+                                        symbol = order_params.get("symbol")
                                         side = order_params.get("side")
                                         order_type = order_params.get("type")  # 'type' 參數對應 'order_type'
                                         
-                                        if not side or not order_type:
-                                            logger.error(f"[AccountWS] 缺少下單必要參數 - side: {side}, order_type: {order_type}")
-                                            return None, "缺少下單必要參數: side 或 type"
+                                        if not symbol or not side or not order_type:
+                                            logger.error(f"[AccountWS] 缺少下單必要參數 - symbol: {symbol}, side: {side}, order_type: {order_type}")
+                                            return None, "缺少下單必要參數: symbol、side 或 type"
                                         
                                         # 使用已有的WebSocket客戶端下單
                                         if binance_client:
-                                            logger.info(f"[AccountWS] 使用現有WebSocket客戶端下單 - request_id:{request_id}, side:{side}, order_type:{order_type}")
+                                            logger.info(f"[AccountWS] 使用現有WebSocket客戶端下單 - request_id:{request_id}, symbol:{symbol}, side:{side}, order_type:{order_type}")
+                                            # 從order_params中提取其他可能的參數
+                                            quantity = order_params.get("quantity")
+                                            price = order_params.get("price")
+                                            time_in_force = order_params.get("timeInForce")
+                                            
+                                            # 提取所有參數，但排除前三個位置參數，它們將單獨傳遞
+                                            kwargs = {k: v for k, v in order_params.items() if k not in ["symbol", "side", "type"]}
+                                            
                                             result = await asyncio.wait_for(
-                                                binance_client.place_order(side, order_type, order_params),  # 按位置順序傳遞參數
+                                                binance_client.place_order(symbol, side, order_type, **kwargs),
                                                 timeout=15.0  # 設置15秒超時
                                             )
                                         else:
@@ -1708,11 +1822,11 @@ async def place_order_via_websocket(exchange, api_key, api_secret, order_params,
         exchange: 交易所名稱
         api_key: API密鑰
         api_secret: API密鑰密碼
-        order_params: 訂單參數
+        order_params: 下單參數
         user_id: 用戶ID，用於客戶端緩存
             
     Returns:
-        訂單結果
+        下單結果
     """
     logger.info(f"[AccountWS] 開始下單操作(WebSocket): {exchange}")
     
@@ -1724,16 +1838,7 @@ async def place_order_via_websocket(exchange, api_key, api_secret, order_params,
             raise ValueError(error_msg)
         
         # 檢查必要參數
-        required_params = ["symbol", "side", "type", "quantity"]
-        
-        # LIMIT訂單還需要price和timeInForce
-        if order_params.get("type") == "LIMIT":
-            if "price" not in order_params:
-                raise ValueError("缺少必要參數: price (限價單需要價格)")
-            if "timeInForce" not in order_params:
-                # 設定預設的timeInForce為GTC
-                order_params["timeInForce"] = "GTC"
-            
+        required_params = ["symbol", "side", "type"]
         for param in required_params:
             if param not in order_params:
                 raise ValueError(f"缺少必要參數: {param}")
@@ -1741,24 +1846,21 @@ async def place_order_via_websocket(exchange, api_key, api_secret, order_params,
         # 處理不同交易所
         if exchange.lower() == "binance":
             try:
-                # 檢查是否需要使用測試網
-                test_mode = False
-                if "test" in order_params and (order_params["test"] == "true" or order_params["test"] is True or order_params["test"] == "TRUE"):
-                    test_mode = True
-                    logger.info(f"[AccountWS] 使用測試網模式下單")
-                
                 # 獲取或創建WebSocket客戶端
                 client, is_new = await get_or_create_ws_client(
-                    api_key, api_secret, exchange, test_mode, user_id
+                    api_key, api_secret, exchange, testnet=False, user_id=user_id
                 )
                 
                 # 從order_params中提取必要的參數
                 symbol = order_params["symbol"]
                 side = order_params["side"]
-                order_type = order_params["type"]  # 注意，這裡提取了type參數作為order_type
+                order_type = order_params["type"]  # 使用type作為參數
+                
+                # 從order_params中提取其他可能的參數，並將其作為關鍵字參數傳遞
+                kwargs = {k: v for k, v in order_params.items() if k not in ["symbol", "side", "type"]}
                 
                 # 下單
-                result = await client.place_order(side, order_type, order_params)
+                result = await client.place_order(symbol, side, order_type, **kwargs)
                 
                 # 不再每次操作後斷開連接，保持連接以便重用
                 
@@ -1815,12 +1917,9 @@ async def cancel_order_via_websocket(exchange, api_key, api_secret, cancel_param
         # 處理不同交易所
         if exchange.lower() == "binance":
             try:
-                # 檢查是否需要使用測試網
-                test_mode = False
-                
                 # 獲取或創建WebSocket客戶端
                 client, is_new = await get_or_create_ws_client(
-                    api_key, api_secret, exchange, test_mode, user_id
+                    api_key, api_secret, exchange, testnet=False, user_id=user_id
                 )
                 
                 # 從cancel_params中提取必要的參數
@@ -1828,7 +1927,7 @@ async def cancel_order_via_websocket(exchange, api_key, api_secret, cancel_param
                 order_id = cancel_params["orderId"]
                 
                 # 取消訂單
-                result = await client.cancel_order(symbol, order_id, cancel_params)
+                result = await client.cancel_order(symbol, order_id, **cancel_params)
                 
                 # 不再每次操作後斷開連接，保持連接以便重用
                 

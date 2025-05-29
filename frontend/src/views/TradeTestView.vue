@@ -131,7 +131,7 @@
       <div class="card place-order">
         <div class="card-header">
           <h2>下單測試</h2>
-          <div class="tag" :class="{ 'test-tag': testMode }">{{ testMode ? '測試模式' : '實盤模式' }}</div>
+          <div class="tag">實盤模式</div>
         </div>
         <div class="form-group">
           <label>交易對</label>
@@ -176,17 +176,8 @@
             <option value="FOK">完全成交或取消 (FOK)</option>
           </select>
         </div>
-        <div class="form-group test-mode-group">
-          <label class="checkbox-label">
-            <input type="checkbox" v-model="testMode" />
-            <span class="checkbox-text">測試模式</span>
-          </label>
-          <div class="test-mode-hint">
-            {{ testMode ? '僅測試，不實際下單' : '警告：將實際提交訂單到交易所' }}
-          </div>
-        </div>
         <div class="form-actions">
-          <button @click="submitOrder" :disabled="isOrderSubmitting" class="submit-btn" :class="{ 'test-btn': testMode, 'live-btn': !testMode }">
+          <button @click="submitOrder" :disabled="isOrderSubmitting" class="submit-btn">
             {{ isOrderSubmitting ? '提交中...' : '提交訂單' }}
           </button>
         </div>
@@ -204,6 +195,15 @@
             <div class="summary-row">
               <div class="summary-label">交易對:</div>
               <div class="summary-value">{{ orderResponse.symbol }}</div>
+            </div>
+            <div class="summary-row" v-if="orderLatency > 0">
+              <div class="summary-label">下單延遲:</div>
+              <div class="summary-value">
+                <span class="latency-badge" :class="getLatencyClass(orderLatency)">
+                  {{ orderLatency }}ms
+                  <span class="latency-text">{{ getLatencyText(orderLatency) }}</span>
+                </span>
+              </div>
             </div>
           </div>
           <pre>{{ JSON.stringify(orderResponse, null, 2) }}</pre>
@@ -244,6 +244,15 @@
               <div class="summary-label">狀態:</div>
               <div class="summary-value">{{ cancelResponse.status }}</div>
             </div>
+            <div class="summary-row" v-if="cancelLatency > 0">
+              <div class="summary-label">取消延遲:</div>
+              <div class="summary-value">
+                <span class="latency-badge" :class="getLatencyClass(cancelLatency)">
+                  {{ cancelLatency }}ms
+                  <span class="latency-text">{{ getLatencyText(cancelLatency) }}</span>
+                </span>
+              </div>
+            </div>
           </div>
           <pre>{{ JSON.stringify(cancelResponse, null, 2) }}</pre>
         </div>
@@ -251,6 +260,52 @@
           <h3>錯誤信息</h3>
           <div class="error-message">{{ cancelError }}</div>
         </div>
+      </div>
+    </div>
+
+    <div class="card latency-stats" v-if="isConnected && latencyHistory.length > 0">
+      <div class="card-header">
+        <h2>延遲統計</h2>
+        <div class="tag">WebSocket性能</div>
+      </div>
+      
+      <div class="latency-overview">
+        <div class="average-latency">
+          <div class="latency-label">平均延遲</div>
+          <div class="latency-value">
+            <span class="latency-badge" :class="getLatencyClass(averageLatency)">
+              {{ averageLatency }}ms
+            </span>
+          </div>
+        </div>
+      </div>
+      
+      <div class="latency-history">
+        <h3>最近操作延遲 (最多 {{ MAX_HISTORY }} 筆)</h3>
+        <table class="latency-table">
+          <thead>
+            <tr>
+              <th>時間</th>
+              <th>操作</th>
+              <th>交易對</th>
+              <th>類型</th>
+              <th>延遲</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="record in latencyHistory" :key="record.id">
+              <td>{{ new Date(record.time).toLocaleTimeString() }}</td>
+              <td>{{ record.type }}</td>
+              <td>{{ record.symbol }}</td>
+              <td>{{ record.orderType || '-' }}</td>
+              <td>
+                <span class="latency-badge small" :class="getLatencyClass(record.latency)">
+                  {{ record.latency }}ms
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
@@ -362,7 +417,10 @@ const cancelForm = ref({
 // 狀態標記
 const isOrderSubmitting = ref(false);
 const isCancelSubmitting = ref(false);
-const testMode = ref(true);
+
+// 下單延遲測量變量
+const orderLatency = ref(0);
+const cancelLatency = ref(0);
 
 // 幣安連接錯誤狀態
 const binanceConnectError = ref(false);
@@ -373,6 +431,34 @@ const orderResponse = ref<any>(null);
 const orderError = ref<string | null>(null);
 const cancelResponse = ref<any>(null);
 const cancelError = ref<string | null>(null);
+
+// 延遲統計
+const latencyHistory = ref([]);
+const MAX_HISTORY = 10; // 最多記錄10條歷史數據
+
+// 添加延遲數據到歷史記錄
+const addLatencyRecord = (type, latency, symbol, orderType = null) => {
+  latencyHistory.value.unshift({
+    id: Date.now(),
+    type,
+    latency,
+    symbol,
+    orderType,
+    time: new Date()
+  });
+  
+  // 保持歷史記錄在最大限制內
+  if (latencyHistory.value.length > MAX_HISTORY) {
+    latencyHistory.value = latencyHistory.value.slice(0, MAX_HISTORY);
+  }
+};
+
+// 計算平均延遲
+const averageLatency = computed(() => {
+  if (latencyHistory.value.length === 0) return 0;
+  const sum = latencyHistory.value.reduce((acc, item) => acc + item.latency, 0);
+  return Math.round(sum / latencyHistory.value.length);
+});
 
 // 連接WebSocket
 const connect = async () => {
@@ -442,6 +528,7 @@ const refreshAccountData = async () => {
 const submitOrder = async () => {
   orderResponse.value = null;
   orderError.value = null;
+  orderLatency.value = 0; // 重置延遲時間
 
   // 驗證必填欄位
   if (!orderForm.value.symbol) {
@@ -482,11 +569,6 @@ const submitOrder = async () => {
       recvWindow: 60000
     };
 
-    // 設置測試模式參數
-    if (testMode.value) {
-      orderParams.test = 'TRUE';
-    }
-
     // 根據訂單類型添加特定參數
     if (orderForm.value.type === 'LIMIT') {
       orderParams.price = orderForm.value.price;
@@ -496,9 +578,18 @@ const submitOrder = async () => {
     // 記錄訂單提交
     console.log('提交訂單參數：', orderParams);
 
-    // 發送下單請求 - 使用更新後的placeOrder方法
+    // 測量下單延遲 - 開始時間
+    const startTime = Date.now();
+
+    // 發送下單請求
     const result = await placeOrder(orderParams);
     console.log('訂單響應：', result);
+
+    // 計算延遲時間 (毫秒)
+    orderLatency.value = Date.now() - startTime;
+    
+    // 添加到延遲歷史
+    addLatencyRecord('下單', orderLatency.value, orderForm.value.symbol, orderForm.value.type);
 
     // 處理響應
     if (result.success === false) {
@@ -558,6 +649,7 @@ const submitCancelOrder = async () => {
   // 清除之前的結果
   cancelResponse.value = null;
   cancelError.value = null;
+  cancelLatency.value = 0; // 重置延遲時間
   
   try {
     isCancelSubmitting.value = true;
@@ -572,7 +664,6 @@ const submitCancelOrder = async () => {
     }
     
     // 構建取消訂單參數
-    // 參考：https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-api#cancel-order-trade
     const cancelParams = {
       symbol: cancelForm.value.symbol,
       orderId: cancelForm.value.orderId,
@@ -582,9 +673,18 @@ const submitCancelOrder = async () => {
     
     console.log('提交取消訂單:', cancelParams);
     
+    // 測量取消訂單延遲 - 開始時間
+    const startTime = Date.now();
+    
     // 發送取消訂單請求
     const result = await cancelOrder(cancelParams);
     console.log('取消訂單響應:', result);
+    
+    // 計算延遲時間 (毫秒)
+    cancelLatency.value = Date.now() - startTime;
+    
+    // 添加到延遲歷史
+    addLatencyRecord('取消', cancelLatency.value, cancelForm.value.symbol);
     
     // 檢查響應
     if (result && result.error) {
@@ -747,6 +847,24 @@ const filteredPositions = computed(() => {
 const availableBalance = computed(() => accountData.value.availableBalance || '0');
 const totalWalletBalance = computed(() => accountData.value.totalWalletBalance || '0');
 const totalUnrealizedProfit = computed(() => accountData.value.totalUnrealizedProfit || '0');
+
+// 獲取延遲等級
+const getLatencyClass = (latency) => {
+  if (!latency) return '';
+  if (latency < 200) return 'latency-excellent'; // 極佳: < 200ms
+  if (latency < 500) return 'latency-good';      // 良好: 200-500ms
+  if (latency < 1000) return 'latency-normal';   // 一般: 500-1000ms
+  return 'latency-slow';                         // 緩慢: > 1000ms
+};
+
+// 獲取延遲文本描述
+const getLatencyText = (latency) => {
+  if (!latency) return '';
+  if (latency < 200) return '極佳';
+  if (latency < 500) return '良好';
+  if (latency < 1000) return '一般';
+  return '緩慢';
+};
 
 // 組件掛載時自動連接到WebSocket
 onMounted(async () => {
@@ -1220,28 +1338,11 @@ onMounted(async () => {
   border-left: 4px solid #e53935;
 }
 
-.test-mode-group {
-  padding: 15px;
-  border-radius: 8px;
-  background-color: #fff9c4;
-  border: 1px solid #fff176;
-}
-
-.checkbox-label {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-}
-
-.checkbox-text {
-  font-weight: 500;
-}
-
-.test-mode-hint {
-  margin-top: 8px;
-  font-size: 0.9rem;
-  font-style: italic;
-  color: #ff6f00;
+.test-mode-group,
+.test-mode-hint,
+.test-btn,
+.test-tag {
+  display: none;
 }
 
 /* 表單操作按鈕 */
@@ -1286,19 +1387,11 @@ button:disabled {
   box-shadow: none;
 }
 
-.submit-btn.test-btn {
-  background-color: #fb8c00;
-}
-
-.submit-btn.test-btn:hover {
-  background-color: #f57c00;
-}
-
-.submit-btn.live-btn {
+.submit-btn {
   background-color: #e53935;
 }
 
-.submit-btn.live-btn:hover {
+.submit-btn:hover {
   background-color: #d32f2f;
 }
 
@@ -1393,11 +1486,6 @@ pre {
   font-size: 0.8rem;
   font-weight: 500;
   color: #78909c;
-}
-
-.test-tag {
-  background-color: #fff9c4;
-  color: #ff6f00;
 }
 
 /* 資料區域 */
@@ -1953,5 +2041,117 @@ tbody tr:hover {
   font-weight: 500;
   padding: 3px 8px;
   border-radius: 4px;
+}
+
+.latency-value {
+  font-weight: 600;
+}
+
+.latency-badge {
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-family: 'Courier New', monospace;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.latency-text {
+  font-size: 0.8em;
+  opacity: 0.9;
+}
+
+.latency-excellent {
+  background-color: #e8f5e9;
+  color: #2e7d32;
+  border: 1px solid #a5d6a7;
+}
+
+.latency-good {
+  background-color: #e3f2fd;
+  color: #1976d2;
+  border: 1px solid #90caf9;
+}
+
+.latency-normal {
+  background-color: #fff3e0;
+  color: #f57c00;
+  border: 1px solid #ffcc80;
+}
+
+.latency-slow {
+  background-color: #ffebee;
+  color: #d32f2f;
+  border: 1px solid #ef9a9a;
+}
+
+/* 添加延遲統計卡片相關樣式 */
+.latency-stats {
+  grid-column: 1 / -1;  /* 跨越所有列 */
+  background: linear-gradient(to right, #f8f9fa, #ffffff);
+  border-left: 4px solid #5c6bc0;
+}
+
+.latency-overview {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.average-latency {
+  padding: 20px;
+  background-color: #f5f7fa;
+  border-radius: 8px;
+  text-align: center;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+  min-width: 200px;
+}
+
+.latency-label {
+  font-size: 1rem;
+  color: #546e7a;
+  margin-bottom: 10px;
+}
+
+.latency-history h3 {
+  font-size: 1.1rem;
+  color: #37474f;
+  margin-bottom: 10px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.latency-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.latency-table th {
+  background-color: #f5f7fa;
+  padding: 10px;
+  font-weight: 500;
+  color: #455a64;
+  text-align: left;
+  border-bottom: 2px solid #e0e0e0;
+}
+
+.latency-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #eeeeee;
+}
+
+.latency-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.latency-badge.small {
+  padding: 2px 8px;
+  font-size: 0.85rem;
 }
 </style> 

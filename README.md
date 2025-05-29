@@ -538,6 +538,4 @@ python test_account_websocket.py --monitor --save-data /data/account_$(date +%Y%
 - 若在生產環境使用，請確保使用HTTPS和WSS協議
 - 腳本中有完整的API金鑰加密和解密流程驗證
 - 監控模式下會一直佔用連接，請謹慎使用
-- 保存到文件的數據可能包含敏感信息，請妥善保管 / /  
- ,nf��c�N��Oo` 
- 
+- 保存到文件的數據可能包含敏感信息，請妥善保管
