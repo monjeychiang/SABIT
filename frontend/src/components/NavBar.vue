@@ -487,6 +487,7 @@ import { useUserStore } from '@/stores/user';
 import { useThemeStore } from '@/stores/theme';
 import UserAvatar from '@/components/UserAvatar.vue';
 import authService from '@/services/authService';
+import webSocketManager from '@/services/webSocketService'
 
 const notificationStore = useNotificationStore();
 const chatroomStore = useChatroomStore();
@@ -638,7 +639,7 @@ onMounted(async () => {
       if (!notificationStore.websocketConnected) {
         console.log('检测到WebSocket未连接，尝试重新连接...');
         // 注意：此方法内部已更新为使用WebSocketManager，保留调用是为了兼容现有代码
-        notificationStore.connectWebSocket();
+        webSocketManager.connect();
         
         // 如果需要同时重连所有WebSocket，可以使用以下代码
         // import('@/services/webSocketService').then(({ default: webSocketManager }) => {

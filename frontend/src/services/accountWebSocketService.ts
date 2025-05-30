@@ -22,13 +22,19 @@ export interface AccountWSStatus {
 class AccountWebSocketService {
   private socket: WebSocket | null = null;
   private reconnectTimer: number | null = null;
-  private token: string = '';
+  private token: string | null = null;
   private exchange: string = '';
-  private pingInterval: any = null;
-  private refreshInterval: any = null;
+  private pingInterval: number | null = null;
+  private refreshInterval: number | null = null;
   private userExchanges: string[] = [];
   private lastExchangeCheck: number = 0;
   private checkingExchanges: boolean = false;
+  
+  // 添加連接鎖定標誌，防止重複初始化
+  private _connecting: boolean = false;
+  
+  // 添加全局持久連接標誌 - 預設為 true
+  private _persistentConnection: boolean = true;
 
   // 狀態
   private _status = ref<AccountWSStatus>({
@@ -110,198 +116,229 @@ class AccountWebSocketService {
 
   // 連接到賬戶WebSocket
   public async connect(exchange: string): Promise<boolean> {
-    // 檢查用戶是否有此交易所的API密鑰
-    const hasApiKey = await this.hasExchangeApiKey(exchange);
-    if (!hasApiKey) {
-      console.warn(`[AccountWS] 用戶沒有 ${exchange} 的API密鑰，取消連接`);
-      this._status.value.error = `沒有配置 ${exchange} 的API密鑰`;
-      return false;
+    // 如果已經在連接中，避免重複連接
+    if (this._connecting) {
+      console.log(`[AccountWS] 連接初始化正在進行中，避免重複連接 - exchange: ${exchange}`);
+      return new Promise<boolean>((resolve) => {
+        const checkInterval = setInterval(() => {
+          if (!this._connecting) {
+            clearInterval(checkInterval);
+            resolve(this.isConnected());
+          }
+        }, 100);
+      });
     }
     
-    // 如果已連接，先斷開
-    if (this.socket) {
-      this.disconnect();
+    // 如果已經連接到相同的交易所，避免重複連接
+    if (this.isConnected() && this.exchange === exchange) {
+      console.log(`[AccountWS] 已經連接到 ${exchange}，跳過重複連接`);
+      return true;
     }
 
-    // 更新狀態
-    this._status.value.isConnecting = true;
-    this._status.value.error = null;
-    this.exchange = exchange;
-
+    // 設置連接鎖定標誌
+    this._connecting = true;
+    
     try {
-      // 獲取認證token
-      const authStore = useAuthStore();
-      if (!authStore.isAuthenticated || !authStore.token) {
-        throw new Error('用戶未認證');
+      // 檢查用戶是否有此交易所的API密鑰
+      const hasApiKey = await this.hasExchangeApiKey(exchange);
+      if (!hasApiKey) {
+        console.warn(`[AccountWS] 用戶沒有 ${exchange} 的API密鑰，取消連接`);
+        this._status.value.error = `沒有配置 ${exchange} 的API密鑰`;
+        return false;
       }
-      this.token = authStore.token;
+      
+      // 如果已連接，先斷開
+      if (this.socket) {
+        this.disconnect(true); // 使用強制斷開
+      }
 
-      // 構建WebSocket URL
-      const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-      const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const wsBaseUrl = baseUrl.replace(/^https?:\/\//, `${wsProtocol}://`);
-      const url = `${wsBaseUrl}/account/futures-account/${exchange}`;
+      // 更新狀態
+      this._status.value.isConnecting = true;
+      this._status.value.error = null;
+      this.exchange = exchange;
 
-      // 創建WebSocket連接
-      this.socket = new WebSocket(url);
-
-      return new Promise<boolean>((resolve, reject) => {
-        if (!this.socket) {
-          this._status.value.isConnecting = false;
-          this._status.value.error = '無法創建WebSocket連接';
-          reject(new Error('無法創建WebSocket連接'));
-          return;
+      try {
+        // 獲取認證token
+        const authStore = useAuthStore();
+        if (!authStore.isAuthenticated || !authStore.token) {
+          throw new Error('用戶未認證');
         }
+        this.token = authStore.token;
 
-        // 設置連接超時
-        const timeout = setTimeout(() => {
-          if (this._status.value.isConnecting) {
+        // 構建WebSocket URL
+        const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const wsBaseUrl = baseUrl.replace(/^https?:\/\//, `${wsProtocol}://`);
+        const url = `${wsBaseUrl}/account/futures-account/${exchange}`;
+
+        // 創建WebSocket連接
+        this.socket = new WebSocket(url);
+
+        return new Promise<boolean>((resolve, reject) => {
+          if (!this.socket) {
             this._status.value.isConnecting = false;
-            this._status.value.error = 'WebSocket連接超時';
-            this.socket?.close();
-            reject(new Error('WebSocket連接超時'));
+            this._status.value.error = '無法創建WebSocket連接';
+            reject(new Error('無法創建WebSocket連接'));
+            return;
           }
-        }, 10000);
 
-        // 連接成功
-        this.socket.onopen = async () => {
-          clearTimeout(timeout);
-
-          // 發送認證token
-          this.socket?.send(this.token);
-
-          // 開始定期發送ping來保持連接
-          this.startPingInterval();
-          
-          // 設置定期請求刷新數據
-          this.startRefreshInterval();
-
-          console.log('[AccountWS] WebSocket連接成功');
-          this._status.value.connected = true;
-          this._status.value.isConnecting = false;
-          this._status.value.reconnectAttempts = 0;
-          
-          // 觸發連接事件
-          window.dispatchEvent(new CustomEvent('account:websocket-connected', { 
-            detail: { exchange } 
-          }));
-
-          resolve(true);
-        };
-
-        // 接收消息
-        this.socket.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            console.debug(`[AccountWS] 收到訊息:`, data);
-            
-            // 處理心跳響應
-            if (data.type === 'pong') {
-              console.debug('[AccountWS] 收到PONG響應');
-              return;
+          // 設置連接超時
+          const timeout = setTimeout(() => {
+            if (this._status.value.isConnecting) {
+              this._status.value.isConnecting = false;
+              this._status.value.error = 'WebSocket連接超時';
+              this.socket?.close();
+              reject(new Error('WebSocket連接超時'));
             }
-            
-            // 處理服務器發送的心跳請求
-            if (data.type === 'ping') {
-              console.debug('[AccountWS] 收到服務器心跳請求，發送PONG');
-              this.send({ type: 'pong', timestamp: new Date().toISOString() });
-              return;
-            }
+          }, 10000);
 
-            // 處理賬戶數據更新
-            if (data.type === 'account_data' || (!data.type && data.data)) {
-              // 更新最後更新時間
-              this._status.value.lastUpdate = new Date();
-              const accountData = data.data;
+          // 連接成功
+          this.socket.onopen = async () => {
+            clearTimeout(timeout);
+
+            // 發送認證token
+            this.socket?.send(this.token);
+
+            // 開始定期發送ping來保持連接
+            this.startPingInterval();
+            
+            // 設置定期請求刷新數據
+            this.startRefreshInterval();
+
+            console.log('[AccountWS] WebSocket連接成功');
+            this._status.value.connected = true;
+            this._status.value.isConnecting = false;
+            this._status.value.reconnectAttempts = 0;
+            
+            // 觸發連接事件
+            window.dispatchEvent(new CustomEvent('account:websocket-connected', { 
+              detail: { exchange } 
+            }));
+
+            resolve(true);
+          };
+
+          // 接收消息
+          this.socket.onmessage = (event) => {
+            try {
+              const data = JSON.parse(event.data);
+              console.debug(`[AccountWS] 收到訊息:`, data);
               
-              // 更新賬戶數據
-              if (accountData.balances) {
-                this._accountData.value.balances = accountData.balances;
+              // 處理心跳響應
+              if (data.type === 'pong') {
+                console.debug('[AccountWS] 收到PONG響應');
+                return;
               }
               
-              if (accountData.positions) {
-                this._accountData.value.positions = accountData.positions;
+              // 處理服務器發送的心跳請求
+              if (data.type === 'ping') {
+                console.debug('[AccountWS] 收到服務器心跳請求，發送PONG');
+                this.send({ type: 'pong', timestamp: new Date().toISOString() });
+                return;
               }
-              
-              if (accountData.orders) {
-                this._accountData.value.orders = accountData.orders;
-              }
-              
-              // 更新其他字段
-              Object.keys(accountData).forEach(key => {
-                if (!['balances', 'positions', 'orders'].includes(key)) {
-                  this._accountData.value[key] = accountData[key];
+
+              // 處理賬戶數據更新
+              if (data.type === 'account_data' || (!data.type && data.data)) {
+                // 更新最後更新時間
+                this._status.value.lastUpdate = new Date();
+                const accountData = data.data;
+                
+                // 更新賬戶數據
+                if (accountData.balances) {
+                  this._accountData.value.balances = accountData.balances;
                 }
-              });
-              
-              // 觸發數據更新事件
-              window.dispatchEvent(new CustomEvent('account:data-updated', { 
-                detail: { data: accountData, timestamp: data.timestamp } 
-              }));
-              return;
+                
+                if (accountData.positions) {
+                  this._accountData.value.positions = accountData.positions;
+                }
+                
+                if (accountData.orders) {
+                  this._accountData.value.orders = accountData.orders;
+                }
+                
+                // 更新其他字段
+                Object.keys(accountData).forEach(key => {
+                  if (!['balances', 'positions', 'orders'].includes(key)) {
+                    this._accountData.value[key] = accountData[key];
+                  }
+                });
+                
+                // 觸發數據更新事件
+                window.dispatchEvent(new CustomEvent('account:data-updated', { 
+                  detail: { data: accountData, timestamp: data.timestamp } 
+                }));
+                return;
+              }
+
+              // 處理成功/失敗消息
+              if (data.success === false) {
+                console.error('[AccountWS] 錯誤:', data.message, data.error);
+                this._status.value.error = data.message || '接收到錯誤消息';
+                
+                // 觸發錯誤事件
+                window.dispatchEvent(new CustomEvent('account:websocket-error', { 
+                  detail: { error: data.error, message: data.message } 
+                }));
+                return;
+              }
+
+              // 處理狀態更新
+              if (data.status === 'connecting') {
+                console.log('[AccountWS] 連接進度:', data.message);
+                return;
+              }
+            } catch (e) {
+              console.error('[AccountWS] 處理消息時出錯:', e);
+            }
+          };
+
+          // 連接錯誤
+          this.socket.onerror = (event) => {
+            console.error('[AccountWS] WebSocket錯誤:', event);
+            this._status.value.error = '連接錯誤';
+          };
+
+          // 連接關閉
+          this.socket.onclose = (event) => {
+            clearTimeout(timeout);
+            this.stopPingInterval();
+            this.stopRefreshInterval();
+            
+            this._status.value.connected = false;
+            this._status.value.isConnecting = false;
+            
+            console.log(`[AccountWS] 連接關閉，代碼: ${event.code}，原因: ${event.reason || '未提供'}`);
+
+            // 如果不是正常關閉且用戶已認證，嘗試重新連接
+            const authStore = useAuthStore();
+            if (event.code !== 1000 && authStore.isAuthenticated) {
+              this.attemptReconnect();
             }
 
-            // 處理成功/失敗消息
-            if (data.success === false) {
-              console.error('[AccountWS] 錯誤:', data.message, data.error);
-              this._status.value.error = data.message || '接收到錯誤消息';
-              
-              // 觸發錯誤事件
-              window.dispatchEvent(new CustomEvent('account:websocket-error', { 
-                detail: { error: data.error, message: data.message } 
-              }));
-              return;
-            }
-
-            // 處理狀態更新
-            if (data.status === 'connecting') {
-              console.log('[AccountWS] 連接進度:', data.message);
-              return;
-            }
-          } catch (e) {
-            console.error('[AccountWS] 處理消息時出錯:', e);
-          }
-        };
-
-        // 連接錯誤
-        this.socket.onerror = (event) => {
-          console.error('[AccountWS] WebSocket錯誤:', event);
-          this._status.value.error = '連接錯誤';
-        };
-
-        // 連接關閉
-        this.socket.onclose = (event) => {
-          clearTimeout(timeout);
-          this.stopPingInterval();
-          this.stopRefreshInterval();
-          
-          this._status.value.connected = false;
-          this._status.value.isConnecting = false;
-          
-          console.log(`[AccountWS] 連接關閉，代碼: ${event.code}，原因: ${event.reason || '未提供'}`);
-
-          // 如果不是正常關閉且用戶已認證，嘗試重新連接
-          const authStore = useAuthStore();
-          if (event.code !== 1000 && authStore.isAuthenticated) {
-            this.attemptReconnect();
-          }
-
-          // 觸發關閉事件
-          window.dispatchEvent(new CustomEvent('account:websocket-disconnected', { 
-            detail: { code: event.code, reason: event.reason } 
-          }));
-        };
-      });
-    } catch (error) {
-      this._status.value.isConnecting = false;
-      this._status.value.error = error instanceof Error ? error.message : '連接時發生未知錯誤';
-      console.error('[AccountWS] 連接錯誤:', error);
-      return false;
+            // 觸發關閉事件
+            window.dispatchEvent(new CustomEvent('account:websocket-disconnected', { 
+              detail: { code: event.code, reason: event.reason } 
+            }));
+          };
+        });
+      } catch (error) {
+        this._status.value.isConnecting = false;
+        this._status.value.error = error instanceof Error ? error.message : '連接時發生未知錯誤';
+        console.error('[AccountWS] 連接錯誤:', error);
+        return false;
+      }
+    } finally {
+      // 釋放連接鎖
+      this._connecting = false;
     }
   }
 
   // 斷開連接
-  public disconnect(): void {
+  public disconnect(force: boolean = false): void {
+    // 記錄之前的連接狀態，用於事件觸發
+    const wasConnected = this._status.value.connected;
+    
+    // 停止所有相關計時器
     this.stopPingInterval();
     this.stopRefreshInterval();
     
@@ -310,30 +347,51 @@ class AccountWebSocketService {
       this.reconnectTimer = null;
     }
     
+    // 處理WebSocket連接關閉
     if (this.socket) {
       try {
-        // 先發送斷開連接信號，通知後端清理資源
+        // 確保在關閉前發送明確的關閉消息
         if (this.socket.readyState === WebSocket.OPEN) {
-          this.send({ 
-            type: 'client_disconnect', 
-            message: '用戶主動斷開連接',
-            timestamp: new Date().toISOString()
+          // 發送一個標準的關閉消息 - 與主WebSocket一致使用 type: 'close'
+          this.send({
+            type: 'close',
+            message: force ? '用戶登出，強制斷開連接' : '用戶離開頁面，前端連接斷開',
+            timestamp: new Date().toISOString(),
+            logout: force  // 添加登出標記
           });
           
-          // 給後端一點時間處理斷開信號
-          setTimeout(() => {
-            // 使用1000正常關閉代碼
-            this.socket?.close(1000, '用戶主動斷開連接');
-          }, 100);
-        } else {
-          // 如果不處於開啟狀態，直接關閉
-          this.socket.close(1000, '用戶主動斷開連接');
+          // 直接關閉WebSocket
+          this.socket.close(1000, force ? '用戶登出，強制斷開連接' : '用戶離開頁面，前端連接斷開');
+        } else if (this.socket.readyState !== WebSocket.CLOSED) {
+          // 如果不是已經關閉的狀態，嘗試關閉
+          this.socket.close(1000);
         }
       } catch (e) {
         console.error('[AccountWS] 關閉WebSocket時出錯:', e);
       }
+      
+      // 重置連接狀態
       this.socket = null;
       this._status.value.connected = false;
+      
+      // 發送一個全局事件通知其他組件
+      if (wasConnected) {
+        window.dispatchEvent(new CustomEvent('account:websocket-disconnected', {
+          detail: { forced: force, logout: force }
+        }));
+      }
+    }
+    
+    // 如果是強制斷開（登出），重置持久連接標誌
+    if (force) {
+      console.log('[AccountWS] 用戶登出，完全斷開連接');
+      this._persistentConnection = false; // 重置持久連接標記
+    } else if (this._persistentConnection) {
+      // 非強制斷開且啟用了持久連接時
+      console.log('[AccountWS] 保持後端持久連接，但前端WebSocket已斷開');
+    } else {
+      // 非強制斷開也沒有持久連接時
+      console.log('[AccountWS] 前端連接斷開，未啟用持久連接');
     }
   }
 
@@ -579,6 +637,73 @@ class AccountWebSocketService {
   // 檢查是否已連接
   public isConnected(): boolean {
     return this._status.value.connected;
+  }
+
+  // 設置持久連接模式
+  public setPersistentMode(persistent: boolean): void {
+    this._persistentConnection = persistent;
+    console.log(`[AccountWS] 持久連接模式: ${persistent ? '開啟' : '關閉'}`);
+  }
+  
+  // 獲取持久連接模式狀態
+  public isPersistentMode(): boolean {
+    return this._persistentConnection;
+  }
+
+  // 新增：全局初始化方法，統一與主WebSocket管理接口
+  public async initializeConnection(): Promise<boolean> {
+    console.log('[AccountWS] 開始初始化賬戶WebSocket連接');
+    
+    // 如果已經連接，直接返回成功
+    if (this.isConnected()) {
+      console.log('[AccountWS] 賬戶WebSocket已經連接，跳過初始化');
+      return true;
+    }
+    
+    // 如果正在連接中，等待連接完成
+    if (this._connecting) {
+      console.log('[AccountWS] 賬戶WebSocket連接正在進行中，等待完成...');
+      return new Promise<boolean>((resolve) => {
+        const checkInterval = setInterval(() => {
+          if (!this._connecting) {
+            clearInterval(checkInterval);
+            resolve(this.isConnected());
+          }
+        }, 100);
+      });
+    }
+    
+    try {
+      // 檢查用戶是否已認證
+      const authStore = useAuthStore();
+      if (!authStore.isAuthenticated || !authStore.token) {
+        console.log('[AccountWS] 用戶未認證，無法初始化連接');
+        return false;
+      }
+      
+      // 設置持久連接模式
+      this.setPersistentMode(true);
+      
+      // 檢查是否有 binance 的 API 密鑰
+      const hasApiKey = await this.hasExchangeApiKey('binance');
+      if (!hasApiKey) {
+        console.log('[AccountWS] 用戶沒有 binance 的 API 密鑰，無法初始化連接');
+        return false;
+      }
+      
+      // 連接到 WebSocket
+      console.log('[AccountWS] 開始初始化連接到 binance');
+      return await this.connect('binance');
+    } catch (error) {
+      console.error('[AccountWS] 初始化連接失敗:', error);
+      return false;
+    }
+  }
+
+  // 新增：全局關閉方法，統一與主WebSocket管理接口
+  public closeConnection(forced: boolean = false): void {
+    console.log(`[AccountWS] 關閉連接，強制模式: ${forced}`);
+    this.disconnect(forced);
   }
 }
 

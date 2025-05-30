@@ -3,7 +3,7 @@ import { ref, reactive, computed } from 'vue'
 import axios from 'axios'
 import { useAuthStore } from './auth'
 import router from '@/router'
-import webSocketManager, { WebSocketType } from '@/services/webSocketService'
+import webSocketManager from '@/services/webSocketService'
 
 // 获取API基础URL
 const getApiBaseUrl = () => {
@@ -85,9 +85,8 @@ export const useOnlineStatusStore = defineStore('onlineStatus', {
     },
     
     // 处理WebSocket消息
-    handleWebSocketMessage(event: MessageEvent) {
+    handleWebSocketMessage(data: any) {
       try {
-        const data = JSON.parse(event.data);
         console.debug('[Online] 收到WebSocket消息:', data);
         
         if (data.type === 'ping') {
@@ -95,7 +94,7 @@ export const useOnlineStatusStore = defineStore('onlineStatus', {
           this.sendPong();
         } else if (data.type === 'pong') {
           // 心跳响应，忽略
-        } else if (data.type === 'user_status') {
+        } else if (data.type === 'user_status' || data.type === 'online_status') {
           // 用户状态变化
           this.updateUserStatus(data.user_id, data.is_online);
         } else if (data.type === 'status_connected') {
@@ -131,26 +130,12 @@ export const useOnlineStatusStore = defineStore('onlineStatus', {
     
     // 发送pong响应
     sendPong() {
-      webSocketManager.send(WebSocketType.ONLINE_STATUS, { type: 'pong' });
+      webSocketManager.send({ type: 'pong' });
     },
     
     // 发送ping请求
     sendPing() {
-      webSocketManager.send(WebSocketType.ONLINE_STATUS, { type: 'ping' });
-    },
-    
-    // 兼容方法：提供与旧版API兼容的WebSocket连接方法
-    // 此方法仅用于兼容现有代码，不应在新代码中使用
-    connectWebSocket() {
-      console.warn('[Online] connectWebSocket方法已弃用，WebSocket连接现在由WebSocketManager统一管理');
-      return webSocketManager.connect(WebSocketType.ONLINE_STATUS);
-    },
-    
-    // 兼容方法：提供与旧版API兼容的WebSocket关闭方法
-    // 此方法仅用于兼容现有代码，不应在新代码中使用
-    closeWebSocket() {
-      console.warn('[Online] closeWebSocket方法已弃用，WebSocket连接现在由WebSocketManager统一管理');
-      return webSocketManager.disconnect(WebSocketType.ONLINE_STATUS);
+      webSocketManager.send({ type: 'ping' });
     },
     
     // 开始定期刷新在线状态
@@ -247,20 +232,14 @@ export const useOnlineStatusStore = defineStore('onlineStatus', {
     
     // 重置状态
     resetState() {
-      // 不再需要关闭WebSocket连接，由WebSocketManager统一管理
-      
-      // 清空状态数据
-      this.onlineUsers = {};
-      this.totalOnline = 0;
-      this.lastUpdate = null;
       this.connectionStatus = 'disconnected';
       this.reconnectAttempts = 0;
+      this.onlineUsers = {};
+      this.lastUpdate = null;
+      this.totalOnline = 0;
       
-      // 清除心跳检测
-      if (this.heartbeatInterval) {
-        clearInterval(this.heartbeatInterval);
-        this.heartbeatInterval = null;
-      }
+      // 不再需要关闭WebSocket连接，由WebSocketManager统一管理
+      console.log('[Online] 在线状态已重置');
     }
   }
 }); 

@@ -16,6 +16,7 @@ import authService from '@/services/authService'
 import { useUserStore } from '@/stores/user'
 import { accountWebSocketService } from '@/services/accountWebSocketService'
 import axios from 'axios'
+import webSocketManager from '@/services/webSocketService'
 
 const router = useRouter();
 const route = useRoute();
@@ -134,14 +135,14 @@ const closeMenuOnContentClick = () => {
 // 处理登出
 const handleLogout = async () => {
   try {
-    console.log('處理登出：正在使用authService.logout()');
-    // 斷開賬戶WebSocket連接
-    accountWebSocketService.disconnect();
+    console.log('處理登出：正在執行登出流程...');
     
-    // 使用authService.logout()，它會處理主WebSocket關閉和狀態重置
+    // 使用 authService.logout()，它會處理所有 WebSocket 關閉
+    console.log('處理登出：調用authService.logout()統一關閉所有連接');
     await authService.logout();
     
     // 触發登出事件
+    console.log('處理登出：觸發登出事件');
     window.dispatchEvent(new Event('logout-event'));
     
     // 更新WebSocket狀態顯示
@@ -149,9 +150,11 @@ const handleLogout = async () => {
     wsStatus.value.account = false;
     
     // 跳轉到首頁並刷新頁面
+    console.log('處理登出：重定向到首頁');
     router.push('/').then(() => {
       // 使用延遲確保路由變更已完成
       setTimeout(() => {
+        console.log('處理登出：刷新頁面');
         window.location.reload();
       }, 100);
     });
@@ -225,38 +228,12 @@ const updateServerLatency = () => {
   }
 };
 
-// 新增：重连WebSocket的方法
+// 修改重連WebSocket的方法
 const reconnectWebSockets = () => {
-  if (authStore.isAuthenticated) {
-    // 重連主WebSocket
-    import('@/services/webSocketService').then(({ default: mainWebSocketManager }) => {
-      mainWebSocketManager.connectAll().then(result => {
-        console.log('主WebSocket重連結果:', result ? '成功' : '失敗');
-      }).catch(error => {
-        console.error('主WebSocket重連失敗:', error);
-      });
-    });
-    
-    // 重連賬戶WebSocket
-    if (!accountWebSocketService.isConnected()) {
-      // 检查是否有API密钥
-      accountWebSocketService.hasExchangeApiKey('binance').then(hasApiKey => {
-        if (hasApiKey) {
-          accountWebSocketService.connect('binance').then(result => {
-            console.log('賬戶WebSocket重連結果:', result ? '成功' : '失敗');
-          }).catch(error => {
-            console.error('賬戶WebSocket重連失敗:', error);
-          });
-        } else {
-          console.log('用戶沒有binance的API密鑰，跳過WebSocket重連');
-        }
-      });
-    }
-    
-    setTimeout(() => {
-      showWsDetails.value = false;
-    }, 500);
-  }
+  console.log('正在重連所有WebSocket...');
+  // 使用主WebSocket連接
+  webSocketManager.disconnect();
+  webSocketManager.connect();
 };
 
 // 计算按钮文本
@@ -557,68 +534,32 @@ onMounted(async () => {
     authMessage.value = '';
   });
 
-  // 尝试处理URL中的令牌参数
-  const tokenHandled = await handleAuthTokensFromUrl();
-  
-  // 只有在没有处理令牌参数时才初始化认证
-  if (!tokenHandled) {
-    try {
-      await authStore.initAuth();
+  try {
+    console.log('App: 開始應用初始化');
+    
+    // 首先嘗試處理URL中的令牌參數
+    const tokenHandled = await handleAuthTokensFromUrl();
+    
+    if (tokenHandled) {
+      console.log('App: 成功處理URL中的認證令牌');
+    } else {
+      // 只有在沒有處理令牌參數時才初始化認證
+      console.log('App: 使用 authService 統一初始化認證和 WebSocket 連接');
       
-      // 如果用戶已認證，嘗試連接到賬戶WebSocket
-      if (authStore.isAuthenticated) {
-        try {
-          // 檢查用戶是否有binance的API密鑰
-          const hasApiKey = await accountWebSocketService.hasExchangeApiKey('binance');
-          if (hasApiKey) {
-            accountWebSocketService.connect('binance').catch(error => {
-              console.error('連接賬戶WebSocket失敗:', error);
-            });
-          } else {
-            console.log('用戶沒有binance的API密鑰，跳過WebSocket連接');
-            wsStatus.value.account = false;
-          }
-        } catch (error) {
-          console.error('檢查API密鑰時出錯:', error);
-        }
-      }
-    } catch (error) {
-      console.error('初始化認證失敗:', error);
-    }
-  }
-
-  // 初始化主题
-  themeStore.initTheme();
-
-  // 檢查本地存儲的 token
-  const token = localStorage.getItem('token')
-  if (token) {
-    try {
-      actionLoading.value = true
-      await authStore.checkAuth()
+      // 使用 authService 統一初始化認證（包括用戶認證和令牌驗證）
+      await authService.initialize();
       
-      // 如果認證成功，連接到賬戶WebSocket
+      // 初始化主题
+      themeStore.initTheme();
+      
+      // 只有在用戶已認證的情況下初始化 WebSocket
       if (authStore.isAuthenticated) {
-        try {
-          // 檢查用戶是否有binance的API密鑰
-          const hasApiKey = await accountWebSocketService.hasExchangeApiKey('binance');
-          if (hasApiKey) {
-            accountWebSocketService.connect('binance').catch(error => {
-              console.error('連接賬戶WebSocket失敗:', error);
-            });
-          } else {
-            console.log('用戶沒有binance的API密鑰，跳過WebSocket連接');
-            wsStatus.value.account = false;
-          }
-        } catch (error) {
-          console.error('檢查API密鑰時出錯:', error);
-        }
+        console.log('App: 用戶已認證，初始化 WebSocket 連接');
+        await authService.initializeWebSockets();
       }
-    } catch (error) {
-      console.error('認證檢查失敗:', error)
-    } finally {
-      actionLoading.value = false
     }
+  } catch (error) {
+    console.error('App: 初始化失敗:', error);
   }
 
   // 從localStorage恢復側邊欄狀態
@@ -639,6 +580,11 @@ onMounted(async () => {
       actionLoading.value = true;
       // 使用checkAuth更新状态
       await authStore.checkAuth();
+      
+      // 檢查WebSocket連接狀態，如果需要則重新連接
+      if (authStore.isAuthenticated) {
+        await authService.initializeWebSockets();
+      }
     } catch (error) {
       console.error('令牌更新后认证检查失败:', error);
     } finally {
@@ -671,41 +617,48 @@ onMounted(async () => {
 
   // 監聽登入事件
   window.addEventListener('login-authenticated', async () => {
-    console.log('檢測到登入事件，嘗試連接賬戶WebSocket');
-    // 如果用戶已認證，連接到賬戶WebSocket
+    console.log('檢測到登入事件，使用 authService 初始化所有 WebSocket');
+    
+    // 只有在用戶已認證且WebSocket未連接時才初始化
     if (authStore.isAuthenticated) {
-      try {
-        // 檢查用戶是否有binance的API密鑰
-        const hasApiKey = await accountWebSocketService.hasExchangeApiKey('binance');
-        if (hasApiKey) {
-          accountWebSocketService.connect('binance').catch(error => {
-            console.error('連接賬戶WebSocket失敗:', error);
-          });
-        } else {
-          console.log('用戶沒有binance的API密鑰，跳過WebSocket連接');
-          wsStatus.value.account = false;
-        }
-      } catch (error) {
-        console.error('檢查API密鑰時出錯:', error);
+      // 先檢查WebSocket狀態，避免重複初始化
+      if (!(await authService.checkMainWebSocketStatus()) || 
+          !(await authService.checkAccountWebSocketStatus())) {
+        console.log('App: 登入後WebSocket需要初始化');
+        await authService.initializeWebSockets();
+      } else {
+        console.log('App: 登入後WebSocket已連接，無需初始化');
       }
-      // 前端登入通知已被禁用，僅依賴後端通知
-      console.log('用戶已登入，將只接收後端登入通知');
-      // notificationStore.sendLoginSuccessNotification(); // 已在 notification.ts 中禁用
     }
   });
   
-  // 監聽登出事件
+  // 監聽登出事件 - 統一由 authService 處理所有 WebSocket 斷開
   window.addEventListener('logout-event', () => {
-    console.log('檢測到登出事件，斷開賬戶WebSocket');
-    accountWebSocketService.disconnect();
-    
-    // 添加頁面刷新邏輯
-    // 使用短暫延遲確保所有登出操作完成
+    console.log('檢測到登出事件，準備頁面刷新');
+    // 所有 WebSocket 已經在 authService.logout() 中斷開，這裡只需處理 UI 刷新
     setTimeout(() => {
       console.log('登出事件處理完成，準備刷新頁面');
       window.location.reload();
     }, 300);
   });
+
+  // 定時監控 WebSocket 連接狀態
+  setInterval(async () => {
+    // 更新 WebSocket 狀態
+    updateWebSocketStatus();
+    
+    // 如果用戶已認證但WebSocket未連接，嘗試重新連接
+    if (authStore.isAuthenticated) {
+      // 檢查兩個WebSocket的狀態
+      const mainConnected = await authService.checkMainWebSocketStatus();
+      const accountConnected = await authService.checkAccountWebSocketStatus();
+      
+      if (!mainConnected || !accountConnected) {
+        console.log(`檢測到WebSocket連接斷開 [主WebSocket: ${mainConnected}, 賬戶WebSocket: ${accountConnected}]，嘗試重新連接`);
+        await authService.initializeWebSockets();
+      }
+    }
+  }, 60000); // 每分鐘檢查一次
 });
 
 // 在组件卸载时清除定时器
@@ -721,8 +674,8 @@ onUnmounted(() => {
   
   latencyService.stopAutoMeasurement();
   
-  // 斷開賬戶WebSocket連接
-  accountWebSocketService.disconnect();
+  // 不再直接調用斷開連接，統一由 authService 管理
+  // 如果真的需要斷開連接，應該使用 authService.closeAllWebSockets()
   
   // 清除冷却计时器
   if (cooldownTimer.value !== null) {

@@ -1,91 +1,27 @@
 """
 在线状态管理API端点
 
-提供WebSocket连接端点和在线状态查询API
+提供在线状态查询API
 """
 
 import logging
 from typing import Dict, List, Any, Optional
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, HTTPException, status, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Path, Query
 from sqlalchemy.orm import Session
 from datetime import datetime
 
 from ...db.database import get_db
 from ...db.models.user import User
 from ...db.models.chatroom import ChatRoom, ChatRoomMember, ChatRoomMessage
-from ...core.security import get_current_user, verify_token_ws
+from ...core.security import get_current_user
 from ...core.online_status_manager import online_status_manager
+from ...core.main_ws_manager import main_ws_manager
 
 # 配置日志
 logger = logging.getLogger(__name__)
 
 # 创建路由器
 router = APIRouter()
-
-# WebSocket连接端点 - 用于在线状态更新
-@router.websocket("/ws/status/{token}")
-async def status_websocket_endpoint(
-    websocket: WebSocket,
-    token: str,
-    db: Session = Depends(get_db)
-):
-    """WebSocket连接处理 - 用于实时更新用户在线状态"""
-    # 验证Token
-    user = await verify_token_ws(token, db)
-    if not user:
-        await websocket.close(code=1008)  # Policy Violation
-        return
-    
-    try:
-        # 建立WebSocket连接
-        await online_status_manager.connect_user(websocket, user.id)
-        
-        # 从数据库获取用户加入的聊天室
-        user_rooms = (
-            db.query(ChatRoomMember.room_id)
-            .filter(ChatRoomMember.user_id == user.id)
-            .all()
-        )
-        room_ids = [room[0] for room in user_rooms]
-        
-        # 同步数据库中的聊天室
-        online_status_manager.sync_user_rooms(user.id, room_ids)
-        
-        # 发送欢迎消息
-        welcome_message = {
-            "type": "status_connected",
-            "user_id": user.id,
-            "content": "您已连接到在线状态系统",
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        await online_status_manager.send_personal_message(welcome_message, user.id)
-        
-        # 接收消息循环
-        while True:
-            try:
-                # 接收消息 - 主要用于心跳检测和状态更新
-                data = await websocket.receive_text()
-                
-                # 更新用户活跃时间
-                online_status_manager.update_user_active_time(user.id)
-                
-                # 心跳响应
-                await websocket.send_json({"type": "pong"})
-                
-            except WebSocketDisconnect:
-                break
-                
-    except WebSocketDisconnect:
-        # 处理连接断开
-        await online_status_manager.disconnect_user(user.id)
-        
-    except Exception as e:
-        logger.error(f"在线状态WebSocket处理失败: {str(e)}")
-        try:
-            await online_status_manager.disconnect_user(user.id)
-        except:
-            pass
 
 # 获取聊天室在線用戶
 @router.get("/rooms/{room_id}/online", response_model=Dict[str, Any])

@@ -3,8 +3,7 @@ import { useAuthStore } from '@/stores/auth';
 
 // 單一主WebSocket連線類型
 export enum WebSocketType {
-  MAIN = 'main',
-  CHATROOM = 'chatroom'
+  MAIN = 'main'
 }
 
 // WebSocket狀態
@@ -173,7 +172,7 @@ class MainWebSocketManager {
   }
 
   // 斷開主WebSocket
-  public disconnect(type?: WebSocketType): void {
+  public disconnect(): void {
     this.stopHeartbeat();
     if (this.state.socket) {
       try {
@@ -196,28 +195,16 @@ class MainWebSocketManager {
     this.disconnect();
   }
 
-  // 發送消息 - 允許一個或兩個參數，兼容舊代碼
-  public send(typeOrMessage: WebSocketType | any, message?: any): boolean {
-    // 處理參數
-    let finalMessage: any;
-    
-    // 如果只有一個參數，則使用該參數作為消息
-    if (message === undefined) {
-      finalMessage = typeOrMessage;
-    } 
-    // 如果有兩個參數，第一個參數是WebSocketType，第二個參數是消息
-    else {
-      finalMessage = message;
-    }
-    
+  // 發送消息 - 簡化參數處理，只接受消息對象
+  public send(message: any): boolean {
     if (!this.state.socket || this.state.socket.readyState !== WebSocket.OPEN) {
       console.warn('[WebSocket] 嘗試發送消息，但連接未打開');
       return false;
     }
     
     try {
-      const data = typeof finalMessage === 'string' ? finalMessage : JSON.stringify(finalMessage);
-      console.log('[WebSocket] 發送消息:', typeof finalMessage === 'string' ? finalMessage : JSON.parse(data));
+      const data = typeof message === 'string' ? message : JSON.stringify(message);
+      console.log('[WebSocket] 發送消息:', typeof message === 'string' ? message : JSON.parse(data));
       this.state.socket.send(data);
       return true;
     } catch (error) {
@@ -276,7 +263,7 @@ class MainWebSocketManager {
       this.connect();
     }, delay);
   }
-  public isConnected(type?: WebSocketType): boolean {
+  public isConnected(): boolean {
     return this.state.connected;
   }
   public get initialized() {

@@ -19,17 +19,6 @@
             <span v-if="!isCollapsed || (isMobile && isVisible)" class="menu-text">控制面板</span>
           </router-link>
           
-          <router-link to="/markets" class="menu-item" :class="{ 'active': isActiveRoute('/markets') }" title="Markets" @click="handleMenuItemClick">
-            <span class="menu-icon">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M18 20V10"></path>
-                <path d="M12 20V4"></path>
-                <path d="M6 20v-6"></path>
-              </svg>
-            </span>
-            <span v-if="!isCollapsed || (isMobile && isVisible)" class="menu-text">市場行情</span>
-          </router-link>
-          
           <router-link to="/history" class="menu-item" :class="{ 'active': isActiveRoute('/history') }" title="History" @click="handleMenuItemClick">
             <span class="menu-icon">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

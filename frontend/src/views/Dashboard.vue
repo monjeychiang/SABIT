@@ -1,202 +1,183 @@
 <template>
-  <div class="dashboard container">
+  <div class="dashboard-container">
     <div class="dashboard-header">
       <h1>交易控制面板</h1>
-    </div>
-
-    <!-- 資產總覽部分 -->
-    <div class="asset-overview">
-      <div class="overview-card card">
-        <h3>總資產估值</h3>
-        <p class="overview-number">${{ totalAssetValue.toFixed(2) }}</p>
-        <p class="change-percentage" :class="{ 'positive': assetChangePercentage > 0, 'negative': assetChangePercentage < 0 }">
-          {{ assetChangePercentage > 0 ? '+' : '' }}{{ assetChangePercentage.toFixed(2) }}%
-        </p>
-      </div>
-      <div class="overview-card card">
-        <h3>可用余額</h3>
-        <p class="overview-number">${{ availableBalance.toFixed(2) }}</p>
-        <div class="balance-distribution">
-          <div class="balance-item">
-            <span>USDT</span>
-            <span>${{ usdtBalance.toFixed(2) }}</span>
-          </div>
-          <div class="balance-item">
-            <span>BTC</span>
-            <span>{{ btcBalance.toFixed(8) }}</span>
-          </div>
-        </div>
-      </div>
-      <div class="overview-card card">
-        <h3>持倉市值</h3>
-        <p class="overview-number">${{ positionValue.toFixed(2) }}</p>
-        <div class="position-distribution">
-          <div v-for="position in topPositions" :key="position.symbol" class="position-item">
-            <span>{{ position.symbol }}</span>
-            <span>${{ position.value.toFixed(2) }}</span>
-          </div>
-        </div>
+      <div class="header-actions">
+        <button class="refresh-all-btn" @click="loadData(); loadGlobalMarketData(true)" :disabled="isLoading || isLoadingGlobalData">
+          <i class="fas fa-sync-alt" :class="{ 'fa-spin': isLoading || isLoadingGlobalData }"></i>
+          刷新數據
+        </button>
       </div>
     </div>
 
-    <!-- 全球市場數據 -->
-    <div class="global-market-data">
-      <div class="section-header">
-        <h2>全球市場數據</h2>
-        <div class="refresh-section">
-          <span class="last-updated">{{ formattedLastUpdate }}</span>
-          <div class="refresh-button" @click="loadGlobalMarketData(true)" :disabled="isLoadingGlobalData">
-            <i class="fas fa-sync-alt" :class="{ 'fa-spin': isLoadingGlobalData }"></i>
+    <!-- 主要儀表板內容 -->
+    <div class="dashboard-content">
+      <!-- 左側邊欄 - 資產總覽 -->
+      <div class="dashboard-sidebar">
+        <div class="sidebar-header">
+          <h2>資產總覽</h2>
+        </div>
+        
+        <div class="sidebar-card asset-total">
+          <div class="card-title">總資產估值</div>
+          <div class="asset-value">${{ totalAssetValue.toFixed(2) }}</div>
+          <div class="asset-change" :class="{ 'positive': assetChangePercentage > 0, 'negative': assetChangePercentage < 0 }">
+            <i :class="assetChangePercentage > 0 ? 'fas fa-arrow-up' : 'fas fa-arrow-down'"></i>
+            {{ assetChangePercentage > 0 ? '+' : '' }}{{ assetChangePercentage.toFixed(2) }}%
+          </div>
+        </div>
+        
+        <div class="sidebar-card">
+          <div class="card-title">可用余額</div>
+          <div class="balance-value">${{ availableBalance.toFixed(2) }}</div>
+          <div class="balance-details">
+            <div class="balance-item">
+              <div class="coin-icon usdt">USDT</div>
+              <div class="coin-value">${{ usdtBalance.toFixed(2) }}</div>
+            </div>
+            <div class="balance-item">
+              <div class="coin-icon btc">BTC</div>
+              <div class="coin-value">{{ btcBalance.toFixed(8) }}</div>
+            </div>
+          </div>
+        </div>
+        
+        <div class="sidebar-card">
+          <div class="card-title">持倉市值</div>
+          <div class="position-value">${{ positionValue.toFixed(2) }}</div>
+          <div class="position-details">
+            <div v-for="position in topPositions" :key="position.symbol" class="position-item">
+              <div class="coin-icon" :class="position.symbol.toLowerCase()">{{ position.symbol }}</div>
+              <div class="coin-value">${{ position.value.toFixed(2) }}</div>
+            </div>
           </div>
         </div>
       </div>
-      <div class="global-data-grid">
-        <!-- 比特幣市佔率卡片 -->
-        <div class="global-data-card card">
-          <div class="data-header">
-            <h3>比特幣市佔率</h3>
-          </div>
-          <div v-if="isLoadingGlobalData" class="loading-indicator">
-            <div class="spinner"></div>
-          </div>
-          <div v-else class="data-content">
-            <div class="data-value">{{ bitcoinDominance.toFixed(2) }}%</div>
-            <div class="data-chart">
-              <div class="progress-bar">
-                <div class="progress" :style="{ width: `${bitcoinDominance}%` }"></div>
-              </div>
-            </div>
-            <div class="data-info">
-              <span>以太坊佔比: {{ ethereumDominance.toFixed(2) }}%</span>
-            </div>
-          </div>
-        </div>
 
-        <!-- 恐懼貪婪指數卡片 -->
-        <div class="global-data-card card">
-          <div class="data-header">
-            <h3>恐懼貪婪指數</h3>
+      <!-- 右側主要內容區 -->
+      <div class="dashboard-main">
+        <div class="main-section market-data">
+          <div class="section-header">
+            <h2>全球市場數據</h2>
+            <div class="header-meta">
+              <span class="last-updated">{{ formattedLastUpdate }}</span>
+              <button class="refresh-btn" @click="loadGlobalMarketData(true)" :disabled="isLoadingGlobalData">
+                <i class="fas fa-sync-alt" :class="{ 'fa-spin': isLoadingGlobalData }"></i>
+              </button>
+            </div>
           </div>
-          <div v-if="isLoadingGlobalData" class="loading-indicator">
-            <div class="spinner"></div>
-          </div>
-          <div v-else class="data-content">
-            <div class="fear-greed-container">
-              <div class="fear-greed-meter">
-                <div class="meter-gauge">
-                  <div class="meter-value" :style="{ transform: `rotate(${(fearGreedIndex - 50) * 1.8}deg)` }"></div>
-                </div>
-                <div class="meter-labels">
-                  <span class="fear">極度恐懼</span>
-                  <span class="greed">極度貪婪</span>
+          
+          <div class="market-grid">
+            <!-- 比特幣市佔率卡片 -->
+            <div class="market-card">
+              <div class="card-header">
+                <h3>比特幣市佔率</h3>
+                <div class="card-icon">
+                  <i class="fab fa-bitcoin"></i>
                 </div>
               </div>
-              <div class="fear-greed-value">{{ fearGreedIndex }}</div>
-              <div class="fear-greed-label">{{ fearGreedLabel }}</div>
-            </div>
-            <div class="historical-data">
-              <div class="historical-item">
-                <span>昨天:</span>
-                <span>{{ fearGreedHistory.yesterday }}</span>
+              <div v-if="isLoadingGlobalData" class="loading-indicator">
+                <div class="spinner"></div>
               </div>
-              <div class="historical-item">
-                <span>上週:</span>
-                <span>{{ fearGreedHistory.lastWeek }}</span>
-              </div>
-              <div class="historical-item">
-                <span>上月:</span>
-                <span>{{ fearGreedHistory.lastMonth }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 全球市值卡片 -->
-        <div class="global-data-card card">
-          <div class="data-header">
-            <h3>全球加密貨幣市值</h3>
-          </div>
-          <div v-if="isLoadingGlobalData" class="loading-indicator">
-            <div class="spinner"></div>
-          </div>
-          <div v-else class="data-content">
-            <div class="data-value">{{ formatCurrency(totalMarketCap) }}</div>
-            <div class="data-info">
-              <div class="info-item">
-                <span>24小時交易量:</span>
-                <span>{{ formatCurrency(totalVolume24h) }}</span>
-              </div>
-              <div class="info-item">
-                <span>活躍加密貨幣:</span>
-                <span>{{ activeCoins }}</span>
+              <div v-else class="card-content">
+                <div class="dominance-value">{{ bitcoinDominance.toFixed(2) }}%</div>
+                <div class="dominance-chart">
+                  <div class="progress-bar">
+                    <div class="progress" :style="{ width: `${bitcoinDominance}%` }"></div>
+                  </div>
+                </div>
+                <div class="dominance-compare">
+                  <div class="compare-item">
+                    <span>以太坊佔比:</span>
+                    <span>{{ ethereumDominance.toFixed(2) }}%</span>
+                  </div>
+                  <div class="compare-item">
+                    <span>其他佔比:</span>
+                    <span>{{ (100 - bitcoinDominance - ethereumDominance).toFixed(2) }}%</span>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
-      </div>
-    </div>
 
-    <!-- 市場概況部分 -->
-    <div class="market-overview">
-      <div class="section-header">
-        <h2>市場概況</h2>
-        <div class="time-selector">
-          <button 
-            v-for="period in ['24h', '7d', '30d']" 
-            :key="period"
-            :class="{ active: selectedPeriod === period }"
-            @click="selectedPeriod = period"
-            class="time-button">
-            {{ period }}
-          </button>
-        </div>
-      </div>
-      <div class="market-grid">
-        <div v-for="market in topMarkets" :key="market.symbol" class="market-card card">
-          <div class="market-header">
-            <h4>{{ market.symbol }}</h4>
-            <span class="price">${{ market.price.toFixed(2) }}</span>
-          </div>
-          <div class="price-chart">
-            <line-chart
-              :chart-data="market.chartData"
-              :options="chartOptions"
-              height="60"
-            />
-          </div>
-          <div class="market-footer">
-            <span class="change-percentage" :class="{ 'positive': market.change > 0, 'negative': market.change < 0 }">
-              {{ market.change > 0 ? '+' : '' }}{{ market.change.toFixed(2) }}%
-            </span>
-            <span class="volume">成交量: ${{ formatVolume(market.volume) }}</span>
-          </div>
-        </div>
-      </div>
-    </div>
+            <!-- 恐懼貪婪指數卡片 -->
+            <div class="market-card">
+              <div class="card-header">
+                <h3>恐懼貪婪指數</h3>
+                <div class="card-icon">
+                  <i class="fas fa-chart-line"></i>
+                </div>
+              </div>
+              <div v-if="isLoadingGlobalData" class="loading-indicator">
+                <div class="spinner"></div>
+              </div>
+              <div v-else class="card-content fear-greed-content">
+                <div class="fear-greed-container">
+                  <div class="fear-greed-meter">
+                    <div class="meter-gauge">
+                      <div class="meter-value" :style="{ transform: `rotate(${(fearGreedIndex - 50) * 1.8}deg)` }"></div>
+                    </div>
+                    <div class="meter-display">{{ fearGreedIndex }}</div>
+                  </div>
+                  <div class="meter-labels">
+                    <span class="fear">極度恐懼</span>
+                    <span class="neutral">中性</span>
+                    <span class="greed">極度貪婪</span>
+                  </div>
+                  <div class="fear-greed-label">{{ fearGreedLabel }}</div>
+                </div>
+                <div class="historical-data">
+                  <div class="history-title">歷史數據</div>
+                  <div class="history-grid">
+                    <div class="history-item">
+                      <div class="history-label">昨天</div>
+                      <div class="history-value">{{ fearGreedHistory.yesterday }}</div>
+                    </div>
+                    <div class="history-item">
+                      <div class="history-label">上週</div>
+                      <div class="history-value">{{ fearGreedHistory.lastWeek }}</div>
+                    </div>
+                    <div class="history-item">
+                      <div class="history-label">上月</div>
+                      <div class="history-value">{{ fearGreedHistory.lastMonth }}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
 
-    <!-- 資產變化圖表 -->
-    <div class="asset-chart card">
-      <div class="section-header">
-        <h2>資產變化</h2>
-        <div class="chart-controls">
-          <div class="time-selector">
-            <button 
-              v-for="period in ['1W', '1M', '3M', 'ALL']" 
-              :key="period"
-              :class="{ active: selectedAssetPeriod === period }"
-              @click="selectedAssetPeriod = period"
-              class="time-button">
-              {{ period }}
-            </button>
+            <!-- 全球市值卡片 -->
+            <div class="market-card">
+              <div class="card-header">
+                <h3>全球加密貨幣市值</h3>
+                <div class="card-icon">
+                  <i class="fas fa-globe"></i>
+                </div>
+              </div>
+              <div v-if="isLoadingGlobalData" class="loading-indicator">
+                <div class="spinner"></div>
+              </div>
+              <div v-else class="card-content">
+                <div class="marketcap-value">{{ formatCurrency(totalMarketCap) }}</div>
+                <div class="marketcap-details">
+                  <div class="detail-item">
+                    <div class="detail-icon"><i class="fas fa-exchange-alt"></i></div>
+                    <div class="detail-info">
+                      <div class="detail-label">24小時交易量</div>
+                      <div class="detail-value">{{ formatCurrency(totalVolume24h) }}</div>
+                    </div>
+                  </div>
+                  <div class="detail-item">
+                    <div class="detail-icon"><i class="fas fa-coins"></i></div>
+                    <div class="detail-info">
+                      <div class="detail-label">活躍加密貨幣</div>
+                      <div class="detail-value">{{ activeCoins }}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
-      <div class="chart-container">
-        <line-chart
-          :chart-data="assetChartData"
-          :options="assetChartOptions"
-          height="300"
-        />
       </div>
     </div>
   </div>
@@ -204,7 +185,6 @@
 
 <script setup>
 import { ref, computed, onMounted, watch, onUnmounted } from 'vue';
-import LineChart from '@/components/LineChart.vue';
 import axios from 'axios';
 
 // 基礎數據
@@ -237,10 +217,6 @@ const lastGlobalDataUpdate = ref(null);
 const isCachedData = ref(true);
 const nextDataUpdateTime = ref(null);
 
-// 市場數據
-const selectedPeriod = ref('24h');
-const selectedAssetPeriod = ref('1W');
-
 // 模擬數據
 const topPositions = ref([
   { symbol: 'BTC', value: 30000 },
@@ -248,96 +224,7 @@ const topPositions = ref([
   { symbol: 'BNB', value: 5000 }
 ]);
 
-const topMarkets = ref([
-  {
-    symbol: 'BTC/USDT',
-    price: 57325.42,
-    change: 2.5,
-    volume: 1500000000,
-    chartData: {
-      labels: Array.from({ length: 24 }, (_, i) => i),
-      datasets: [{
-        data: Array.from({ length: 24 }, () => Math.random() * 1000 + 56000),
-        borderColor: '#10B981',
-        tension: 0.4
-      }]
-    }
-  },
-  // ... 其他市場數據
-]);
-
-// 圖表配置
-const chartOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: {
-      display: false
-    }
-  },
-  scales: {
-    x: {
-      display: false
-    },
-    y: {
-      display: false
-    }
-  },
-  elements: {
-    point: {
-      radius: 0
-    }
-  }
-};
-
-const assetChartOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: {
-      display: false
-    }
-  },
-  scales: {
-    x: {
-      grid: {
-        display: false
-      }
-    },
-    y: {
-      grid: {
-        color: 'rgba(0, 0, 0, 0.1)'
-      }
-    }
-  }
-};
-
-const assetChartData = ref({
-  labels: Array.from({ length: 30 }, (_, i) => i + 1),
-  datasets: [{
-    label: '資產價值',
-    data: Array.from({ length: 30 }, () => Math.random() * 20000 + 90000),
-    borderColor: '#10B981',
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    fill: true,
-    tension: 0.4
-  }]
-});
-
 // 工具函數
-const formatVolume = (value) => {
-  if (value >= 1000000000) {
-    return (value / 1000000000).toFixed(1) + 'B';
-  }
-  if (value >= 1000000) {
-    return (value / 1000000).toFixed(1) + 'M';
-  }
-  if (value >= 1000) {
-    return (value / 1000).toFixed(1) + 'K';
-  }
-  return value.toString();
-};
-
 const formatCurrency = (value) => {
   if (value >= 1000000000000) {
     return '$' + (value / 1000000000000).toFixed(2) + ' 兆';
@@ -484,184 +371,412 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.dashboard {
-  padding: var(--spacing-lg);
+:root {
+  --accent-color: #3361FF;
+  --accent-hover: #264AD8;
+  --success-color: #00C48C;
+  --warning-color: #FF9800;
+  --danger-color: #FF3D71;
+  --text-primary: #FFFFFF;
+  --text-secondary: #A7ADBD;
+  --text-tertiary: #767C8B;
+  --background-primary: #0F111A;
+  --background-secondary: #161926;
+  --background-tertiary: #1C202F;
+  --card-background: #161926;
+  --card-border: #2C3248;
+  --border-color: #2C3248;
+  --chart-gradient-start: rgba(51, 97, 255, 0.5);
+  --chart-gradient-end: rgba(51, 97, 255, 0);
 }
 
+/* 全局樣式 */
+.dashboard-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: var(--background-primary);
+  color: var(--text-primary);
+  padding: 24px;
+  width: 100%;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* 頭部樣式 */
 .dashboard-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: var(--spacing-xl);
+  margin-bottom: 32px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-color);
 }
 
-.asset-overview {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
-  margin-bottom: 24px;
-}
-
-.overview-card {
-  padding: 20px;
-}
-
-.overview-number {
+.dashboard-header h1 {
   font-size: 28px;
-  font-weight: 600;
-  margin: 10px 0;
+  font-weight: 700;
   color: var(--text-primary);
+  margin: 0;
 }
 
-.change-percentage {
+.header-actions {
+  display: flex;
+  gap: 16px;
+}
+
+.refresh-all-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background-color: var(--accent-color);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
   font-size: 14px;
   font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
 }
 
-.change-percentage.positive {
+.refresh-all-btn:hover {
+  background-color: var(--accent-hover);
+}
+
+.refresh-all-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 主要內容區域 */
+.dashboard-content {
+  display: flex;
+  gap: 24px;
+  flex: 1;
+}
+
+/* 側邊欄樣式 */
+.dashboard-sidebar {
+  width: 320px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sidebar-header {
+  margin-bottom: 8px;
+}
+
+.sidebar-header h2 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.sidebar-card {
+  background-color: var(--card-background);
+  border-radius: 12px;
+  padding: 20px;
+  border: 1px solid var(--card-border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.sidebar-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+}
+
+.card-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+.asset-value, .balance-value, .position-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.asset-change {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 4px;
+  width: fit-content;
+}
+
+.asset-change.positive {
+  background-color: rgba(0, 196, 140, 0.15);
   color: var(--success-color);
 }
 
-.change-percentage.negative {
+.asset-change.negative {
+  background-color: rgba(255, 61, 113, 0.15);
   color: var(--danger-color);
 }
 
-.balance-distribution,
-.position-distribution {
-  margin-top: 10px;
+.balance-details, .position-details {
+  margin-top: 16px;
 }
 
-.balance-item,
-.position-item {
+.balance-item, .position-item {
   display: flex;
   justify-content: space-between;
-  font-size: 14px;
-  margin-top: 8px;
-  color: var(--text-secondary);
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color);
 }
 
-/* 全球市場數據樣式 */
-.global-market-data {
+.balance-item:last-child, .position-item:last-child {
+  border-bottom: none;
+}
+
+.coin-icon {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.coin-icon::before {
+  content: '';
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  margin-right: 8px;
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.coin-icon.btc::before {
+  background-color: #F7931A;
+}
+
+.coin-icon.eth::before {
+  background-color: #627EEA;
+}
+
+.coin-icon.usdt::before {
+  background-color: #26A17B;
+}
+
+.coin-icon.bnb::before {
+  background-color: #F3BA2F;
+}
+
+.coin-value {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+/* 主要內容區樣式 */
+.dashboard-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.main-section {
+  background-color: var(--background-secondary);
+  border-radius: 12px;
+  padding: 24px;
+  border: 1px solid var(--border-color);
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   margin-bottom: 24px;
 }
 
-.refresh-section {
+.section-header h2 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.header-meta {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .last-updated {
-  font-size: 14px;
-  color: var(--text-secondary);
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
-.global-data-grid {
+.refresh-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background-color: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.refresh-btn:hover {
+  background-color: var(--accent-color);
+  color: white;
+  border-color: var(--accent-color);
+}
+
+.refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 市場數據網格 */
+.market-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 20px;
 }
 
-.global-data-card {
-  padding: 20px;
-  min-height: 250px;
-  height: auto;
+.market-card {
+  background-color: var(--card-background);
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--card-border);
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  height: 100%;
   display: flex;
   flex-direction: column;
 }
 
-.data-header {
-  margin-bottom: 15px;
+.market-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
 }
 
-.data-header h3 {
-  font-size: 18px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.data-content {
-  display: flex;
-  flex-direction: column;
-  flex-grow: 1;
-}
-
-.data-value {
-  font-size: 28px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 15px;
-  word-break: break-word;
-}
-
-.data-chart {
-  margin: 15px 0;
-}
-
-.data-info {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin-top: auto;
-  word-break: break-word;
-}
-
-.info-item {
+.card-header {
   display: flex;
   justify-content: space-between;
-  margin-top: 8px;
-  flex-wrap: wrap;
-  gap: 5px;
+  align-items: center;
+  padding: 16px 20px;
+  background-color: var(--background-tertiary);
+  border-bottom: 1px solid var(--border-color);
 }
 
-.info-item > span:first-child {
-  margin-right: 5px;
-}
-
-.info-item > span:last-child {
+.card-header h3 {
+  font-size: 16px;
   font-weight: 500;
+  color: var(--text-primary);
+  margin: 0;
 }
 
-/* 進度條樣式 */
+.card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background-color: var(--accent-color);
+  color: white;
+}
+
+.card-content {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+/* 比特幣市佔率卡片 */
+.dominance-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+}
+
+.dominance-chart {
+  margin-bottom: 16px;
+}
+
 .progress-bar {
   height: 8px;
-  background-color: #e9ecef;
+  background-color: rgba(255, 255, 255, 0.1);
   border-radius: 4px;
   overflow: hidden;
+  margin-top: 8px;
 }
 
 .progress {
   height: 100%;
-  background-color: var(--primary-color);
+  background-color: var(--accent-color);
   border-radius: 4px;
+  transition: width 0.5s ease;
 }
 
-/* 恐懼貪婪指數儀表盤樣式 */
+.dominance-compare {
+  margin-top: auto;
+}
+
+.compare-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-top: 8px;
+}
+
+/* 恐懼貪婪指數卡片 */
+.fear-greed-content {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 100%;
+}
+
 .fear-greed-container {
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 20px;
 }
 
 .fear-greed-meter {
   position: relative;
-  width: 140px;
+  width: 160px;
   height: 80px;
-  margin-bottom: 10px;
+  margin-bottom: 20px;
 }
 
 .meter-gauge {
   position: relative;
-  width: 140px;
+  width: 160px;
   height: 80px;
   background: conic-gradient(
-    #E53E3E 0deg 36deg,
-    #F6AD55 36deg 72deg,
-    #F6E05E 72deg 108deg,
-    #68D391 108deg 144deg,
-    #4FD1C5 144deg 180deg
+    #FF3D71 0deg 36deg,
+    #FFA26B 36deg 72deg,
+    #FFD76B 72deg 108deg,
+    #00C48C 108deg 144deg,
+    #3361FF 144deg 180deg
   );
-  border-radius: 90px 90px 0 0;
+  border-radius: 80px 80px 0 0;
   overflow: hidden;
 }
 
@@ -671,52 +786,142 @@ onUnmounted(() => {
   left: 50%;
   height: 70px;
   width: 3px;
-  background-color: #000;
+  background-color: white;
   transform-origin: bottom center;
   transition: transform 0.5s ease;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
+  z-index: 2;
+}
+
+.meter-display {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: var(--background-tertiary);
+  color: var(--text-primary);
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  border: 3px solid white;
+  z-index: 3;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
 }
 
 .meter-labels {
   display: flex;
   justify-content: space-between;
   width: 100%;
-  margin-top: 5px;
-  font-size: 11px;
+  margin-top: 10px;
+  font-size: 12px;
 }
 
 .meter-labels .fear {
-  color: #E53E3E;
+  color: #FF3D71;
+}
+
+.meter-labels .neutral {
+  color: #FFD76B;
 }
 
 .meter-labels .greed {
-  color: #4FD1C5;
-}
-
-.fear-greed-value {
-  font-size: 28px;
-  font-weight: 600;
-  margin: 5px 0;
-  line-height: 1;
+  color: #3361FF;
 }
 
 .fear-greed-label {
-  font-size: 14px;
-  color: var(--text-secondary);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
   text-align: center;
-  margin-bottom: 5px;
+  margin-top: 8px;
 }
 
 .historical-data {
   margin-top: auto;
-  width: 100%;
+  border-top: 1px solid var(--border-color);
+  padding-top: 16px;
 }
 
-.historical-item {
+.history-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+.history-grid {
   display: flex;
   justify-content: space-between;
-  font-size: 13px;
-  margin: 5px 0;
+}
+
+.history-item {
+  text-align: center;
+  flex: 1;
+}
+
+.history-label {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+}
+
+.history-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* 全球市值卡片 */
+.marketcap-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 24px;
+}
+
+.marketcap-details {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: auto;
+}
+
+.detail-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.detail-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background-color: rgba(51, 97, 255, 0.15);
+  color: var(--accent-color);
+}
+
+.detail-info {
+  flex: 1;
+}
+
+.detail-label {
+  font-size: 12px;
   color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.detail-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 /* 加載動畫 */
@@ -725,138 +930,68 @@ onUnmounted(() => {
   justify-content: center;
   align-items: center;
   height: 100%;
+  min-height: 200px;
 }
 
 .spinner {
-  width: 30px;
-  height: 30px;
-  border: 3px solid rgba(0, 0, 0, 0.1);
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(51, 97, 255, 0.2);
   border-radius: 50%;
-  border-top-color: var(--primary-color);
+  border-top-color: var(--accent-color);
   animation: spin 1s infinite ease-in-out;
-}
-
-.refresh-button {
-  cursor: pointer;
-  padding: 8px;
-  border-radius: 50%;
-  transition: background-color 0.3s;
-}
-
-.refresh-button:hover {
-  background-color: rgba(0, 0, 0, 0.05);
-}
-
-.refresh-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
 }
 
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
 
-.market-overview {
-  margin-bottom: 24px;
+/* 響應式調整 */
+@media (max-width: 1200px) {
+  .dashboard-content {
+    flex-direction: column;
+  }
+  
+  .dashboard-sidebar {
+    width: 100%;
+    margin-bottom: 24px;
+  }
+  
+  .sidebar-cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
 }
 
-.section-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.section-header h2 {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.time-selector {
-  display: flex;
-  gap: 8px;
-}
-
-.time-button {
-  padding: 6px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: all 0.3s ease;
-}
-
-.time-button.active {
-  background: var(--primary-color);
-  color: white;
-  border-color: var(--primary-color);
-}
-
-.market-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 20px;
-}
-
-.market-card {
-  padding: 16px;
-}
-
-.market-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.market-header h4 {
-  font-size: 16px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.price {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.price-chart {
-  margin: 10px 0;
-  height: 60px;
-}
-
-.market-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 12px;
-}
-
-.volume {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.asset-chart {
-  padding: 20px;
-  margin-bottom: 24px;
-}
-
-.chart-container {
-  height: 300px;
+@media (max-width: 992px) {
+  .market-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .sidebar-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
 @media (max-width: 768px) {
-  .asset-overview,
-  .global-data-grid {
+  .market-grid, .sidebar-cards {
     grid-template-columns: 1fr;
   }
   
-  .market-grid {
-    grid-template-columns: 1fr;
+  .dashboard-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  
+  .header-actions {
+    width: 100%;
+  }
+  
+  .refresh-all-btn {
+    width: 100%;
+    justify-content: center;
   }
 }
 </style> 

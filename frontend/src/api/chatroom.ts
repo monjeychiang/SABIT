@@ -2,6 +2,7 @@ import { ref, reactive } from 'vue'
 import { useUserStore } from '../stores/user'
 import { useRouter } from 'vue-router'
 import { useChatroomStore } from '@/stores/chatroom'
+import webSocketManager from '@/services/webSocketService'
 
 // WebSocket连接状态
 export const connectionStatus = ref<'connecting' | 'connected' | 'disconnected'>('disconnected')
@@ -25,8 +26,8 @@ export function resetChatState() {
 
 // 连接到WebSocket
 export function connectToWebSocket() {
-  const chatroomStore = useChatroomStore()
-  chatroomStore.connectWebSocket()
+  // 使用主WebSocket連接
+  webSocketManager.connect()
 }
 
 // 心跳检测

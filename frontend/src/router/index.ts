@@ -46,25 +46,6 @@ export const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/markets',
-    name: 'markets',
-    component: () => import('@/views/markets.vue'),
-    meta: { 
-      layout: 'default',
-      breadcrumb: '市場行情'
-    }
-  },
-  {
-    path: '/trading/:marketType/:symbol',
-    name: 'trading',
-    component: () => import('@/views/TradingView.vue'),
-    props: true,
-    meta: { 
-      layout: 'default',
-      breadcrumb: '交易'
-    }
-  },
-  {
     path: '/settings',
     name: 'settings',
     component: () => import('@/views/SettingsView.vue'),

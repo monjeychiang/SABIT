@@ -5,10 +5,6 @@ from typing import Any, List, Optional, Dict
 from datetime import datetime
 import logging
 import asyncio
-from fastapi import WebSocket, WebSocketDisconnect
-from fastapi.websockets import WebSocketDisconnect
-from fastapi.security import OAuth2PasswordRequestForm
-from jose import jwt, JWTError
 from sqlalchemy.sql import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
@@ -18,7 +14,7 @@ from ...db.models import User, Notification, NotificationType
 from ...schemas.notification import NotificationCreate, NotificationResponse, NotificationUpdate, PaginatedNotifications
 from ...core.security import get_current_user, verify_token
 from ...api.endpoints.admin import get_current_admin_user
-from .chatroom import manager
+from ...core.main_ws_manager import main_ws_manager
 
 # 設置日誌記錄
 logger = logging.getLogger(__name__)
@@ -215,188 +211,11 @@ async def get_missed_notifications(
         "per_page": per_page
     }
 
-# ============== 新增代碼：WebSocket通知推送功能 ==============
-
-# 通知WebSocket連接管理器
-class NotificationConnectionManager:
-    def __init__(self):
-        # 用戶ID -> WebSocket連接列表 的映射
-        self.user_connections: Dict[int, List[WebSocket]] = {}
-        # WebSocket -> 用戶ID 的映射
-        self.connection_user: Dict[WebSocket, int] = {}
-        # 廣播計數器和日誌記錄
-        self.broadcast_counts: Dict[int, int] = {}
-        self.last_log_time: Dict[int, datetime] = {}
-        self.log_interval = 600  # 每10分鐘記錄一次日誌
-        self.active_connections_count = 0
-
-    async def connect(self, websocket: WebSocket, user_id: int) -> str:
-        """
-        建立WebSocket連接，並將連接與用戶關聯
-        
-        接受新的WebSocket連接請求，將其與用戶ID關聯，並初始化相關記錄。
-        
-        參數:
-            websocket: 要建立的WebSocket連接
-            user_id: 要關聯的用戶ID
-            
-        返回:
-            生成的客戶端ID（用於日誌記錄和追蹤）
-            
-        異常:
-            可能引發WebSocket連接相關的異常
-        """
-        try:
-            await websocket.accept()
-            
-            # 初始化用戶的連接列表和計數器
-            if user_id not in self.user_connections:
-                self.user_connections[user_id] = []
-                self.broadcast_counts[user_id] = 0
-                self.last_log_time[user_id] = datetime.now()
-            
-            # 添加新連接到用戶的連接列表
-            self.user_connections[user_id].append(websocket)
-            self.connection_user[websocket] = user_id
-            self.active_connections_count += 1
-            
-            # 生成客戶端ID（方便日誌記錄）
-            client_id = f"notification_{user_id}_{id(websocket)}"
-            logger.info(f"[Notification] WebSocket连接已建立: 用户ID={user_id}, 连接ID={client_id}, 当前连接总数={self.active_connections_count}")
-            return client_id
-            
-        except Exception as e:
-            logger.error(f"建立通知WebSocket連接失敗: {str(e)}")
-            raise
-
-    def disconnect(self, websocket: WebSocket) -> None:
-        """
-        關閉WebSocket連接
-        
-        斷開指定的WebSocket連接，清理相關資源和記錄。
-        如果用戶沒有其他活躍連接，將清理該用戶的所有相關數據。
-        
-        參數:
-            websocket: 要斷開的WebSocket連接
-        """
-        try:
-            if websocket in self.connection_user:
-                user_id = self.connection_user[websocket]
-                
-                # 生成连接ID用于日志
-                connection_id = f"notification_{user_id}_{id(websocket)}"
-                
-                # 從用戶連接列表中移除
-                if user_id in self.user_connections and websocket in self.user_connections[user_id]:
-                    self.user_connections[user_id].remove(websocket)
-                    
-                    # 如果用戶沒有活躍連接了，清理相關記錄
-                    if not self.user_connections[user_id]:
-                        del self.user_connections[user_id]
-                        if user_id in self.broadcast_counts:
-                            del self.broadcast_counts[user_id]
-                        if user_id in self.last_log_time:
-                            del self.last_log_time[user_id]
-                
-                # 從映射表中移除
-                del self.connection_user[websocket]
-                self.active_connections_count -= 1
-                
-                # 記錄連接關閉信息
-                logger.info(f"[Notification] WebSocket连接已断开: 用户ID={user_id}, 连接ID={connection_id}, 当前连接总数={self.active_connections_count}")
-            
-        except ValueError:
-            logger.warning("嘗試移除不存在的通知WebSocket連接")
-        except Exception as e:
-            logger.error(f"關閉通知WebSocket連接時出錯: {str(e)}")
-
-    async def broadcast_to_user(self, user_id: int, message: Dict[str, Any]) -> None:
-        """
-        向指定用戶廣播通知消息
-        
-        將消息發送給特定用戶的所有活躍WebSocket連接。
-        包含智能日誌記錄，避免過多日誌，只在特定間隔或事件記錄。
-        自動清理已斷開的連接。
-        
-        參數:
-            user_id: 目標用戶ID
-            message: 要發送的消息內容（JSON可序列化的字典）
-        """
-        if user_id not in self.user_connections:
-            return
-        
-        # 更新廣播計數和記錄日誌
-        self.broadcast_counts[user_id] = self.broadcast_counts.get(user_id, 0) + 1
-        current_time = datetime.now()
-        last_time = self.last_log_time.get(user_id, datetime.now())
-        time_diff = (current_time - last_time).total_seconds()
-        
-        # 僅在以下情況記錄日誌: 首次廣播、達到記錄間隔或廣播達到1000次
-        should_log = (self.broadcast_counts[user_id] == 1 or 
-                      time_diff >= self.log_interval or 
-                      self.broadcast_counts[user_id] % 1000 == 0)
-        
-        if should_log and self.user_connections.get(user_id, []):
-            logger.info(f"向用戶 {user_id} 廣播通知消息 (連接數: {len(self.user_connections[user_id])}, 已廣播: {self.broadcast_counts[user_id]}次)")
-            self.last_log_time[user_id] = current_time
-            
-        # 向用戶所有連接廣播消息
-        disconnected = []
-        for connection in self.user_connections.get(user_id, []):
-            try:
-                await connection.send_json(message)
-            except Exception as e:
-                # 避免大量連接錯誤日誌，僅記錄非連接相關錯誤
-                if "connection" not in str(e).lower():
-                    logger.error(f"向用戶 {user_id} 廣播通知消息時出錯: {str(e)}")
-                disconnected.append(connection)
-        
-        # 清理斷開的連接
-        for conn in disconnected:
-            self.disconnect(conn)
-
-    async def broadcast_global(self, message: Dict[str, Any]) -> None:
-        """
-        向所有連接的用戶廣播全局通知
-        
-        將消息發送給所有當前連接的用戶。
-        使用列表複製避免在迭代過程中修改字典。
-        
-        參數:
-            message: 要廣播的消息內容（JSON可序列化的字典）
-        """
-        logger.info(f"廣播全局通知消息，當前活躍用戶數: {len(self.user_connections)}")
-        
-        # 為每個連接的用戶廣播消息
-        for user_id in list(self.user_connections.keys()):  # 使用列表複製避免迭代時修改
-            await self.broadcast_to_user(user_id, message)
-
-    def get_connected_users_count(self) -> int:
-        """
-        獲取當前連接的用戶數量
-        
-        返回:
-            目前有WebSocket連接的不同用戶數量
-        """
-        return len(self.user_connections)
-
-    def get_total_connections_count(self) -> int:
-        """
-        獲取當前總連接數
-        
-        返回:
-            系統中所有WebSocket連接的總數
-        """
-        return self.active_connections_count
-
-# 创建通知连接管理器实例
-notification_manager = NotificationConnectionManager()
-
-# 廣播新通知給用戶（改為呼叫主 WebSocket 管理器）
+# 廣播新通知給用戶
 async def broadcast_notification(notification: Notification, db: Session) -> None:
     """
     廣播新通知給用戶
-    將新創建的通知通過主 WebSocket 以 type: "notification" 推送給相關用戶。
+    將新創建的通知通過主WebSocket發送給相關用戶。
     """
     try:
         # 檢查消息中是否有未替換的模板變量
@@ -426,44 +245,18 @@ async def broadcast_notification(notification: Notification, db: Session) -> Non
         # 根據通知類型選擇廣播方式
         if notification.is_global:
             logger.info(f"開始廣播全局通知: ID={notification.id}, 標題={notification.title}")
-            # 嘗試使用main_ws_manager廣播
-            try:
-                from ...core.main_ws_manager import main_ws_manager
-                await main_ws_manager.broadcast(message)
-                logger.info(f"通過主WebSocket管理器成功廣播全局通知，ID: {notification.id}")
-                return
-            except Exception as e:
-                logger.warning(f"無法通過主WebSocket管理器廣播全局通知: {str(e)}，嘗試使用聊天室管理器")
-            
-            # 如果主WebSocket管理器失敗，嘗試使用聊天室管理器
-            try:
-                await manager.broadcast_global(message)
-                logger.info(f"通過聊天室管理器成功廣播全局通知，ID: {notification.id}")
-            except Exception as e:
-                logger.error(f"廣播全局通知時出錯: {str(e)}")
-                raise
-                
+            # 使用主WebSocket管理器廣播全局通知
+            await main_ws_manager.broadcast(message)
+            logger.info(f"通過主WebSocket管理器成功廣播全局通知，ID: {notification.id}")
         elif notification.user_id:
             logger.info(f"開始廣播用戶特定通知: ID={notification.id}, 用戶ID={notification.user_id}")
-            # 嘗試使用main_ws_manager發送給特定用戶
-            try:
-                from ...core.main_ws_manager import main_ws_manager
-                await main_ws_manager.send_to_user(notification.user_id, message)
-                logger.info(f"通過主WebSocket管理器成功發送通知給用戶 {notification.user_id}，通知ID: {notification.id}")
-                return
-            except Exception as e:
-                logger.warning(f"無法通過主WebSocket管理器發送通知給用戶 {notification.user_id}: {str(e)}，嘗試使用聊天室管理器")
-            
-            # 如果主WebSocket管理器失敗，嘗試使用聊天室管理器
-            try:
-                await manager.broadcast_to_user(notification.user_id, message)
-                logger.info(f"通過聊天室管理器成功發送通知給用戶 {notification.user_id}，通知ID: {notification.id}")
-            except Exception as e:
-                logger.error(f"發送通知給用戶 {notification.user_id} 時出錯: {str(e)}")
+            # 使用主WebSocket管理器發送給特定用戶
+            await main_ws_manager.send_to_user(notification.user_id, message)
+            logger.info(f"通過主WebSocket管理器成功發送通知給用戶 {notification.user_id}，通知ID: {notification.id}")
     except Exception as e:
         logger.error(f"廣播通知時出錯: {str(e)}")
 
-# 修改創建通知函數以添加即時廣播功能
+# 創建並廣播通知
 async def create_and_broadcast_notification(
     notification_data: NotificationCreate,
     db: Session

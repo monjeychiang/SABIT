@@ -473,12 +473,18 @@ const connect = async () => {
   }
 };
 
-// 斷開WebSocket
+// 斷開WebSocket - 注意：這裡會斷開前端和後端之間的連接，但後端與交易所的連接會保持
 const disconnect = () => {
+  // 調用組合函數的 disconnect 方法
+  // 在用戶主動點擊斷開按鈕時，我們應該斷開前端到後端的連接
+  // 但由於設置了持久連接模式，後端與交易所的連接會保持
   disconnectWs();
+  
   // 清除錯誤狀態
   binanceConnectError.value = false;
   binanceErrorMessage.value = '';
+  
+  console.log('用戶已斷開WebSocket前端連接，後端與交易所的連接仍然保持');
 };
 
 // 重新連接幣安
@@ -940,7 +946,18 @@ onMounted(async () => {
       console.warn('網絡已斷開，幣安連接可能受影響');
     }
   });
+  
+  // 監聽登出事件，確保在用戶登出時斷開WebSocket前端連接
+  window.addEventListener('logout-event', () => {
+    console.log('檢測到登出事件，斷開TradeTestView中的WebSocket前端連接');
+    if (isConnected.value) {
+      disconnect();
+    }
+  });
 });
+
+// 添加明確的提醒，表示頁面卸載時連接仍然保持
+console.log('TradeTestView 使用持久連接模式，離開頁面時連接將保持活躍');
 </script>
 
 <style scoped>

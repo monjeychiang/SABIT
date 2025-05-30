@@ -109,9 +109,9 @@ export function useAccountWebSocket(exchange: string = 'binance') {
     window.addEventListener('account:data-updated', handleDataUpdated);
   });
   
-  // 組件卸載時斷開連接
+  // 組件卸載時僅移除事件監聽器，不斷開連接
   onUnmounted(() => {
-    disconnect();
+    // 不再調用 disconnect() 以保持持久連接
     
     // 移除事件監聽器
     window.removeEventListener('account:data-updated', handleDataUpdated);

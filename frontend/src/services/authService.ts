@@ -4,6 +4,7 @@ import { useChatroomStore } from '@/stores/chatroom';
 import { useNotificationStore } from '@/stores/notification';
 import { useOnlineStatusStore } from '@/stores/online-status';
 import mainWebSocketManager from '@/services/webSocketService';
+import { accountWebSocketService } from '@/services/accountWebSocketService';
 import type { User } from '@/stores/user';
 
 // 定義登入憑證介面
@@ -80,59 +81,120 @@ export const authService = {
    * 初始化WebSocket连接
    */
   async initializeWebSockets() {
+    // 檢查用戶是否已登入
     if (!this.isAuthenticated()) {
       console.log('[AuthService] 用户未登录，跳过WebSocket初始化');
       return false;
     }
-    console.log('[AuthService] 初始化主WebSocket連線');
-    const notificationStore = useNotificationStore();
-    const chatroomStore = useChatroomStore();
-    const onlineStatusStore = useOnlineStatusStore();
+    
+    console.log('[AuthService] 開始統一初始化所有WebSocket連線');
+    
     try {
-      // 註冊主WebSocket處理器，根據 type 分流
-      mainWebSocketManager.register({
-        onMessage: (data) => {
-          console.log('[AuthService] 收到WebSocket消息:', data);
-          if (!data || !data.type) return;
-          
-          // 根據消息類型分發到不同的處理器
-          if (data.type === 'chat/message' || 
-              data.type === 'chat/join' || 
-              data.type === 'chat/leave' || 
-              data.type === 'chat/error') {
-            // 聊天相關消息只傳給聊天室 store 處理
-            chatroomStore.handleWebSocketMessage(data);
-          } else if (data.type === 'notification') {
-            // 通知消息只傳給通知 store 處理
-            notificationStore.handleWebSocketMessage(data);
-          } else if (data.type === 'online/status' || data.type === 'user_status') {
-            // 在線狀態消息只傳給線上狀態 store 處理
-            onlineStatusStore.handleWebSocketMessage(data);
-          } else if (data.type === 'ping' || data.type === 'pong') {
-            // 心跳消息，直接由 chatroom 處理
-            chatroomStore.handleWebSocketMessage(data);
-          } else {
-            console.log('[AuthService] 未處理的消息類型:', data.type);
+      // 檢查現有的WebSocket狀態
+      const mainConnected = await this.checkMainWebSocketStatus();
+      const accountConnected = await this.checkAccountWebSocketStatus();
+      
+      if (mainConnected && accountConnected) {
+        console.log('[AuthService] 所有WebSocket已連接，跳過初始化');
+        return true;
+      }
+
+      // 初始化WebSocket連接，紀錄所有步驟
+      let mainResult = mainConnected;
+      let accountResult = accountConnected;
+
+      // 初始化主WebSocket（如果尚未連接）
+      if (!mainConnected) {
+        console.log('[AuthService] 初始化主WebSocket連線');
+        const notificationStore = useNotificationStore();
+        const chatroomStore = useChatroomStore();
+        const onlineStatusStore = useOnlineStatusStore();
+        
+        // 註冊主WebSocket處理器，根據 type 分流
+        mainWebSocketManager.register({
+          onMessage: (data) => {
+            if (!data || !data.type) return;
+            
+            // 根據消息類型分發到不同的處理器
+            if (data.type === 'chat/message' || 
+                data.type === 'chat/join' || 
+                data.type === 'chat/leave' || 
+                data.type === 'chat/error') {
+              // 聊天相關消息只傳給聊天室 store 處理
+              chatroomStore.handleWebSocketMessage(data);
+            } else if (data.type === 'notification') {
+              // 通知消息只傳給通知 store 處理
+              notificationStore.handleWebSocketMessage(data);
+            } else if (data.type === 'online/status' || data.type === 'user_status') {
+              // 在線狀態消息只傳給線上狀態 store 處理
+              onlineStatusStore.handleWebSocketMessage(data);
+            } else if (data.type === 'ping' || data.type === 'pong') {
+              // 心跳消息，直接由 chatroom 處理
+              chatroomStore.handleWebSocketMessage(data);
+            } else {
+              console.log('[AuthService] 未處理的消息類型:', data.type);
+            }
+          },
+          onConnect: () => {
+            console.log('[AuthService] 主WebSocket已連線');
+            chatroomStore.onWebSocketConnected();
+            notificationStore.onWebSocketConnected();
+            onlineStatusStore.onWebSocketConnected();
+          },
+          onDisconnect: () => {
+            console.log('[AuthService] 主WebSocket已斷線');
+            chatroomStore.onWebSocketDisconnected();
+            notificationStore.onWebSocketDisconnected();
+            onlineStatusStore.onWebSocketDisconnected();
           }
-        },
-        onConnect: () => {
-          console.log('[AuthService] 主WebSocket已連線');
-          chatroomStore.onWebSocketConnected();
-          notificationStore.onWebSocketConnected();
-          onlineStatusStore.onWebSocketConnected();
-        },
-        onDisconnect: () => {
-          console.log('[AuthService] 主WebSocket已斷線');
-          chatroomStore.onWebSocketDisconnected();
-          notificationStore.onWebSocketDisconnected();
-          onlineStatusStore.onWebSocketDisconnected();
-        }
-      });
-      const result = await mainWebSocketManager.connectAll();
-      console.log(`[AuthService] 主WebSocket連線結果: ${result ? '成功' : '失敗'}`);
+        });
+        
+        // 初始化主WebSocket連接
+        mainResult = await mainWebSocketManager.connectAll();
+        console.log(`[AuthService] 主WebSocket連線結果: ${mainResult ? '成功' : '失敗'}`);
+      }
+      
+      // 初始化賬戶WebSocket連接（如果尚未連接）
+      if (!accountConnected) {
+        console.log('[AuthService] 初始化賬戶WebSocket連線');
+        accountResult = await accountWebSocketService.initializeConnection();
+        console.log(`[AuthService] 賬戶WebSocket連線結果: ${accountResult ? '成功' : '失敗'}`);
+      }
+      
+      // 返回整體連接結果（至少有一個成功）
+      const result = mainResult || accountResult;
+      console.log(`[AuthService] 所有WebSocket初始化完成，總結果: ${result ? '成功' : '失敗'}`);
       return result;
     } catch (error) {
-      console.error('[AuthService] 初始化主WebSocket連線時出錯:', error);
+      console.error('[AuthService] 初始化WebSocket連線時出錯:', error);
+      return false;
+    }
+  },
+  
+  /**
+   * 檢查主WebSocket狀態
+   */
+  async checkMainWebSocketStatus(): Promise<boolean> {
+    try {
+      const isConnected = mainWebSocketManager.isConnected();
+      console.log(`[AuthService] 主WebSocket狀態檢查: ${isConnected ? '已連接' : '未連接'}`);
+      return isConnected;
+    } catch (error) {
+      console.error('[AuthService] 檢查主WebSocket狀態時出錯:', error);
+      return false;
+    }
+  },
+  
+  /**
+   * 檢查賬戶WebSocket狀態
+   */
+  async checkAccountWebSocketStatus(): Promise<boolean> {
+    try {
+      const isConnected = accountWebSocketService.isConnected();
+      console.log(`[AuthService] 賬戶WebSocket狀態檢查: ${isConnected ? '已連接' : '未連接'}`);
+      return isConnected;
+    } catch (error) {
+      console.error('[AuthService] 檢查賬戶WebSocket狀態時出錯:', error);
       return false;
     }
   },
@@ -141,8 +203,23 @@ export const authService = {
    * 关闭所有WebSocket连接
    */
   closeAllWebSockets() {
-    console.log('[AuthService] 關閉主WebSocket連線');
-    mainWebSocketManager.disconnectAll();
+    console.log('[AuthService] 統一關閉所有WebSocket連線');
+    
+    try {
+      // 關閉主WebSocket連線
+      console.log('[AuthService] 關閉主WebSocket連線');
+      mainWebSocketManager.disconnectAll();
+      
+      // 關閉賬戶WebSocket連線 - 使用統一接口，強制模式
+      console.log('[AuthService] 關閉賬戶WebSocket連線');
+      accountWebSocketService.closeConnection(true);
+      
+      console.log('[AuthService] 所有WebSocket連線已關閉');
+      return true;
+    } catch (error) {
+      console.error('[AuthService] 關閉WebSocket連線時出錯:', error);
+      return false;
+    }
   },
   
   /**

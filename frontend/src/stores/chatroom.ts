@@ -3,7 +3,7 @@ import { ref, reactive, computed } from 'vue'
 import axios from 'axios'
 import { useAuthStore } from './auth'
 import router from '@/router'
-import webSocketManager, { WebSocketType } from '@/services/webSocketService'
+import webSocketManager from '@/services/webSocketService'
 
 // 添加接口定义
 interface ChatMessageData {
@@ -70,15 +70,12 @@ const getWsBaseUrl = () => {
 
 export const useChatroomStore = defineStore('chatroom', {
   state: () => ({
-    // WebSocket连接
-    socket: null as WebSocket | null,
+    // WebSocket连接狀態（僅保留狀態，但實際連接由WebSocketManager管理）
     connectionStatus: 'disconnected' as 'connecting' | 'connected' | 'disconnected',
     reconnectAttempts: 0,
     maxReconnectAttempts: 5,
     reconnectInterval: 3000, // 3秒
     reconnectTimeout: null as number | null,
-    heartbeatInterval: null as number | null,
-    heartbeatTimeout: null as number | null,
     connectionError: null as string | null,
     
     // 聊天室数据
@@ -162,7 +159,7 @@ export const useChatroomStore = defineStore('chatroom', {
       console.log('[聊天] 事件監聽器設置完成');
     },
     
-    // 处理WebSocket消息
+    // 處理WebSocket消息 - 由主WebSocket轉發
     handleWebSocketMessage(data: any) {
       try {
         console.debug('[聊天] 收到WebSocket消息:', JSON.stringify(data));
@@ -231,99 +228,87 @@ export const useChatroomStore = defineStore('chatroom', {
       }
     },
     
-    // 当WebSocket连接成功时的回调
+    // 當WebSocket連接成功時的回調
     onWebSocketConnected() {
-      console.log('[Chat] 聊天WebSocket连接已建立');
+      console.log('[Chat] 聊天WebSocket連接已建立');
       this.connectionStatus = 'connected';
       this.reconnectAttempts = 0;
       this.connectionError = null;
       
-      // 重新订阅所有已加入的聊天室
+      // 重新訂閱所有已加入的聊天室
       this.resubscribeToRooms();
       
-      // 触发连接成功事件，通知UI更新
+      // 觸發連接成功事件，通知UI更新
       window.dispatchEvent(new Event('chat:websocket-connected'));
     },
     
-    // 当WebSocket连接断开时的回调
+    // 當WebSocket連接斷開時的回調
     onWebSocketDisconnected() {
-      console.log('[Chat] 聊天WebSocket连接已断开');
+      console.log('[Chat] 聊天WebSocket連接已斷開');
       this.connectionStatus = 'disconnected';
       
-      // 触发断开连接事件，通知UI更新
+      // 觸發斷開連接事件，通知UI更新
       window.dispatchEvent(new Event('chat:websocket-disconnected'));
     },
     
-    // 发送pong响应
+    // 發送pong響應
     sendPong() {
       webSocketManager.send({ type: 'pong' });
     },
     
-    // 发送ping请求
+    // 發送ping請求
     sendPing() {
       webSocketManager.send({ type: 'ping' });
     },
     
-    // 发送聊天消息
+    // 發送聊天消息
     sendChatMessage(content: string) {
-      if (!this.currentRoomId) return false;
+      if (!this.currentRoomId) {
+        console.error('[Chat] 嘗試發送消息，但未選擇聊天室');
+        return false;
+      }
       
       const message = {
-        type: 'chat/message',  // 修改為 'chat/message'，與後端預期一致
+        type: 'chat/message',
         room_id: this.currentRoomId,
-        content: content
+        content
       };
       
-      console.log('[聊天] 發送消息:', message);
       return webSocketManager.send(message);  // 直接傳遞消息對象
-    },
-    
-    // 兼容方法：提供与旧版API兼容的WebSocket连接方法
-    // 此方法仅用于兼容现有代码，不应在新代码中使用
-    connectWebSocket() {
-      console.warn('[Chat] connectWebSocket方法已弃用，WebSocket连接现在由WebSocketManager统一管理');
-      return webSocketManager.connect(WebSocketType.CHATROOM);
-    },
-    
-    // 兼容方法：提供与旧版API兼容的WebSocket关闭方法
-    // 此方法仅用于兼容现有代码，不应在新代码中使用
-    closeWebSocket() {
-      console.warn('[Chat] closeWebSocket方法已弃用，WebSocket连接现在由WebSocketManager统一管理');
-      return webSocketManager.disconnect(WebSocketType.CHATROOM);
     },
     
     // 重置状态
     resetState() {
-      // 不再需要关闭WebSocket连接，由WebSocketManager统一管理
-      
-      // 重置状态
+      this.connectionStatus = 'disconnected';
+      this.reconnectAttempts = 0;
+      this.connectionError = null;
       this.rooms = [];
       this.currentRoomId = null;
       this.joinedRoomIds = [];
       this.messages = {};
       this.usersTyping = {};
-      this.connectionStatus = 'disconnected';
-      this.reconnectAttempts = 0;
-      this.connectionError = null;
-      this.unreadMessagesByRoom = {}; // 重置未读消息计数
+      this.unreadMessagesByRoom = {};
+      
+      // 不再需要关闭WebSocket连接，由WebSocketManager统一管理
+      console.log('[Chat] 聊天状态已重置');
     },
     
-    // 发送聊天室加入通知给WebSocket服务器
+    // 發送聊天室加入通知
     sendJoinRoomNotification(roomId: number) {
       // 发送订阅消息，通知WebSocket服务器用户加入了此聊天室
       const message = {
-        type: 'subscribe',
+        type: 'chat/join_room',
         room_id: roomId
       };
       
       console.log(`[Chat] 发送聊天室 ${roomId} 加入通知到WebSocket服务器`);
-      webSocketManager.send(WebSocketType.MAIN, message);
+      webSocketManager.send(message);
     },
     
-    // 重新订阅到所有已加入的聊天室
+    // 重新訂閱所有已加入的聊天室
     resubscribeToRooms() {
       // 确保WebSocket已连接
-      if (!webSocketManager.isConnected(WebSocketType.MAIN)) {
+      if (!webSocketManager.isConnected()) {
         console.log('[Chat] WebSocket未连接，无法重新订阅聊天室');
         return;
       }
