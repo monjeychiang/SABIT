@@ -40,6 +40,13 @@ export const authService = {
     const authStore = useAuthStore();
     const userStore = useUserStore();
     
+    // 先嘗試從持久化緩存載入用戶資料
+    // 這將確保頁面刷新後立即顯示用戶資料，不需等待API請求
+    const hasCachedUser = userStore.loadUserFromCache();
+    if (hasCachedUser) {
+      console.log('從持久化緩存成功載入用戶資料，無需等待API請求');
+    }
+    
     // 初始化 auth store 身份驗證狀態
     await authStore.initAuth();
     
@@ -48,18 +55,29 @@ export const authService = {
       console.log('同步令牌到 user store');
       userStore.setToken(authStore.token);
       
-      // 由 user store 負責獲取用戶數據
-      try {
-        await userStore.getUserData();
-      } catch (error) {
-        console.error('獲取用戶數據失敗', error);
+      // 若沒有緩存數據或需要刷新，再獲取用戶數據
+      if (!hasCachedUser) {
+        try {
+          console.log('從緩存未載入到用戶資料，嘗試從API獲取');
+          await userStore.getUserData();
+        } catch (error) {
+          console.error('獲取用戶數據失敗', error);
+        }
+      } else {
+        console.log('已有緩存用戶資料，背景刷新資料');
+        // 在背景刷新用戶資料，但不等待完成
+        userStore.getUserData().catch(error => {
+          console.error('背景刷新用戶資料失敗', error);
+        });
       }
       
       // 用户已登录，初始化WebSocket连接
       await this.initializeWebSockets();
     } else {
       // 嘗試從 user store 初始化令牌
-      await userStore.initializeToken();
+      if (!hasCachedUser) {
+        await userStore.initializeToken();
+      }
       
       // 如果 user store 有有效令牌，初始化WebSocket連接
       if (userStore.isLoggedIn) {

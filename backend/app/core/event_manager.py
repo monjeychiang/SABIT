@@ -2,14 +2,24 @@ import logging
 from typing import Dict, Any, List, Optional, Callable, Awaitable
 import asyncio
 from datetime import datetime
+import uuid
 from sqlalchemy.orm import Session
 
 from ..schemas.event import EventBase, EventType, TradeEvent, PriceAlertEvent, SystemEvent, UserActionEvent
 from ..schemas.notification import NotificationCreate, NotificationType
 from ..api.endpoints.notifications import create_and_broadcast_notification
+from ..core.main_ws_manager import main_ws_manager
 
 # 設置日誌記錄
 logger = logging.getLogger(__name__)
+
+# 系統事件類型列表 - 這些事件生成的通知不存入數據庫，只通過WebSocket發送
+SYSTEM_EVENT_TYPES = [
+    EventType.LOGIN_SUCCESS,
+    EventType.SYSTEM_ALERT,
+    EventType.PRICE_ALERT,
+    EventType.ACCOUNT_UPDATE
+]
 
 # 事件通知模板配置
 EVENT_TEMPLATES = {
@@ -68,9 +78,14 @@ class EventManager:
         
     def _initialize_default_handlers(self):
         """初始化默認事件處理器"""
-        # 為每種事件類型註冊默認處理器
+        # 為系統事件類型註冊直接WebSocket處理器
+        for event_type in SYSTEM_EVENT_TYPES:
+            self.register_handler(event_type, self._system_event_to_websocket_handler)
+            
+        # 為其他事件類型註冊默認處理器（存入數據庫）
         for event_type in EventType:
-            self.register_handler(event_type, self._default_event_to_notification_handler)
+            if event_type not in SYSTEM_EVENT_TYPES:
+                self.register_handler(event_type, self._default_event_to_notification_handler)
     
     def register_handler(self, event_type: EventType, handler: Callable):
         """註冊事件處理器"""
@@ -99,7 +114,7 @@ class EventManager:
             logger.warning(f"沒有找到事件類型 {event.event_type} 的處理器")
     
     async def _default_event_to_notification_handler(self, event: EventBase, db: Session):
-        """默認的事件轉通知處理器"""
+        """默認的事件轉通知處理器 - 存入數據庫並通過WebSocket發送"""
         try:
             # 獲取事件類型對應的通知模板
             if event.event_type not in EVENT_TEMPLATES:
@@ -137,6 +152,76 @@ class EventManager:
             
         except Exception as e:
             logger.error(f"將事件轉換為通知時出錯: {str(e)}")
+            
+    async def _system_event_to_websocket_handler(self, event: EventBase, db: Session):
+        """系統事件直接通過WebSocket發送，不存入數據庫"""
+        try:
+            # 獲取事件類型對應的通知模板
+            if event.event_type not in EVENT_TEMPLATES:
+                logger.warning(f"沒有找到事件類型 {event.event_type} 的通知模板")
+                return
+                
+            template = EVENT_TEMPLATES[event.event_type]
+            
+            # 提取通知所需的變量
+            template_variables = self._extract_template_variables(event)
+            
+            # 處理模板變量替換
+            title = template["title"]
+            message = template["message"]
+            notification_type = template["notification_type"]
+            
+            for key, value in template_variables.items():
+                placeholder = "{" + key + "}"
+                title = title.replace(placeholder, str(value))
+                message = message.replace(placeholder, str(value))
+            
+            # 生成唯一ID
+            notification_id = f"sys_{int(datetime.now().timestamp())}_{uuid.uuid4().hex[:8]}"
+            
+            # 創建通知對象
+            notification_data = {
+                "id": notification_id,
+                "title": title,
+                "message": message,
+                "notification_type": notification_type.value,
+                "is_read": False,
+                "created_at": datetime.now().isoformat(),
+                "is_global": False,
+                "source": "system"  # 標記來源為系統事件
+            }
+            
+            # 創建標準格式的消息
+            message = {
+                "type": "notification",
+                "payload": notification_data,
+                "notification": notification_data
+            }
+            
+            # 確定發送範圍
+            if isinstance(event, SystemEvent) and event.is_global:
+                # 廣播給所有用戶
+                logger.info(f"廣播系統事件通知: {title}")
+                await main_ws_manager.broadcast(message)
+            elif hasattr(event, 'user_ids') and event.user_ids:
+                # 發送給指定用戶
+                for user_id in event.user_ids:
+                    notification_data["user_id"] = user_id  # 添加用戶ID
+                    
+                    # 重新打包消息，確保每個用戶收到包含自己ID的通知
+                    user_message = {
+                        "type": "notification",
+                        "payload": notification_data,
+                        "notification": notification_data
+                    }
+                    
+                    logger.info(f"發送系統事件通知給用戶 {user_id}: {title}")
+                    await main_ws_manager.send_to_user(user_id, user_message)
+            
+            logger.info(f"已通過WebSocket發送系統事件 {event.event_type} 的通知")
+            
+        except Exception as e:
+            logger.error(f"通過WebSocket發送系統事件通知時出錯: {str(e)}")
     
     def _extract_template_variables(self, event: EventBase) -> Dict[str, Any]:
         """從事件中提取通知模板所需的變量"""

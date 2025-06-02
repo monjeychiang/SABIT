@@ -7,6 +7,8 @@ import type { TokenManager } from '@/utils/tokenManager'
 // 引入TokenService單例
 import { getTokenManager } from '@/services/tokenService'
 import router from '@/router'
+// 引入 userStore，用於同步用戶資料
+import { useUserStore } from '@/stores/user'
 
 interface LoginCredentials {
   username: string
@@ -32,7 +34,7 @@ export const useAuthStore = defineStore('auth', () => {
   const error = ref<string | null>(null)
   
   // 令牌傳播延遲參數 - 令牌獲取後多久可以安全地用於獲取用戶數據
-  const tokenPropagationDelay = ref<number>(800) // 預設800毫秒，確保令牌在後端完成傳播
+  const tokenPropagationDelay = ref<number>(1500) // 增加到1500毫秒，確保令牌在後端完成傳播
   
   // 認證狀態計算屬性
   const isAuthenticated = computed(() => !!token.value)
@@ -105,8 +107,19 @@ export const useAuthStore = defineStore('auth', () => {
       // 等待token在後端服務傳播
       await waitForTokenPropagation()
       
+      // 同步用戶資料 - 新增代碼
+      const userStore = useUserStore()
+      userStore.setToken(authToken)
+      
       // 觸發登錄成功事件，初始化聊天和通知系統
       window.dispatchEvent(new Event('login-authenticated'))
+      
+      // 強制獲取用戶資料 - 新增代碼
+      try {
+        await userStore.getUserData(true)
+      } catch (err) {
+        console.error('登錄成功但獲取用戶資料失敗:', err)
+      }
       
       return {
         success: true,
@@ -166,7 +179,7 @@ export const useAuthStore = defineStore('auth', () => {
       
       // 關鍵優化：使用統一的令牌傳播等待函數，Google登錄使用更長的延遲
       // 因為涉及第三方認證，可能需要更長時間在後端系統中傳播
-      await waitForTokenPropagation(1000);
+      await waitForTokenPropagation(2000); // 增加到2000毫秒
       
       // 再使用tokenManager統一管理令牌
       // 讓tokenManager根據keepLoggedIn狀態決定過期時間
@@ -186,6 +199,18 @@ export const useAuthStore = defineStore('auth', () => {
       } catch (tokenError) {
         console.error('設置tokenManager時出錯:', tokenError);
         // 即使tokenManager設置失敗，依然繼續流程
+      }
+      
+      // 同步用戶資料並強制獲取 - 新增代碼
+      try {
+        const userStore = useUserStore()
+        userStore.setToken(accessTokenParam)
+        // 確保 auth_token 也被正確設置
+        localStorage.setItem('auth_token', accessTokenParam)
+        await userStore.getUserData(true)
+      } catch (userError) {
+        console.error('Google登錄成功但獲取用戶資料失敗:', userError)
+        // 繼續流程，不影響登錄結果
       }
       
       return true
@@ -325,6 +350,9 @@ export const useAuthStore = defineStore('auth', () => {
       token.value = savedToken
       refreshToken.value = savedRefreshToken
       
+      // 確保 auth_token 和 token 保持一致
+      localStorage.setItem('auth_token', savedToken)
+      
       // 檢查令牌是否過期
       const tokenExpiry = localStorage.getItem('tokenExpiry')
       const keepLoggedIn = localStorage.getItem('keepLoggedIn') === 'true'
@@ -370,6 +398,17 @@ export const useAuthStore = defineStore('auth', () => {
         } else {
           // 令牌未過期，設置全局授權頭
           setAxiosAuthHeader(savedToken);
+        }
+        
+        // 如果令牌有效，同步並獲取用戶資料 - 新增代碼
+        if (isTokenValid) {
+          try {
+            const userStore = useUserStore()
+            userStore.setToken(savedToken)
+            await userStore.getUserData(true)
+          } catch (error) {
+            console.error('令牌有效但獲取用戶資料失敗:', error)
+          }
         }
         
         return isTokenValid;

@@ -58,9 +58,7 @@
                   <button v-if="hasNotifications" class="clear-all" @click="clearAllNotifications">全部清除</button>
                 </div>
               </div>
-              <div class="notification-local-info" v-if="hasNotifications">
-                <small>已读状态和清除操作仅保存在本地，其他用户不受影响</small>
-              </div>
+              <!-- 刪除通知欄說明 -->
               <div v-if="notificationStore.loading" class="loading-notifications">
                 <div class="loading-spinner"></div>
                 <p>載入中...</p>
@@ -81,11 +79,17 @@
                     {{ getNotificationStyle(notification.notification_type).icon }}
                   </div>
                   <div class="notification-content">
-                    <div class="notification-type-badge" :style="{
-                      color: getNotificationStyle(notification.notification_type).color,
-                      backgroundColor: getNotificationStyle(notification.notification_type).bgColor
-                    }">
-                      {{ getNotificationTypeName(notification.notification_type) }}
+                    <div class="notification-header-info">
+                      <div class="notification-type-badge" :style="{
+                        color: getNotificationStyle(notification.notification_type).color,
+                        backgroundColor: getNotificationStyle(notification.notification_type).bgColor
+                      }">
+                        {{ getNotificationTypeName(notification.notification_type) }}
+                      </div>
+                      <div v-if="notification.source" class="notification-source-badge"
+                        :class="`source-${notification.source}`">
+                        {{ notification.source === 'system' ? '系統' : '管理員' }}
+                      </div>
                     </div>
                     <h4>{{ notification.title }}</h4>
                     <p>{{ notification.message }}</p>
@@ -561,6 +565,18 @@ const codeCopied = ref(false);
 // 添加 searchQuery 變量
 const searchQuery = ref('');
 
+// 監視用戶數據變化，確保當用戶存儲更新時NavBar也更新
+watch(() => userStore.user, (newUserData) => {
+  if (newUserData) {
+    console.log('檢測到用戶資料變更，更新 NavBar 顯示');
+    username.value = newUserData.username;
+    email.value = newUserData.email;
+    userTag.value = newUserData.role || 'regular';
+    avatarUrl.value = newUserData.avatar || '';
+    fullName.value = newUserData.fullName || '';
+  }
+}, { immediate: true });
+
 onMounted(async () => {
   themeStore.initTheme();
   
@@ -602,6 +618,18 @@ onMounted(async () => {
     }
   });
   
+  // 初始化認證狀態前先檢查緩存的用戶資料
+  // 這能確保即使在 authService.initialize() 之前也能顯示用戶資料
+  const hasCachedUser = userStore.loadUserFromCache();
+  if (hasCachedUser && userStore.user) {
+    console.log('已從緩存載入用戶資料，立即更新 NavBar 顯示');
+    username.value = userStore.user.username;
+    email.value = userStore.user.email;
+    userTag.value = userStore.user.role || 'regular';
+    avatarUrl.value = userStore.user.avatar || '';
+    fullName.value = userStore.user.fullName || '';
+  }
+  
   // 初始化認證狀態
   console.log('NavBar 組件掛載，初始化認證狀態...');
   await authService.initialize();
@@ -640,11 +668,6 @@ onMounted(async () => {
         console.log('检测到WebSocket未连接，尝试重新连接...');
         // 注意：此方法内部已更新为使用WebSocketManager，保留调用是为了兼容现有代码
         webSocketManager.connect();
-        
-        // 如果需要同时重连所有WebSocket，可以使用以下代码
-        // import('@/services/webSocketService').then(({ default: webSocketManager }) => {
-        //   webSocketManager.connectAll();
-        // });
       }
     }, 3000);
   }
@@ -710,8 +733,10 @@ const toggleUserDropdown = () => {
 };
 
 const markAsRead = async (id) => {
-  await notificationStore.markAsRead(id);
-  showNotifications.value = false;
+  // 直接調用 store 的方法，不與後端同步
+  notificationStore.markAsRead(id);
+  // 可選：點擊通知後關閉通知面板
+  // showNotifications.value = false;
 };
 
 const markAllAsRead = async () => {
@@ -720,8 +745,8 @@ const markAllAsRead = async () => {
 };
 
 const clearAllNotifications = async () => {
-  await notificationStore.clearAllNotifications();
-  showNotifications.value = false;
+  // 直接調用 store 的方法，只影響前端和 LocalStorage
+  notificationStore.clearAllNotifications();
 };
 
 const formatTime = (dateString) => {
@@ -1176,6 +1201,8 @@ const loadUserData = async (retryCount = 3) => {
       fullName.value = userStore.user.fullName || '';
       oauthProvider.value = userStore.user.oauthProvider || '';
       console.log('用戶數據已通過 API 更新');
+    } else {
+      console.error('用戶數據獲取失敗: userStore.user 為空');
     }
   } catch (error) {
     console.error('Error loading user data:', error);
@@ -1488,7 +1515,8 @@ const showHelp = () => {
   width: 380px;
   max-width: 90vw;
   max-height: calc(100vh - 150px);
-  overflow-y: auto;
+  /* 移除滾動條 */
+  overflow-y: hidden;
   background-color: var(--background-color);
   border: none;
   border-radius: var(--border-radius-md);
@@ -1537,9 +1565,44 @@ const showHelp = () => {
   background-color: var(--hover-color);
 }
 
+.notification-header-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.notification-source-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.source-system {
+  background-color: rgba(114, 46, 209, 0.1);
+  color: #722ed1;
+  border: 1px solid #722ed1;
+}
+
+.source-admin {
+  background-color: rgba(22, 119, 255, 0.1);
+  color: #1677ff;
+  border: 1px solid #1677ff;
+}
+
 .notifications-list {
   max-height: 400px;
-  overflow-y: auto;
+  /* 隱藏滾動條但保留功能 */
+  overflow-y: scroll;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+/* 為Webkit瀏覽器(Chrome, Safari等)隱藏滾動條 */
+.notifications-list::-webkit-scrollbar {
+  display: none;
 }
 
 .notification-item {
@@ -2552,15 +2615,9 @@ const showHelp = () => {
   margin: var(--spacing-md) 0;
 }
 
+/* 移除不再需要的說明樣式 */
 .notification-local-info {
-  padding: 0 var(--spacing-md);
-  margin-bottom: var(--spacing-xs);
-  text-align: center;
-  color: var(--text-tertiary);
-  font-size: 0.75rem;
-  background-color: var(--bg-secondary);
-  padding: 4px 0;
-  border-bottom: 1px solid var(--border-color-light);
+  display: none;
 }
 
 .loading-notifications {
