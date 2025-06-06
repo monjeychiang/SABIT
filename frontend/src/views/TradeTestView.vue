@@ -5,125 +5,145 @@
       <div class="sub-header">安全測試您的交易策略</div>
       <div class="api-info">
         <span class="api-badge">🚀 新功能</span> 
-        系統已升級為使用 WebSocket API 與幣安直接通信，提供更快的下單速度和更好的實時性能
+        系統已升級為使用連接管理器管理 WebSocket API，提供更穩定的連接和更高的資源利用效率
       </div>
     </div>
 
-    <div class="connection-diagram">
+    <!-- 重新設計簡化版的連接狀態圖 -->
+    <div class="connection-monitor">
       <h2>連接狀態監控</h2>
-      <div class="diagram-container">
-        <div class="node frontend" :class="{ 'active': true }">
-          <div class="node-icon">📱</div>
-          <div class="node-label">前端</div>
-        </div>
-        <div class="connection-line" :class="{ 'active': isConnected, 'inactive': !isConnected }"></div>
-        <div class="node backend" :class="{ 'active': isConnected }">
-          <div class="node-icon">🖥️</div>
-          <div class="node-label">後端</div>
-        </div>
-        <div class="connection-line" :class="{ 'active': binanceConnected, 'inactive': !binanceConnected, 'error': binanceConnectError }"></div>
-        <div class="node exchange" :class="{ 'active': binanceConnected, 'error': binanceConnectError, 'websocket': isWebSocketAPI, 'rest': isRestAPI }">
-          <div class="node-icon">💹</div>
-          <div class="node-label">幣安</div>
-          <div class="connection-type" v-if="binanceConnected">{{ accountInfo?.api_type || '未知類型' }}</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="connection-status" :class="{ 'connected': isConnected, 'disconnected': !isConnected }">
-      <div class="status-indicator" :class="{ active: isConnected }"></div>
-      <span>WebSocket 狀態: {{ isConnected ? '已連接' : '未連接' }}</span>
-      <div class="connection-info" v-if="isConnected">
-        <span class="connection-time">上次更新: {{ lastUpdate ? formatTime(lastUpdate) : '尚未更新' }}</span>
-        <span class="connection-detail">前端 → 後端連接</span>
-      </div>
-      <div class="connection-actions">
-        <button @click="connect" :disabled="isConnected" class="connect-btn">
-          <span class="icon">●</span> 連接
-        </button>
-        <button @click="disconnect" :disabled="!isConnected" class="disconnect-btn">
-          <span class="icon">■</span> 斷開
-        </button>
-      </div>
-    </div>
-
-    <!-- 幣安連接狀態 -->
-    <div class="connection-status binance-connection" :class="{ 'connected': binanceConnected, 'websocket-api': isWebSocketAPI, 'rest-api': isRestAPI, 'error': binanceConnectError }" v-if="isConnected">
-      <div class="status-indicator" :class="{ active: binanceConnected, error: binanceConnectError }"></div>
-      <span>幣安 API 狀態: {{ binanceConnected ? '已連接' : (binanceConnectError ? '連接錯誤' : '未連接') }}</span>
-      <div class="connection-info">
-        <span class="connection-type" :class="{ 'websocket-api': isWebSocketAPI, 'rest-api': isRestAPI, 'error': binanceConnectError }">
-          {{ binanceConnectionType }}
-        </span>
-        <span class="connection-detail">後端 → 幣安連接</span>
-        <span class="last-update" v-if="lastUpdate">
-          <i class="fas fa-clock"></i> {{ getTimeSinceLastUpdate() }}
-        </span>
-        <i class="fas fa-info-circle api-info-icon" title="WebSocket API 提供更快的交易速度和更低的延遲，但需要專門的 Ed25519 密鑰。REST API 是標準接口，使用一般的 HMAC-SHA256 密鑰"></i>
-      </div>
-      <div class="connection-actions" v-if="binanceConnectError">
-        <button @click="reconnectBinance" class="reconnect-btn">
-          <span class="icon">↻</span> 重新連接
-        </button>
-      </div>
-    </div>
-
-    <!-- 幣安連接錯誤信息 -->
-    <div class="binance-error-message" v-if="isConnected && binanceConnectError">
-      <div class="error-icon">!</div>
-      <div class="error-content">
-        <div class="error-title">幣安 API 連接錯誤</div>
-        <div class="error-desc">{{ binanceErrorMessage || '連接意外斷開，請嘗試重新連接' }}</div>
-        <div class="error-tips">
-          常見原因: 網絡問題、API密鑰過期或權限不足、服務端連接超時
-        </div>
-      </div>
-    </div>
-
-    <div class="card account-info" v-if="isConnected">
-      <div class="card-header">
-        <h2>賬戶信息</h2>
-        <div class="tag">實時數據</div>
-      </div>
-      <div class="refresh-action">
-        <button @click="refreshAccountData" class="refresh-btn">刷新資料</button>
-        <span v-if="lastUpdate">上次更新: {{ formatTime(lastUpdate) }}</span>
-      </div>
-      <div class="account-summary">
-        <div class="summary-item">
-          <div class="label">可用餘額</div>
-          <div class="value">{{ formatNumber(availableBalance) }}</div>
-          <div class="subtext">可用於開倉</div>
-        </div>
-        <div class="summary-item">
-          <div class="label">錢包餘額</div>
-          <div class="value">{{ formatNumber(totalWalletBalance) }}</div>
-          <div class="subtext">總資產</div>
-        </div>
-        <div class="summary-item">
-          <div class="label">未實現盈虧</div>
-          <div class="value" :class="getColorClass(totalUnrealizedProfit)">
-            {{ formatNumber(totalUnrealizedProfit) }}
+      
+      <!-- 連接圖表主體 - 簡化版 -->
+      <div class="connection-graph">
+        <!-- 前端節點 -->
+        <div class="graph-node frontend">
+          <div class="node-icon">💻</div>
+          <div class="node-title">前端應用</div>
+          <div class="node-status">
+            <span class="status-dot active"></span>
+            <span class="status-text">已開啟</span>
           </div>
-          <div class="subtext">持倉浮動盈虧</div>
+        </div>
+        
+        <!-- 前端到後端的連接線 -->
+        <div class="connection-arrow-path" :class="{ 'active': isConnected, 'inactive': !isConnected }">
+          <div class="arrow-label">WebSocket</div>
+        </div>
+        
+        <!-- 後端節點 -->
+        <div class="graph-node server" :class="{ 'active': isConnected, 'inactive': !isConnected }">
+          <div class="node-icon">🖥️</div>
+          <div class="node-title">後端服務</div>
+          <div class="node-status">
+            <span class="status-dot" :class="{ 'active': isConnected, 'inactive': !isConnected }"></span>
+            <span class="status-text">{{ isConnected ? '已連接' : '未連接' }}</span>
+          </div>
+          <div v-if="isConnected" class="node-text">
+            {{ lastUpdate ? getTimeSinceLastUpdate() : '尚無更新' }}
+          </div>
+        </div>
+        
+        <!-- 後端到連接管理器的連接線 -->
+        <div class="connection-arrow-path" :class="{ 'active': isConnected, 'inactive': !isConnected }">
+          <div class="arrow-label">內部通信</div>
+        </div>
+        
+        <!-- 連接管理器節點 -->
+        <div class="graph-node manager" :class="{ 
+          'active': isConnected && !binanceConnectError, 
+          'error': isConnected && binanceConnectError,
+          'inactive': !isConnected 
+        }">
+          <div class="node-icon">🔌</div>
+          <div class="node-title">連接管理器</div>
+          <div class="node-status">
+            <span class="status-dot" :class="{ 
+              'active': isConnected && !binanceConnectError, 
+              'error': binanceConnectError,
+              'inactive': !isConnected 
+            }"></span>
+            <span class="status-text">{{ isConnected ? (binanceConnectError ? '連接錯誤' : '運行中') : '未啟動' }}</span>
+          </div>
+        </div>
+        
+        <!-- 連接管理器到交易所的連接線 -->
+        <div class="connection-arrow-path" :class="{ 
+          'active': isConnected && binanceConnected, 
+          'inactive': !isConnected || !binanceConnected,
+          'error': isConnected && binanceConnectError 
+        }">
+          <div class="arrow-label">{{ 
+            (isWebSocketAPI && binanceConnected) ? 'WebSocket API' : 
+            (isRestAPI && binanceConnected) ? 'REST API' : 
+            '尚未連接' 
+          }}</div>
+        </div>
+        
+        <!-- 交易所節點 -->
+        <div class="graph-node exchange" :class="{ 
+          'active': isConnected && binanceConnected && !binanceConnectError, 
+          'error': isConnected && binanceConnectError,
+          'inactive': !isConnected || !binanceConnected,
+          'websocket': isConnected && binanceConnected && isWebSocketAPI,
+          'rest': isConnected && binanceConnected && isRestAPI
+        }">
+          <div class="node-icon">💹</div>
+          <div class="node-title">幣安交易所</div>
+          <div class="node-status">
+            <span class="status-dot" :class="{ 
+              'active': isConnected && binanceConnected && !binanceConnectError, 
+              'error': isConnected && binanceConnectError,
+              'inactive': !isConnected || !binanceConnected 
+            }"></span>
+            <span class="status-text">{{ 
+              !isConnected ? '未連接' : 
+              binanceConnectError ? '連接錯誤' :
+              binanceConnected ? '已連接' : '未連接'
+            }}</span>
+          </div>
+          <div v-if="isConnected && binanceConnected && !binanceConnectError" class="node-text">
+            {{ binanceConnectionType }}
+          </div>
         </div>
       </div>
-      <div class="api-type-indicator" v-if="accountInfo && accountInfo.api_type">
-        <span 
-          class="api-badge" 
-          :class="{'ws-api': accountInfo.api_type.includes('WebSocket'), 'rest-api': accountInfo.api_type.includes('REST')}"
-        >
-          {{ accountInfo.api_type }}
-        </span>
-        <i class="fas fa-info-circle api-info-icon" title="WebSocket API 提供更快的交易速度和更低的延遲，但需要專門的 Ed25519 密鑰。REST API 是標準接口，使用一般的 HMAC-SHA256 密鑰"></i>
+      
+      <!-- 按鈕區域 -->
+      <div class="connection-buttons">
+        <button @click="connect" :disabled="isConnected" class="control-btn connect">
+          <span class="btn-icon">🔄</span> 連接服務
+        </button>
+        <button @click="disconnect" :disabled="!isConnected" class="control-btn disconnect">
+          <span class="btn-icon">⏹️</span> 斷開連接
+        </button>
+        <button @click="refreshAccountData" :disabled="!isConnected" class="control-btn refresh">
+          <span class="btn-icon">🔄</span> 刷新數據
+        </button>
+        <button @click="reconnectBinance" :disabled="!isConnected || !binanceConnectError" class="control-btn reconnect">
+          <span class="btn-icon">🔌</span> 重連交易所
+        </button>
       </div>
-    </div>
-
-    <div class="not-connected-message" v-if="!isConnected">
-      <div class="message-icon">!</div>
-      <div class="message-content">
-        <h3>未連接到 WebSocket</h3>
-        <p>請點擊「連接」按鈕以獲取實時賬戶數據和執行交易操作。</p>
+      
+      <!-- 連接詳情區 -->
+      <div class="connection-info-panel" v-if="isConnected">
+        <div class="info-row">
+          <div class="info-label">連接類型</div>
+          <div class="info-value">{{ binanceConnectionType }}</div>
+        </div>
+        <div class="info-row">
+          <div class="info-label">狀態更新</div>
+          <div class="info-value">{{ lastUpdate ? formatTime(lastUpdate) : '尚未更新' }}</div>
+        </div>
+        <div class="info-row">
+          <div class="info-label">前端連接</div>
+          <div class="info-value success">已連接</div>
+        </div>
+        <div class="info-row">
+          <div class="info-label">持久連接模式</div>
+          <div class="info-value">已啟用</div>
+        </div>
+        <div class="info-row error" v-if="binanceConnectError">
+          <div class="error-message">{{ binanceErrorMessage || '連接意外斷開，請嘗試重新連接' }}</div>
+        </div>
       </div>
     </div>
 
@@ -433,11 +453,20 @@ const cancelResponse = ref<any>(null);
 const cancelError = ref<string | null>(null);
 
 // 延遲統計
-const latencyHistory = ref([]);
+interface LatencyRecord {
+  id: number;
+  type: string;
+  latency: number;
+  symbol: string;
+  orderType: string | null;
+  time: Date;
+}
+
+const latencyHistory = ref<LatencyRecord[]>([]);
 const MAX_HISTORY = 10; // 最多記錄10條歷史數據
 
 // 添加延遲數據到歷史記錄
-const addLatencyRecord = (type, latency, symbol, orderType = null) => {
+const addLatencyRecord = (type: string, latency: number, symbol: string, orderType: string | null = null) => {
   latencyHistory.value.unshift({
     id: Date.now(),
     type,
@@ -490,18 +519,47 @@ const disconnect = () => {
 // 重新連接幣安
 const reconnectBinance = async () => {
   try {
-    // 首先發送刷新請求，這將嘗試重新建立與幣安的連接
-    await refreshAccountData();
+    console.log('[TradeTestView] 嘗試通過連接管理器重連到幣安...');
     
-    // 如果成功刷新，清除錯誤狀態
+    // 首先發送刷新請求，這將嘗試重新建立與幣安的連接
+    console.log('[TradeTestView] 發送連接重建請求');
+    
+    // 重置錯誤狀態，在進行新的嘗試前
     binanceConnectError.value = false;
     binanceErrorMessage.value = '';
     
-  } catch (error) {
-    console.error('重新連接幣安失敗:', error);
+    // 發送特定的重新連接請求，要求後端重新建立連接
+    await send({ 
+      type: 'reconnect', 
+      timestamp: Date.now(),
+      target: 'binance',
+      force: true, // 強制重新建立連接，即使後端認為連接是活躍的
+      reconnect_options: {
+        clear_cache: true,  // 清除可能的緩存數據
+        reset_authentication: true // 重設驗證
+      }
+    });
+    
+    // 等待連接建立
+    console.log('[TradeTestView] 等待連接建立...');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // 刷新賬戶數據以確認連接
+    console.log('[TradeTestView] 刷新賬戶數據以驗證連接');
+    await refreshAccountData();
+    
+    console.log('[TradeTestView] 幣安連接重建成功');
+    
+  } catch (error: unknown) {
+    console.error('[TradeTestView] 重新連接幣安失敗:', error);
+    
     // 設置更詳細的錯誤信息
+    binanceConnectError.value = true;
     if (error instanceof Error) {
-      binanceErrorMessage.value = error.message;
+      binanceErrorMessage.value = `重連失敗: ${error.message}`;
+      console.error(`[TradeTestView] ${error.stack || '無錯誤堆棧'}`);
+    } else if (typeof error === 'string') {
+      binanceErrorMessage.value = `重連失敗: ${error}`;
     } else {
       binanceErrorMessage.value = '重新連接失敗，請檢查網絡和API密鑰';
     }
@@ -511,19 +569,48 @@ const reconnectBinance = async () => {
 // 刷新帳戶數據
 const refreshAccountData = async () => {
   try {
+    console.log('[TradeTestView] 刷新帳戶數據，通過連接管理器與幣安交互...');
+    
     // 發送刷新請求
-    await send({ type: 'refresh' });
-  } catch (error) {
-    console.error('刷新數據失敗:', error);
+    const refreshStartTime = Date.now();
+    await send({ 
+      type: 'refresh', 
+      timestamp: refreshStartTime,
+      target: 'account_data',
+      options: {
+        force_update: true,  // 強制從交易所獲取最新數據而非使用緩存
+      }
+    });
+    
+    const responseTime = Date.now() - refreshStartTime;
+    console.log(`[TradeTestView] 帳戶數據刷新成功，耗時: ${responseTime}ms`);
+    
+    // 測量API響應延遲
+    if (responseTime > 0) {
+      // 添加到延遲歷史
+      addLatencyRecord('刷新數據', responseTime, 'ALL', null);
+    }
+    
+    // 如果之前有錯誤，現在清除它們
+    if (binanceConnectError.value) {
+      binanceConnectError.value = false;
+      binanceErrorMessage.value = '';
+      console.log('[TradeTestView] 連接恢復正常，已清除錯誤狀態');
+    }
+  } catch (error: unknown) {
+    console.error('[TradeTestView] 刷新數據失敗:', error);
+    
     // 設置錯誤狀態
     binanceConnectError.value = true;
     
+    // 提供詳細的錯誤信息
     if (error instanceof Error) {
-      binanceErrorMessage.value = error.message;
+      binanceErrorMessage.value = `刷新失敗: ${error.message}`;
+      console.error(`[TradeTestView] 錯誤堆棧: ${error.stack || '無堆棧信息'}`);
     } else if (typeof error === 'string') {
-      binanceErrorMessage.value = error;
+      binanceErrorMessage.value = `刷新失敗: ${error}`;
     } else {
-      binanceErrorMessage.value = 'WebSocket 連接錯誤';
+      binanceErrorMessage.value = '無法獲取最新數據，請檢查網絡連接';
     }
     
     throw error; // 重新拋出錯誤以便調用者處理
@@ -563,7 +650,7 @@ const submitOrder = async () => {
     isOrderSubmitting.value = true;
     
     // 構建訂單參數 - 僅包含必要參數
-    const orderParams = {
+    const orderParams: Record<string, any> = {
       // 基本訂單參數
       symbol: orderForm.value.symbol,
       side: orderForm.value.side,
@@ -587,7 +674,7 @@ const submitOrder = async () => {
     // 測量下單延遲 - 開始時間
     const startTime = Date.now();
 
-    // 發送下單請求
+    // 發送下單請求 - 修正：將參數包裝在data字段中
     const result = await placeOrder(orderParams);
     console.log('訂單響應：', result);
 
@@ -631,12 +718,13 @@ const submitOrder = async () => {
       binanceConnectError.value = true;
       binanceErrorMessage.value = '訂單已提交，但獲取最新賬戶數據時出錯';
     }
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('下單錯誤:', error);
-    orderError.value = error.message || '下單過程中發生錯誤';
+    const errorMsg = error instanceof Error ? error.message : '下單過程中發生錯誤';
+    orderError.value = errorMsg;
     
     // 檢查是否是WebSocket連接錯誤
-    if (error.message && (
+    if (error instanceof Error && error.message && (
         error.message.includes('WebSocket') || 
         error.message.includes('連接') || 
         error.message.includes('網絡') ||
@@ -670,7 +758,7 @@ const submitCancelOrder = async () => {
     }
     
     // 構建取消訂單參數
-    const cancelParams = {
+    const cancelParams: Record<string, any> = {
       symbol: cancelForm.value.symbol,
       orderId: cancelForm.value.orderId,
       timestamp: Date.now(), // 添加timestamp參數
@@ -682,7 +770,7 @@ const submitCancelOrder = async () => {
     // 測量取消訂單延遲 - 開始時間
     const startTime = Date.now();
     
-    // 發送取消訂單請求
+    // 發送取消訂單請求 - 修正：將參數包裝在data字段中
     const result = await cancelOrder(cancelParams);
     console.log('取消訂單響應:', result);
     
@@ -690,7 +778,7 @@ const submitCancelOrder = async () => {
     cancelLatency.value = Date.now() - startTime;
     
     // 添加到延遲歷史
-    addLatencyRecord('取消', cancelLatency.value, cancelForm.value.symbol);
+    addLatencyRecord('取消', cancelLatency.value, cancelForm.value.symbol, null);
     
     // 檢查響應
     if (result && result.error) {
@@ -728,7 +816,7 @@ const submitCancelOrder = async () => {
       binanceErrorMessage.value = '訂單可能已取消，但獲取最新賬戶數據時出錯';
     }
     
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('取消訂單錯誤:', error);
     if (error instanceof Error) {
       cancelError.value = error.message;
@@ -811,32 +899,209 @@ const getColorClass = (value: string | number | undefined) => {
 
 // 幣安連接狀態
 const binanceConnected = computed(() => {
-  // 檢查是否有賬戶數據並且是否包含API類型信息
-  return !!accountData.value && 
-         !!accountData.value.api_type && 
-         (accountData.value.api_type.includes('WebSocket') || accountData.value.api_type.includes('REST'));
+  // 添加更詳細的調試日誌
+  console.debug('[TradeTestView] 檢查幣安連接狀態:', 
+    { 
+      hasAccountData: !!accountData.value, 
+      apiType: accountData.value?.api_type,
+      connectionStatus: accountData.value?.connection_status,
+      connectionType: accountData.value?.connection_type,
+      assetsCount: accountData.value?.assets_count,
+      positionsCount: accountData.value?.positions_count,
+      totalWalletBalance: accountData.value?.totalWalletBalance,
+      availableBalance: accountData.value?.availableBalance,
+      hasTotalBalance: accountData.value?.totalWalletBalance !== undefined,
+      hasBalances: Array.isArray(balances.value) && balances.value.length > 0,
+      hasPositions: Array.isArray(positions.value) && positions.value.length > 0
+    }
+  );
+
+  // 沒有賬戶數據，肯定未連接
+  if (!accountData.value) {
+    console.debug('[TradeTestView] 未連接：沒有賬戶數據');
+    return false;
+  }
+  
+  // 檢查連接管理器返回的連接狀態 - 最優先級
+  if (accountData.value.connection_status === 'connected' || 
+      accountData.value.connection_status === 'active' ||
+      accountData.value.connection_status === 'established' ||
+      accountData.value.status === 'connected' ||
+      accountData.value.status === 'active') {
+    console.debug('[TradeTestView] 已連接：連接狀態為已連接/活躍');
+    return true;
+  }
+  
+  // 檢查連接類型
+  if (accountData.value.connection_type && 
+     (accountData.value.connection_type === 'websocket' || 
+      accountData.value.connection_type === 'rest' || 
+      accountData.value.connection_type === 'hybrid' ||
+      accountData.value.connection_type.includes('websocket') ||
+      accountData.value.connection_type.includes('rest'))) {
+    console.debug(`[TradeTestView] 已連接：連接類型為 ${accountData.value.connection_type}`);
+    return true;
+  }
+  
+  // 檢查 API 類型
+  if (accountData.value.api_type && 
+     (accountData.value.api_type.includes('WebSocket') || 
+      accountData.value.api_type.includes('REST') ||
+      accountData.value.api_type.includes('API'))) {
+    console.debug(`[TradeTestView] 已連接：API類型為 ${accountData.value.api_type}`);
+    return true;
+  }
+  
+  // 檢查是否有餘額相關信息
+  if (accountData.value.totalWalletBalance !== undefined || 
+      accountData.value.availableBalance !== undefined) {
+    console.debug('[TradeTestView] 已連接：檢測到餘額信息');
+    return true;
+  }
+  
+  // 檢查是否有資產和持倉信息
+  if ((accountData.value.assets_count !== undefined && accountData.value.assets_count > 0) || 
+      (accountData.value.positions_count !== undefined && accountData.value.positions_count > 0)) {
+    console.debug('[TradeTestView] 已連接：檢測到資產或持倉信息');
+    return true;
+  }
+  
+  // 檢查是否有餘額或持倉數組
+  if ((Array.isArray(balances.value) && balances.value.length > 0) || 
+      (Array.isArray(positions.value) && positions.value.length > 0)) {
+    console.debug('[TradeTestView] 已連接：檢測到餘額或持倉數組');
+    return true;
+  }
+  
+  // 檢查是否有其他可識別的連接標識
+  if (accountData.value.exchange === 'binance' || 
+      accountData.value.exchange_status === 'connected' || 
+      accountData.value.manager_status === 'active') {
+    console.debug('[TradeTestView] 已連接：檢測到連接管理器狀態信息');
+    return true;
+  }
+
+  console.debug('[TradeTestView] 未連接：所有連接檢查均未通過');
+  return false;
 });
 
 // 幣安連接類型
 const binanceConnectionType = computed(() => {
-  if (!accountData.value || !accountData.value.api_type) {
+  if (!accountData.value) {
     return '未連接';
   }
-  return accountData.value.api_type || '未知連接類型';
+  
+  // 檢查連接管理器返回的連接類型
+  if (accountData.value.connection_type) {
+    if (accountData.value.connection_type === 'websocket') {
+      return 'WebSocket API';
+    } else if (accountData.value.connection_type === 'rest') {
+      return 'REST API';
+    } else if (accountData.value.connection_type === 'hybrid') {
+      return 'Hybrid API (混合)';
+    }
+  }
+  
+  // 回退到原有的檢測方式
+  if (accountData.value.api_type) {
+    return accountData.value.api_type;
+  }
+  
+  return accountData.value.connection_status === 'connected' ? '已連接' : '未知連接類型';
 });
 
 // 是否使用 WebSocket API
 const isWebSocketAPI = computed(() => {
-  return !!accountData.value && 
-         !!accountData.value.api_type && 
-         accountData.value.api_type.includes('WebSocket');
+  // 沒有賬戶數據，則不是WebSocket API
+  if (!accountData.value) return false;
+  
+  // 優先檢查連接類型
+  if (accountData.value.connection_type) {
+    // websocket或hybrid類型都可能使用WebSocket API
+    if (accountData.value.connection_type === 'websocket' || 
+        accountData.value.connection_type === 'hybrid' ||
+        accountData.value.connection_type.includes('websocket') ||
+        accountData.value.connection_type.toLowerCase().includes('ws')) {
+      console.debug(`[TradeTestView] 檢測到WebSocket API: connection_type=${accountData.value.connection_type}`);
+      return true;
+    }
+    // 如果明確指定為rest類型，則不是WebSocket API
+    if (accountData.value.connection_type === 'rest' ||
+        accountData.value.connection_type.includes('rest')) {
+      return false;
+    }
+  }
+  
+  // 檢查API類型字段
+  if (accountData.value.api_type) {
+    // 檢查API類型是否包含WebSocket關鍵詞
+    const isWs = accountData.value.api_type.includes('WebSocket') || 
+                accountData.value.api_type.includes('websocket') ||
+                accountData.value.api_type.includes('WS') ||
+                accountData.value.api_type.includes('ws');
+    if (isWs) {
+      console.debug(`[TradeTestView] 檢測到WebSocket API: api_type=${accountData.value.api_type}`);
+    }
+    return isWs;
+  }
+  
+  // 檢查連接管理器特有的字段
+  if (accountData.value.manager_connection_type === 'websocket' ||
+      (accountData.value.manager_info && accountData.value.manager_info.connection_type === 'websocket')) {
+    console.debug('[TradeTestView] 檢測到WebSocket API: 從連接管理器信息中檢測到');
+    return true;
+  }
+  
+  // 如果沒有明確指定，則根據其他特徵判斷
+  return false;
 });
 
 // 是否使用 REST API
 const isRestAPI = computed(() => {
-  return !!accountData.value && 
-         !!accountData.value.api_type && 
-         accountData.value.api_type.includes('REST');
+  // 沒有賬戶數據，則不是REST API
+  if (!accountData.value) return false;
+  
+  // 如果是WebSocket API，則肯定不是純REST API
+  // (雖然hybrid模式可能同時使用兩種API，但界面上我們優先展示WebSocket API)
+  if (isWebSocketAPI.value) return false;
+  
+  // 優先檢查連接類型
+  if (accountData.value.connection_type) {
+    if (accountData.value.connection_type === 'rest' ||
+        accountData.value.connection_type.toLowerCase().includes('rest') ||
+        accountData.value.connection_type === 'http') {
+      console.debug(`[TradeTestView] 檢測到REST API: connection_type=${accountData.value.connection_type}`);
+      return true;
+    }
+  }
+  
+  // 檢查API類型字段
+  if (accountData.value.api_type) {
+    // 檢查API類型是否包含REST關鍵詞
+    const isRest = accountData.value.api_type.includes('REST') || 
+                  accountData.value.api_type.includes('rest') ||
+                  accountData.value.api_type.includes('HTTP') ||
+                  accountData.value.api_type.includes('http');
+    if (isRest) {
+      console.debug(`[TradeTestView] 檢測到REST API: api_type=${accountData.value.api_type}`);
+    }
+    return isRest;
+  }
+  
+  // 檢查連接管理器特有的字段
+  if (accountData.value.manager_connection_type === 'rest' ||
+      (accountData.value.manager_info && accountData.value.manager_info.connection_type === 'rest')) {
+    console.debug('[TradeTestView] 檢測到REST API: 從連接管理器信息中檢測到');
+    return true;
+  }
+  
+  // 默認情況：如果已連接但不是WebSocket API，則假定是REST API
+  if (binanceConnected.value) {
+    console.debug('[TradeTestView] 已連接但無法確定API類型，預設為REST API');
+    return true;
+  }
+  
+  return false;
 });
 
 // 過濾有餘額的資產
@@ -855,7 +1120,7 @@ const totalWalletBalance = computed(() => accountData.value.totalWalletBalance |
 const totalUnrealizedProfit = computed(() => accountData.value.totalUnrealizedProfit || '0');
 
 // 獲取延遲等級
-const getLatencyClass = (latency) => {
+const getLatencyClass = (latency: number) => {
   if (!latency) return '';
   if (latency < 200) return 'latency-excellent'; // 極佳: < 200ms
   if (latency < 500) return 'latency-good';      // 良好: 200-500ms
@@ -864,7 +1129,7 @@ const getLatencyClass = (latency) => {
 };
 
 // 獲取延遲文本描述
-const getLatencyText = (latency) => {
+const getLatencyText = (latency: number) => {
   if (!latency) return '';
   if (latency < 200) return '極佳';
   if (latency < 500) return '良好';
@@ -875,81 +1140,96 @@ const getLatencyText = (latency) => {
 // 組件掛載時自動連接到WebSocket
 onMounted(async () => {
   try {
-    console.log('TradeTestView組件已掛載，嘗試連接到WebSocket...');
+    console.log('[TradeTestView] 組件已掛載，嘗試連接到WebSocket...');
     
     // 連接到WebSocket，設置超時處理
     const connectionTimeout = 10000; // 10秒超時
     
     // 創建Promise競爭：連接 vs 超時
-    const connectionResult = await Promise.race([
+    const connectionResult = await Promise.race<any>([
       connectWs(),
-      new Promise((_, reject) => 
+      new Promise<never>((_, reject) => 
         setTimeout(() => reject(new Error('連接WebSocket超時，請稍後重試')), connectionTimeout)
       )
     ]);
     
-    console.log('WebSocket連接結果:', connectionResult);
+    console.log('[TradeTestView] WebSocket連接結果:', connectionResult);
     
     // 檢查連接是否成功
     if (isConnected.value) {
-      console.log('WebSocket連接成功，正在獲取賬戶數據...');
+      console.log('[TradeTestView] WebSocket連接成功，正在獲取賬戶數據...');
       
       try {
         await refreshAccountData();
-        console.log('賬戶數據已加載');
+        console.log('[TradeTestView] 賬戶數據已加載');
         
         // 追蹤連接狀態和最後活動時間
-        const connectionCheckInterval = 30000; // 每30秒檢查一次連接狀態
-        
         // 設置定期檢查幣安連接狀態
         setInterval(() => {
-          // 如果有帳戶數據但最後更新時間超過2分鐘，可能存在連接問題
+          // 如果連接到後端，但最後更新時間超過2分鐘，可能存在幣安連接問題
           if (isConnected.value && lastUpdate.value) {
             const now = new Date();
             const timeDiff = now.getTime() - lastUpdate.value.getTime();
             
-            // 如果超過2分鐘沒有更新，標記為可能出現錯誤
-            if (timeDiff > 120000) { // 2分鐘 = 120000毫秒
+            // 根據時間間隔，有不同的處理策略
+            if (timeDiff > 300000) { // 5分鐘無更新
               binanceConnectError.value = true;
-              binanceErrorMessage.value = '長時間未收到數據更新，可能連接已斷開';
-              console.warn('幣安連接可能已斷開，長時間未收到數據更新');
+              binanceErrorMessage.value = '連接可能已斷開：已超過5分鐘未收到更新';
+              console.warn('[TradeTestView] 連接可能已斷開：已超過5分鐘未收到更新');
+              
+              // 自動嘗試重新連接
+              reconnectBinance().catch((e: unknown) => {
+                console.error('[TradeTestView] 自動重連失敗:', e);
+              });
+            }
+            else if (timeDiff > 120000) { // 2分鐘無更新
+              binanceConnectError.value = true;
+              binanceErrorMessage.value = '長時間未收到數據更新，可能連接不穩定';
+              console.warn('[TradeTestView] 幣安連接可能不穩定，長時間未收到數據更新');
+              
+              // 嘗試刷新數據，但不重連
+              refreshAccountData().catch((e: unknown) => {
+                console.error('[TradeTestView] 自動刷新數據失敗:', e);
+              });
             }
           }
-        }, 60000); // 每分鐘檢查一次
+        }, 30000); // 每30秒檢查一次
         
-      } catch (error) {
-        console.error('獲取賬戶數據出錯:', error);
+      } catch (error: unknown) {
+        console.error('[TradeTestView] 獲取賬戶數據出錯:', error);
         binanceConnectError.value = true;
         binanceErrorMessage.value = error instanceof Error ? error.message : '獲取賬戶數據失敗，幣安連接可能有問題';
       }
     } else {
-      console.error('WebSocket連接失敗');
+      console.error('[TradeTestView] WebSocket連接失敗');
       orderError.value = '無法連接到WebSocket服務，請稍後重試';
     }
-  } catch (error) {
-    console.error('掛載組件時發生錯誤:', error);
-    orderError.value = `初始化錯誤: ${error.message || '未知錯誤'}`;
+  } catch (error: unknown) {
+    console.error('[TradeTestView] 掛載組件時發生錯誤:', error);
+    orderError.value = `初始化錯誤: ${error instanceof Error ? error.message : '未知錯誤'}`;
   }
   
   // 監聽網絡狀態變化
   window.addEventListener('online', async () => {
+    console.log('[TradeTestView] 網絡連接已恢復');
     if (isConnected.value && binanceConnectError.value) {
-      console.log('網絡恢復連接，嘗試重新連接幣安');
+      console.log('[TradeTestView] 嘗試在網絡恢復後重新連接幣安');
       await reconnectBinance();
     }
   });
   
   window.addEventListener('offline', () => {
+    console.log('[TradeTestView] 網絡連接已斷開');
     if (isConnected.value) {
       binanceConnectError.value = true;
       binanceErrorMessage.value = '網絡連接已斷開，請檢查您的網絡連接';
-      console.warn('網絡已斷開，幣安連接可能受影響');
+      console.warn('[TradeTestView] 網絡已斷開，幣安連接可能受影響');
     }
   });
   
   // 監聽登出事件，確保在用戶登出時斷開WebSocket前端連接
   window.addEventListener('logout-event', () => {
-    console.log('檢測到登出事件，斷開TradeTestView中的WebSocket前端連接');
+    console.log('[TradeTestView] 檢測到登出事件，斷開TradeTestView中的WebSocket前端連接');
     if (isConnected.value) {
       disconnect();
     }
@@ -1019,106 +1299,308 @@ console.log('TradeTestView 使用持久連接模式，離開頁面時連接將�
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* 連接狀態區塊 */
-.connection-status {
+/* 重新設計簡化版的連接狀態圖 */
+.connection-monitor {
+  background: #f9fbfd;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 30px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e6ecf5;
+  text-align: center;
+}
+
+.connection-monitor h2 {
+  color: #1a237e;
+  font-size: 1.5rem;
+  margin-top: 0;
+  margin-bottom: 20px;
+  font-weight: 600;
+}
+
+.connection-graph {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0;
+  margin: 30px 0;
+  flex-wrap: wrap;
+}
+
+/* 節點樣式 */
+.graph-node {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  padding: 15px;
+  width: 130px;
+  text-align: center;
+  transition: all 0.3s ease;
+}
+
+.graph-node.active {
+  border-color: #4caf50;
+  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+}
+
+.graph-node.inactive {
+  opacity: 0.7;
+}
+
+.graph-node.error {
+  border-color: #f44336;
+  box-shadow: 0 0 0 2px rgba(244, 67, 54, 0.2);
+}
+
+.node-icon {
+  font-size: 24px;
+  margin-bottom: 6px;
+}
+
+.node-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #333;
+  margin-bottom: 6px;
+}
+
+.node-status {
   display: flex;
   align-items: center;
-  margin-bottom: 24px;
-  padding: 15px;
-  background-color: #f7f9fc;
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-  border-left: 4px solid #cfd8dc;
-  transition: all 0.3s ease;
+  justify-content: center;
+  margin-bottom: 5px;
+  font-size: 0.8rem;
 }
 
-.connection-status.connected {
-  border-left-color: #43a047;
-  background-color: #f1f8e9;
-}
-
-.connection-status.disconnected {
-  border-left-color: #e53935;
-  background-color: #fef8f8;
-}
-
-.connection-status:hover {
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-}
-
-.status-indicator {
-  width: 14px;
-  height: 14px;
+.status-dot {
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background-color: #e0e0e0;
-  margin-right: 12px;
-  box-shadow: 0 0 0 2px rgba(224, 224, 224, 0.3);
-  transition: all 0.3s ease;
+  background-color: #bdbdbd;
+  margin-right: 5px;
 }
 
-.status-indicator.active {
-  background-color: #43a047;
-  box-shadow: 0 0 0 2px rgba(67, 160, 71, 0.3);
-  animation: pulse 2s infinite;
+.status-dot.active {
+  background-color: #4caf50;
+  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
 }
 
-@keyframes pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(67, 160, 71, 0.7);
-  }
-  70% {
-    box-shadow: 0 0 0 6px rgba(67, 160, 71, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(67, 160, 71, 0);
-  }
+.status-dot.error {
+  background-color: #f44336;
+  box-shadow: 0 0 0 2px rgba(244, 67, 54, 0.2);
 }
 
-.connection-status span {
-  font-size: 1rem;
+.status-text {
+  color: #555;
+}
+
+.node-text {
+  font-size: 0.75rem;
+  color: #666;
+  margin-top: 5px;
+}
+
+/* 連接線樣式 */
+.connection-arrow-path {
+  position: relative;
+  width: 80px;
+  height: 2px;
+  background: #e0e0e0;
+  border-top: 1px dashed #bdbdbd;
+  margin: 0 -1px;
+}
+
+.connection-arrow-path.active {
+  background: #4caf50;
+  border-top: none;
+}
+
+.connection-arrow-path.inactive {
+  background: #e0e0e0;
+  border-top: 1px dashed #bdbdbd;
+}
+
+.connection-arrow-path.error {
+  background: #f44336;
+  border-top: none;
+}
+
+.connection-arrow-path::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: -4px;
+  width: 0;
+  height: 0;
+  border-left: 8px solid;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left-color: inherit;
+}
+
+.connection-arrow-path.active::after {
+  border-left-color: #4caf50;
+}
+
+.connection-arrow-path.inactive::after {
+  border-left-color: #e0e0e0;
+}
+
+.connection-arrow-path.error::after {
+  border-left-color: #f44336;
+}
+
+.arrow-label {
+  position: absolute;
+  top: -18px;
+  width: 100%;
+  text-align: center;
+  font-size: 0.7rem;
+  color: #666;
+}
+
+/* 按鈕區域 */
+.connection-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.control-btn {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: none;
+  font-size: 0.85rem;
   font-weight: 500;
-}
-
-.connection-info {
-  margin-left: auto;
+  cursor: pointer;
   display: flex;
-  gap: 10px;
+  align-items: center;
+  transition: all 0.2s;
 }
 
-.connection-info span {
-  font-size: 0.9rem;
-  color: #78909c;
+.control-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-.connection-actions {
-  margin-left: auto;
+.btn-icon {
+  margin-right: 5px;
+}
+
+.control-btn.connect {
+  background: #4caf50;
+  color: white;
+}
+
+.control-btn.disconnect {
+  background: #f44336;
+  color: white;
+}
+
+.control-btn.refresh {
+  background: #2196f3;
+  color: white;
+}
+
+.control-btn.reconnect {
+  background: #ff9800;
+  color: white;
+}
+
+/* 連接信息面板 */
+.connection-info-panel {
+  margin-top: 20px;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 15px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
+}
+
+.info-row {
   display: flex;
-  gap: 10px;
+  flex-direction: column;
 }
 
-.connection-actions button {
-  min-width: 80px;
+.info-label {
+  font-size: 0.8rem;
+  color: #666;
+  margin-bottom: 3px;
 }
 
-.connect-btn {
-  background-color: #43a047;
+.info-value {
+  font-weight: 500;
+  color: #333;
 }
 
-.connect-btn:hover {
-  background-color: #388e3c;
+.info-value.success {
+  color: #4caf50;
 }
 
-.disconnect-btn {
-  background-color: #e53935;
+.info-row.error {
+  grid-column: 1 / -1;
+  background: #ffebee;
+  border-radius: 4px;
+  padding: 10px;
 }
 
-.disconnect-btn:hover {
-  background-color: #d32f2f;
+.error-message {
+  color: #d32f2f;
 }
 
-.icon {
-  font-size: 0.8em;
-  margin-right: 4px;
+/* 響應式調整 */
+@media (max-width: 768px) {
+  .connection-graph {
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  
+  .connection-arrow-path {
+    transform: rotate(90deg);
+    width: 40px;
+  }
+  
+  .arrow-label {
+    transform: rotate(-90deg);
+    top: 0;
+    right: -35px;
+    width: auto;
+    white-space: nowrap;
+  }
+  
+  .connection-info-panel {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 節點特殊樣式 */
+.graph-node.frontend {
+  background: linear-gradient(135deg, #ffffff, #f8f9fa);
+}
+
+.graph-node.server {
+  background: linear-gradient(135deg, #ffffff, #f0f7fa);
+}
+
+.graph-node.manager {
+  background: linear-gradient(135deg, #ffffff, #e8f0fe);
+}
+
+.graph-node.exchange {
+  background: linear-gradient(135deg, #ffffff, #e8f5e9);
+}
+
+.graph-node.exchange.websocket {
+  border-left: 3px solid #2196f3;
+}
+
+.graph-node.exchange.rest {
+  border-left: 3px solid #ff9800;
 }
 
 /* 通用卡片樣式 */
@@ -1614,496 +2096,6 @@ tbody tr:hover {
   color: #78909c;
 }
 
-/* 連接狀態圖表樣式 */
-.connection-diagram {
-  margin-bottom: 24px;
-  padding: 20px;
-  background: linear-gradient(to right bottom, #f5f7fa, #ffffff);
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  border: 1px solid #e1e5eb;
-}
-
-.connection-diagram h2 {
-  font-size: 1.4rem;
-  color: #1a237e;
-  margin-top: 0;
-  margin-bottom: 16px;
-  text-align: center;
-  font-weight: 600;
-}
-
-.diagram-container {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 15px;
-  padding: 15px 0;
-}
-
-.node {
-  width: 90px;
-  height: 90px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background-color: #f5f5f5;
-  border: 2px solid #e0e0e0;
-  transition: all 0.3s ease;
-  position: relative;
-}
-
-.node-icon {
-  font-size: 24px;
-  margin-bottom: 5px;
-}
-
-.node-label {
-  font-size: 0.9rem;
-  font-weight: 600;
-  text-align: center;
-}
-
-.node.active {
-  background-color: #e8f5e9;
-  border-color: #43a047;
-  box-shadow: 0 0 15px rgba(67, 160, 71, 0.3);
-}
-
-.node.error {
-  background-color: #ffebee;
-  border-color: #e53935;
-  box-shadow: 0 0 15px rgba(229, 57, 53, 0.3);
-}
-
-.node.websocket.active {
-  background-color: #e3f2fd;
-  border-color: #2196f3;
-}
-
-.node.rest.active {
-  background-color: #fff8e1;
-  border-color: #ffa000;
-}
-
-.connection-line {
-  flex-grow: 1;
-  height: 4px;
-  background-color: #e0e0e0;
-  position: relative;
-  transition: all 0.3s ease;
-}
-
-.connection-line.active {
-  background-color: #43a047;
-  background: linear-gradient(to right, #43a047, #2e7d32);
-}
-
-.connection-line.inactive {
-  background-color: #e0e0e0;
-  border-top: 2px dashed #bdbdbd;
-}
-
-.connection-line.error {
-  background-color: #e53935;
-  animation: pulse-line 2s infinite;
-}
-
-@keyframes pulse-line {
-  0% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-  100% {
-    opacity: 1;
-  }
-}
-
-.connection-type {
-  position: absolute;
-  bottom: -20px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 0.8rem;
-  background-color: #f5f7fa;
-  padding: 2px 6px;
-  border-radius: 4px;
-  white-space: nowrap;
-  color: #546e7a;
-  border: 1px solid #e0e0e0;
-}
-
-.node.websocket .connection-type {
-  background-color: #e3f2fd;
-  color: #1976d2;
-  border-color: #bbdefb;
-}
-
-.node.rest .connection-type {
-  background-color: #fff8e1;
-  color: #ff8f00;
-  border-color: #ffe082;
-}
-
-/* 響應式調整 */
-@media (max-width: 992px) {
-  .trade-test-container {
-    padding: 16px;
-  }
-  
-  .card {
-    padding: 20px;
-  }
-  
-  .account-summary {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-@media (max-width: 480px) {
-  .account-summary {
-    grid-template-columns: 1fr;
-  }
-  
-  .refresh-action {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 10px;
-  }
-  
-  .form-actions {
-    justify-content: center;
-  }
-  
-  button {
-    width: 100%;
-  }
-  
-  .connection-status {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
-  }
-  
-  .connection-info, .connection-actions {
-    margin-left: 0;
-    width: 100%;
-  }
-  
-  .diagram-container {
-    flex-direction: column;
-    gap: 5px;
-  }
-  
-  .connection-line {
-    width: 4px;
-    height: 30px;
-  }
-  
-  .node {
-    width: 70px;
-    height: 70px;
-  }
-  
-  .node-icon {
-    font-size: 20px;
-  }
-}
-
-/* API 類型指示器樣式 */
-.api-type-indicator {
-  display: flex;
-  align-items: center;
-  margin-bottom: 10px;
-  font-size: 0.85rem;
-}
-
-.api-badge {
-  padding: 3px 8px;
-  border-radius: 4px;
-  font-weight: 500;
-  margin-right: 8px;
-}
-
-.ws-api {
-  background-color: rgba(52, 152, 219, 0.15);
-  color: #3498db;
-  border: 1px solid rgba(52, 152, 219, 0.3);
-}
-
-.rest-api {
-  background-color: rgba(243, 156, 18, 0.15);
-  color: #d35400;
-  border: 1px solid rgba(243, 156, 18, 0.3);
-}
-
-.api-info-icon {
-  color: #7f8c8d;
-  cursor: help;
-}
-
-/* 幣安連接狀態樣式 */
-.connection-status.binance-connection {
-  border-left-color: #3498db;
-  background-color: rgba(52, 152, 219, 0.05);
-  margin-top: -16px;
-  margin-bottom: 24px;
-}
-
-.connection-status.binance-connection.connected {
-  background-color: rgba(52, 152, 219, 0.1);
-}
-
-.connection-status.binance-connection.disconnected {
-  border-left-color: #e74c3c;
-  background-color: rgba(231, 76, 60, 0.05);
-}
-
-.connection-status.binance-connection.websocket-api {
-  border-left-color: #3498db;
-}
-
-.connection-status.binance-connection.rest-api {
-  border-left-color: #f39c12;
-}
-
-.connection-status.binance-connection .status-indicator.active {
-  background-color: #3498db;
-  box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.3);
-}
-
-.connection-status.binance-connection.rest-api .status-indicator.active {
-  background-color: #f39c12;
-  box-shadow: 0 0 0 2px rgba(243, 156, 18, 0.3);
-}
-
-.connection-status.binance-connection span {
-  color: #2c3e50;
-}
-
-.connection-status.binance-connection .connection-info {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.connection-status.binance-connection .connection-info span {
-  font-size: 0.9rem;
-  color: #7f8c8d;
-}
-
-.connection-status.binance-connection .connection-info .connection-type {
-  font-weight: 500;
-  padding: 3px 8px;
-  border-radius: 4px;
-}
-
-.connection-status.binance-connection .connection-info .connection-type.websocket-api {
-  background-color: rgba(52, 152, 219, 0.15);
-  color: #3498db;
-  border: 1px solid rgba(52, 152, 219, 0.3);
-}
-
-.connection-status.binance-connection .connection-info .connection-type.rest-api {
-  background-color: rgba(243, 156, 18, 0.15);
-  color: #d35400;
-  border: 1px solid rgba(243, 156, 18, 0.3);
-}
-
-.api-info-icon {
-  color: #7f8c8d;
-  cursor: help;
-}
-
-/* 幣安連接錯誤信息樣式 */
-.binance-error-message {
-  display: flex;
-  align-items: flex-start;
-  padding: 16px;
-  background-color: #ffebee;
-  border-radius: 8px;
-  margin-top: -16px;
-  margin-bottom: 24px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-  border-left: 4px solid #e74c3c;
-  animation: fadeIn 0.3s ease-in-out;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(-10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.error-icon {
-  font-size: 2rem;
-  color: #e53935;
-  margin-right: 16px;
-  background-color: rgba(229, 57, 53, 0.1);
-  width: 50px;
-  height: 50px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-}
-
-.error-content {
-  flex: 1;
-}
-
-.error-title {
-  font-size: 1.5rem;
-  font-weight: 600;
-  color: #37474f;
-  margin-top: 0;
-  margin-bottom: 8px;
-}
-
-.error-desc {
-  margin: 0;
-  color: #78909c;
-}
-
-.error-tips {
-  margin-top: 8px;
-  font-size: 0.9rem;
-  color: #78909c;
-}
-
-.connection-status.binance-connection.error {
-  border-left-color: #e74c3c;
-  background-color: rgba(231, 76, 60, 0.1);
-}
-
-.connection-status.binance-connection .status-indicator.error {
-  background-color: #e74c3c;
-  box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.3);
-  animation: pulse-error 2s infinite;
-}
-
-@keyframes pulse-error {
-  0% {
-    box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7);
-  }
-  70% {
-    box-shadow: 0 0 0 6px rgba(231, 76, 60, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(231, 76, 60, 0);
-  }
-}
-
-.connection-status.binance-connection .connection-info .connection-type.error {
-  background-color: rgba(231, 76, 60, 0.15);
-  color: #e74c3c;
-  border: 1px solid rgba(231, 76, 60, 0.3);
-}
-
-.reconnect-btn {
-  background-color: #e74c3c;
-  color: white;
-  font-weight: 500;
-  display: flex;
-  align-items: center;
-  padding: 6px 12px;
-  border-radius: 4px;
-  border: none;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.reconnect-btn:hover {
-  background-color: #c0392b;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-}
-
-.reconnect-btn .icon {
-  font-size: 1.1em;
-  margin-right: 4px;
-  animation: spin 1.5s linear infinite;
-  display: inline-block;
-}
-
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-.connection-status.binance-connection .connection-info span {
-  font-size: 0.9rem;
-  color: #7f8c8d;
-}
-
-.connection-status .connection-detail {
-  font-size: 0.85rem;
-  color: #546e7a;
-  background-color: #f1f1f1;
-  padding: 2px 8px;
-  border-radius: 10px;
-  margin-left: 8px;
-}
-
-.connection-status .last-update {
-  font-size: 0.85rem;
-  color: #546e7a;
-  margin-left: 8px;
-}
-
-.connection-status.binance-connection .connection-info .connection-type {
-  font-weight: 500;
-  padding: 3px 8px;
-  border-radius: 4px;
-}
-
-.latency-value {
-  font-weight: 600;
-}
-
-.latency-badge {
-  padding: 3px 10px;
-  border-radius: 12px;
-  font-family: 'Courier New', monospace;
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-}
-
-.latency-text {
-  font-size: 0.8em;
-  opacity: 0.9;
-}
-
-.latency-excellent {
-  background-color: #e8f5e9;
-  color: #2e7d32;
-  border: 1px solid #a5d6a7;
-}
-
-.latency-good {
-  background-color: #e3f2fd;
-  color: #1976d2;
-  border: 1px solid #90caf9;
-}
-
-.latency-normal {
-  background-color: #fff3e0;
-  color: #f57c00;
-  border: 1px solid #ffcc80;
-}
-
-.latency-slow {
-  background-color: #ffebee;
-  color: #d32f2f;
-  border: 1px solid #ef9a9a;
-}
-
 /* 添加延遲統計卡片相關樣式 */
 .latency-stats {
   grid-column: 1 / -1;  /* 跨越所有列 */
@@ -2171,4 +2163,242 @@ tbody tr:hover {
   padding: 2px 8px;
   font-size: 0.85rem;
 }
+
+.node-tooltip {
+  font-size: 0.8rem;
+  color: #78909c;
+  margin-top: 8px;
+}
+
+.connection-type.manager-type {
+  position: absolute;
+  bottom: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.8rem;
+  background-color: #f5f7fa;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  color: #546e7a;
+  border: 1px solid #e0e0e0;
+}
+
+/* 連接管理器狀態樣式 */
+.node.connection-manager.error {
+  border-color: #e74c3c;
+  box-shadow: 0 0 0 2px rgba(231, 76, 60, 0.2);
+  animation: pulse-error 1.5s infinite;
+}
+
+.node.connection-manager.active {
+  box-shadow: 0 0 0 2px rgba(63, 81, 181, 0.3), 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.node.connection-manager .connection-type.manager-type {
+  position: absolute;
+  bottom: -22px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.75rem;
+  background-color: #f5f7fa;
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  color: #546e7a;
+  border: 1px solid #e0e0e0;
+  z-index: 5;
+}
+
+/* 節點特殊樣式 */
+.graph-node.frontend {
+  background: linear-gradient(135deg, #ffffff, #f8f9fa);
+}
+
+.graph-node.server {
+  background: linear-gradient(135deg, #ffffff, #f0f7fa);
+}
+
+.graph-node.manager {
+  background: linear-gradient(135deg, #ffffff, #e8f0fe);
+}
+
+.graph-node.exchange {
+  background: linear-gradient(135deg, #ffffff, #e8f5e9);
+}
+
+.graph-node.exchange.websocket {
+  border-left: 3px solid #2196f3;
+}
+
+.graph-node.exchange.rest {
+  border-left: 3px solid #ff9800;
+}
+
+/* 控制區域樣式 */
+.connection-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 30px;
+  padding-top: 20px;
+  border-top: 1px solid #e6ecf5;
+}
+
+.control-group {
+  display: flex;
+  gap: 12px;
+}
+
+.control-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 0.9rem;
+  background: white;
+  border: 1px solid #e0e0e0;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+}
+
+.control-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.control-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.control-icon {
+  margin-right: 8px;
+}
+
+.control-button.connect {
+  background-color: #4caf50;
+  color: white;
+}
+
+.control-button.disconnect {
+  background-color: #f44336;
+  color: white;
+}
+
+.control-button.refresh {
+  background-color: #2196f3;
+  color: white;
+}
+
+.control-button.reconnect {
+  background-color: #ff9800;
+  color: white;
+}
+
+/* 連接詳情區域 */
+.connection-details {
+  margin-top: 24px;
+}
+
+.detail-card {
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+  padding: 16px;
+  border-left: 4px solid #4caf50;
+}
+
+.detail-card.error {
+  border-left-color: #f44336;
+  background-color: #fff8f8;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.detail-header h3 {
+  font-size: 1rem;
+  margin: 0;
+  margin-left: 8px;
+  color: #37474f;
+}
+
+.detail-content .error-message {
+  color: #d32f2f;
+  font-weight: 500;
+  margin: 0;
+  padding: 10px;
+  background-color: rgba(244, 67, 54, 0.05);
+  border-radius: 4px;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.detail-grid .detail-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-label {
+  font-size: 0.8rem;
+  color: #78909c;
+  margin-bottom: 4px;
+}
+
+.detail-value {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #37474f;
+}
+
+.detail-value.success {
+  color: #4caf50;
+}
+
+@media (max-width: 768px) {
+  .connection-graph {
+    flex-direction: column;
+    gap: 15px;
+  }
+  
+  .connection-arrow-path {
+    transform: rotate(90deg);
+    width: 40px;
+    height: auto;
+    margin: 10px 0;
+  }
+  
+  .connection-line {
+    width: 40px;
+    height: 3px;
+  }
+  
+  .connection-label {
+    transform: rotate(-90deg);
+    bottom: auto;
+    left: -40px;
+  }
+  
+  .control-group {
+    flex-direction: column;
+  }
+  
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ... 保留其他樣式 ... */
 </style> 

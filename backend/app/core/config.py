@@ -108,7 +108,7 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: Optional[str] = os.getenv("SMTP_PASSWORD")
     
     # 日誌設定：日誌級別、格式和檔案路徑
-    LOG_LEVEL: str = "INFO"
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     LOG_FORMAT: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     LOG_FILE: str = "logs/trading.log"
     

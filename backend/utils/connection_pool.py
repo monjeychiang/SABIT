@@ -4,8 +4,9 @@ import logging
 from typing import Dict, Any, Optional, Tuple
 import ccxt.async_support as ccxt
 
-from ..schemas.trading import ExchangeEnum
-from .exchange import get_exchange_client
+# 修改導入路徑以適應新位置
+from backend.app.schemas.trading import ExchangeEnum
+from backend.utils.exchange import get_exchange_client
 
 logger = logging.getLogger(__name__)
 

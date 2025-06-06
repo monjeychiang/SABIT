@@ -16,6 +16,7 @@ import axios from 'axios'
 const router = useRouter()
 const authStore = useAuthStore()
 const loading = ref(true)
+const loginEventTriggered = ref(false)
 
 onMounted(async () => {
   try {
@@ -117,9 +118,14 @@ onMounted(async () => {
       }
     }
     
-    // 觸發登入成功事件
-    window.dispatchEvent(new Event('login-authenticated'))
-    console.log('Auth Callback: 觸發登入成功事件')
+    // 觸發登入成功事件，並設置標記
+    if (!loginEventTriggered.value) {
+      window.dispatchEvent(new Event('login-authenticated'))
+      console.log('Auth Callback: 觸發登入成功事件')
+      loginEventTriggered.value = true
+    } else {
+      console.log('Auth Callback: 登入事件已觸發過，避免重複')
+    }
     
     // 清除 URL 參數
     window.history.replaceState({}, document.title, window.location.pathname)
@@ -157,10 +163,16 @@ async function checkIfAlreadyLoggedIn(): Promise<boolean> {
     if (isAuthenticated) {
       console.log('Auth Callback: 用户已登录，确保初始化WebSocket连接');
       // 延迟触发login-authenticated事件，确保WebSocket连接初始化
-      setTimeout(() => {
-        console.log('Auth Callback: 延迟触发login-authenticated事件');
-        window.dispatchEvent(new Event('login-authenticated'));
-      }, 500);
+      // 只有在主流程未觸發事件的情況下才觸發
+      if (!loginEventTriggered.value) {
+        setTimeout(() => {
+          console.log('Auth Callback: 延迟触发login-authenticated事件');
+          window.dispatchEvent(new Event('login-authenticated'));
+          loginEventTriggered.value = true;
+        }, 500);
+      } else {
+        console.log('Auth Callback: 主流程已觸發登入事件，不再重複觸發')
+      }
     }
     
     return isAuthenticated;

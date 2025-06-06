@@ -16,7 +16,9 @@ from ...schemas.chatroom import (
 )
 from ...core.security import get_current_user, verify_token_ws
 from ...api.endpoints.admin import get_current_admin_user
-from ...core.main_ws_manager import main_ws_manager
+from ...core.main_ws_manager import websocket_manager
+from ...core.chat_room_manager import chat_room_manager
+from ...core.online_status_manager import online_status_manager
 
 # 設置聊天室訊息數量上限
 MAX_MESSAGES_PER_ROOM = 1000  # 每個聊天室最多保留1000條訊息
@@ -39,28 +41,9 @@ async def broadcast_to_room(room_id: int, message: dict, exclude_user_id: Option
         exclude_user_id: 要排除的用戶ID（不向該用戶發送）
     """
     try:
-        # 從數據庫獲取聊天室成員
-        db = next(get_db())
-        members = db.query(ChatRoomMember).filter(
-            ChatRoomMember.room_id == room_id
-        ).all()
-        
-        user_ids = [member.user_id for member in members if member.user_id != exclude_user_id]
-        
-        if not user_ids:
-            logger.warning(f"[ChatroomAPI] 聊天室 {room_id} 沒有可接收消息的成員")
-            return
-            
-        # 使用主WebSocket廣播消息
-        for user_id in user_ids:
-            try:
-                await main_ws_manager.send_to_user(user_id, message)
-                logger.debug(f"[ChatroomAPI] 通過主WebSocket發送消息給用戶 {user_id}")
-            except Exception as e:
-                logger.error(f"[ChatroomAPI] 向用戶 {user_id} 發送消息失敗: {str(e)}")
-        
-        logger.debug(f"[ChatroomAPI] 廣播消息到聊天室 {room_id} 完成")
-        
+        # 使用聊天室管理器廣播消息
+        sent_count = await chat_room_manager.broadcast_to_room(message, room_id, exclude_user_id)
+        logger.debug(f"[ChatroomAPI] 廣播消息到聊天室 {room_id} 成功發送給 {sent_count} 個用戶")
     except Exception as e:
         logger.error(f"[ChatroomAPI] 廣播消息到聊天室時出錯: {str(e)}")
 
@@ -73,7 +56,7 @@ async def get_websocket_stats(current_user: User = Depends(get_current_user)):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="只有管理員可以查看WebSocket統計信息"
         )
-    return main_ws_manager.get_stats()
+    return websocket_manager.get_stats()
 
 # 聊天室API路由
 @router.post("/rooms", response_model=ChatRoomResponse, status_code=status.HTTP_201_CREATED)
@@ -188,11 +171,11 @@ async def list_chat_rooms(
             room_response.is_member = room.id in user_room_ids
             room_response.is_admin = room.id in user_admin_room_ids
             
-            # 查詢在線用戶數（從數據庫計算）
+            # 查詢在線用戶數（修改為使用chat_room_manager）
             online_count = 0
             try:
-                # 從主WebSocket管理器獲取在線用戶數
-                online_count = await main_ws_manager.get_room_online_users_count(room.id)
+                # 從chat_room_manager獲取在線用戶數
+                online_count = chat_room_manager.get_room_online_count(room.id)
             except Exception as e:
                 logger.error(f"獲取聊天室 {room.id} 的在線用戶數失敗: {str(e)}")
             
@@ -285,10 +268,10 @@ async def get_chat_room(
                 message_response.user = UserBasic.from_orm(message.user)
             result.latest_messages.append(message_response)
             
-        # 查詢在線用戶數（從主WebSocket管理器獲取）
+        # 查詢在線用戶數（修改為使用chat_room_manager）
         online_count = 0
         try:
-            online_count = await main_ws_manager.get_room_online_users_count(room_id)
+            online_count = chat_room_manager.get_room_online_count(room_id)
         except Exception as e:
             logger.error(f"獲取聊天室 {room_id} 的在線用戶數失敗: {str(e)}")
         
@@ -392,10 +375,10 @@ async def update_chat_room(
         result.is_member = is_member
         result.is_admin = is_room_admin or current_user.is_admin
         
-        # 查詢在線用戶數
+        # 查詢在線用戶數（修改為使用chat_room_manager）
         online_count = 0
         try:
-            online_count = await main_ws_manager.get_room_online_users_count(room_id)
+            online_count = chat_room_manager.get_room_online_count(room_id)
         except Exception as e:
             logger.error(f"獲取聊天室 {room_id} 的在線用戶數失敗: {str(e)}")
         

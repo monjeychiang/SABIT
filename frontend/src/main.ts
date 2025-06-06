@@ -75,6 +75,14 @@ const initApp = async () => {
   const authStore = useAuthStore()
   await authStore.initAuth()
 
+  // 添加系統初始化標記變量
+  const systemInitialized = {
+    chatroom: false,
+    onlineStatus: false,
+    notification: false,
+    webSocketAttemptTime: 0 // 新增：記錄最後一次WebSocket連接嘗試時間
+  };
+
   // 如果用户已登录，初始化通知和聊天系统
   if (authStore.isAuthenticated) {
     console.log('用户已登录，初始化通知和聊天系统')
@@ -83,14 +91,20 @@ const initApp = async () => {
     const { useNotificationStore } = await import('./stores/notification.ts')
     const notificationStore = useNotificationStore()
     notificationStore.initialize()
+    systemInitialized.notification = true
     
     // 初始化聊天系统
     const chatroomStore = useChatroomStore()
     chatroomStore.initialize()
+    systemInitialized.chatroom = true
     
     // 初始化在线状态系统
     const onlineStatusStore = useOnlineStatusStore()
     onlineStatusStore.initialize()
+    systemInitialized.onlineStatus = true
+    
+    // 記錄初始化時間
+    systemInitialized.webSocketAttemptTime = Date.now()
     
     console.log('用户已登录，聊天和在线状态系统已初始化')
   }
@@ -98,8 +112,28 @@ const initApp = async () => {
   // 监听登录事件
   window.addEventListener('auth:login', () => {
     // 用户登录时初始化
-    chatroomStore.initialize()
-    onlineStatusStore.initialize()
+    console.log('收到 auth:login 事件，按需初始化系統')
+    const chatroomStore = useChatroomStore()
+    const onlineStatusStore = useOnlineStatusStore()
+    
+    if (!systemInitialized.chatroom) {
+      console.log('初始化聊天系统')
+      chatroomStore.initialize()
+      systemInitialized.chatroom = true
+    } else {
+      console.log('聊天系統已初始化，跳過')
+    }
+    
+    if (!systemInitialized.onlineStatus) {
+      console.log('初始化在线状态系统')
+      onlineStatusStore.initialize()
+      systemInitialized.onlineStatus = true
+    } else {
+      console.log('在線狀態系統已初始化，跳過')
+    }
+    
+    // 記錄初始化時間
+    systemInitialized.webSocketAttemptTime = Date.now()
   })
 
   // 监听登出事件
@@ -107,6 +141,46 @@ const initApp = async () => {
     // 用户登出时重置状态
     chatroomStore.resetState()
     onlineStatusStore.resetState()
+    // 重置初始化標記
+    systemInitialized.chatroom = false
+    systemInitialized.onlineStatus = false
+    systemInitialized.notification = false
+  })
+  
+  // 監聽登入認證事件 (OAuth相關)
+  window.addEventListener('login-authenticated', () => {
+    console.log('收到 login-authenticated 事件，按需初始化系統')
+    const chatroomStore = useChatroomStore()
+    const onlineStatusStore = useOnlineStatusStore()
+    
+    // 檢查距離上次初始化的時間
+    const now = Date.now()
+    const timeSinceLastAttempt = now - systemInitialized.webSocketAttemptTime
+    const MIN_REINIT_INTERVAL = 5000 // 5秒內不重複初始化
+    
+    if (timeSinceLastAttempt < MIN_REINIT_INTERVAL) {
+      console.log(`忽略短時間內的重複初始化請求 (${timeSinceLastAttempt}ms < ${MIN_REINIT_INTERVAL}ms)`)
+      return
+    }
+    
+    if (!systemInitialized.chatroom) {
+      console.log('初始化聊天系统')
+      chatroomStore.initialize()
+      systemInitialized.chatroom = true
+    } else {
+      console.log('聊天系統已初始化，跳過')
+    }
+    
+    if (!systemInitialized.onlineStatus) {
+      console.log('初始化在线状态系统')
+      onlineStatusStore.initialize()
+      systemInitialized.onlineStatus = true
+    } else {
+      console.log('在線狀態系統已初始化，跳過')
+    }
+    
+    // 更新初始化時間
+    systemInitialized.webSocketAttemptTime = now
   })
 
   // 掛載應用

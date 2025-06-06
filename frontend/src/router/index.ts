@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useUserStore } from '@/stores/user'
+import GridTrading from '@/views/GridTrading.vue'
 
 // 定義路由配置
 export const routes: RouteRecordRaw[] = [
@@ -111,6 +112,16 @@ export const routes: RouteRecordRaw[] = [
       layout: 'default',
       requiresAuth: true,
       breadcrumb: 'WebSocket 交易測試'
+    }
+  },
+  {
+    path: '/grid-trading',
+    name: 'GridTrading',
+    component: GridTrading,
+    meta: {
+      layout: 'default',
+      requiresAuth: true,
+      breadcrumb: '網格交易'
     }
   },
   {

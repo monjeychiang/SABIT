@@ -1,6 +1,6 @@
 from typing import Dict, Any
 import ccxt.async_support as ccxt
-from app.schemas.trading import ExchangeEnum
+from backend.app.schemas.trading import ExchangeEnum
 
 async def get_exchange_client(exchange: ExchangeEnum, api_key: str, api_secret: str) -> ccxt.Exchange:
     """

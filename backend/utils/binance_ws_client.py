@@ -89,6 +89,29 @@ class BinanceWebSocketClient:
         self.connection_start_time = None  # 記錄連接建立時間
         self.max_connection_age = 12 * 3600  # 連接最大存活時間（12小時）
         self.last_health_check = 0  # 上次健康檢查時間
+        
+        # 添加認證相關錯誤代碼列表
+        self.auth_error_codes = [
+            -1003,  # 服務器太忙
+            -1022,  # 簽名無效
+            -1100,  # 非法參數
+            -1101,  # 參數過多
+            -1102,  # 必需參數為空
+            -1103,  # 參數 apikey 未找到
+            -1104,  # API 密鑰無效
+            -1105,  # API 密鑰格式無效
+            -1106,  # 參數 signature 未找到
+            -1111,  # 無效的時間戳
+            -1112,  # 時間戳過期
+            -1115,  # 參數簽名格式無效
+            -1116,  # 無效的API密鑰權限
+            -2014,  # API-key 格式無效
+            -2015   # 無效的 API-key、IP 或權限
+        ]
+        
+        # 認證刷新計數
+        self.auth_refresh_count = 0
+        self.max_auth_refresh_attempts = 3
 
     def sign_parameters(self, params: Dict[str, Any]) -> str:
         """
@@ -450,6 +473,61 @@ class BinanceWebSocketClient:
                 
         return self.authenticated
     
+    def _start_background_tasks(self):
+        """
+        啟動響應處理器和ping保持活躍任務
+        """
+        # 清理之前的任務
+        for task in self.tasks:
+            if not task.done():
+                task.cancel()
+        self.tasks = []
+        
+        # 啟動新任務
+        self.response_handler_task = asyncio.create_task(self._response_handler())
+        self.ping_task = asyncio.create_task(self._ping_loop())
+        self.auth_refresh_task = asyncio.create_task(self._auth_refresh_loop())
+        
+        # 添加到任務列表
+        self.tasks.extend([self.response_handler_task, self.ping_task, self.auth_refresh_task])
+        logger.info("已啟動後台任務: 響應處理器、ping保持活躍和認證刷新")
+    
+    async def _auth_refresh_loop(self) -> None:
+        """
+        定期刷新認證的後台任務
+        每4小時自動刷新一次認證，確保長時間運行不會因認證過期而失敗
+        """
+        try:
+            # 初始等待 - 避免剛連接後就立即刷新
+            await asyncio.sleep(30)
+            
+            while self.connected and self.ws and not self.closed:
+                # 每4小時刷新一次認證
+                refresh_interval = 4 * 3600  # 4小時
+                await asyncio.sleep(refresh_interval)
+                
+                if not self.connected or not self.ws or self.closed:
+                    break
+                    
+                try:
+                    logger.info("執行定期認證刷新")
+                    success = await self.refresh_auth()
+                    if success:
+                        logger.info(f"定期認證刷新成功，下次刷新將在 {refresh_interval/3600} 小時後進行")
+                        # 重置認證刷新計數
+                        self.auth_refresh_count = 0
+                    else:
+                        logger.error("定期認證刷新失敗")
+                        # 如果刷新失敗，縮短下次嘗試的時間
+                        await asyncio.sleep(600)  # 10分鐘後重試
+                except Exception as e:
+                    logger.error(f"定期認證刷新過程中出錯: {str(e)}")
+                    await asyncio.sleep(300)  # 5分鐘後重試
+        except asyncio.CancelledError:
+            logger.info("認證刷新循環已取消")
+        except Exception as e:
+            logger.error(f"認證刷新循環中出錯: {str(e)}")
+            
     async def _ping_loop(self) -> None:
         """
         維持WebSocket連接的ping/pong循環
@@ -730,6 +808,27 @@ class BinanceWebSocketClient:
                         error_code = response['error']['code']
                         error_message = response['error']['msg']
                         
+                        # 處理認證錯誤 - 新增自動認證刷新邏輯
+                        if await self._handle_auth_error(error_code, error_message):
+                            logger.info("認證已刷新，重試請求")
+                            retry_count += 1
+                            
+                            # 清理舊的 future
+                            if request_id in self.response_futures:
+                                del self.response_futures[request_id]
+                                
+                            # 建立新的 future 和請求 ID
+                            request_id = str(uuid.uuid4())
+                            request['id'] = request_id
+                            future = asyncio.get_event_loop().create_future()
+                            self.response_futures[request_id] = future
+                            
+                            # 更新時間戳，避免時間同步問題
+                            formatted_params['timestamp'] = str(int(time.time() * 1000))
+                            request['params'] = formatted_params
+                            
+                            continue
+                        
                         # 檢查是否需要重試
                         if error_code in [-1021, -1022]:  # 時間同步錯誤或簽名錯誤
                             logger.warning(f"時間同步或簽名錯誤: {error_message}，重試中...")
@@ -824,10 +923,589 @@ class BinanceWebSocketClient:
         
         # 超過最大重試次數
         raise ApiError("獲取U本位合約賬戶信息失敗: 超過最大重試次數")
+
+    async def refresh_auth(self):
+        """
+        重新進行身份驗證
+        
+        當使用長期連接時，認證可能會過期
+        此方法用於重新進行身份驗證，以確保 API 請求能夠正常處理
+        
+        Returns:
+            bool: 重新認證是否成功
+        """
+        try:
+            logger.info("開始重新進行身份驗證")
+            
+            # 如果連接不存在或已關閉，先重新連接
+            if not self.connected or self.ws is None:
+                logger.warning("重新認證前檢測到連接已關閉，嘗試重新建立連接")
+                try:
+                    connected = await self.connect()
+                    if not connected:
+                        logger.error("無法建立連接，重新認證失敗")
+                        return False
+                    logger.info("重新連接成功，繼續進行認證")
+                except Exception as conn_err:
+                    logger.error(f"重新建立連接時出錯: {str(conn_err)}")
+                    return False
+            
+            # 構建認證請求參數
+            params = {
+                "apiKey": self.api_key,
+                "timestamp": str(int(time.time() * 1000)),
+                "recvWindow": "15000"  # 增加接收窗口時間到15秒，避免時間同步問題
+            }
+            
+            # 按參數名稱排序
+            sorted_params = {key: params[key] for key in sorted(params.keys())}
+            
+            try:
+                # 生成簽名
+                logger.debug("正在生成重新認證簽名")
+                signature = self.sign_parameters(sorted_params)
+                sorted_params["signature"] = signature
+                
+                # 構建認證請求
+                request_id = str(uuid.uuid4())
+                auth_request = {
+                    "id": request_id,
+                    "method": "session.logon",
+                    "params": sorted_params
+                }
+                
+                # 關鍵修改：創建一個Future對象並存儲在response_futures中
+                future = asyncio.get_event_loop().create_future()
+                self.response_futures[request_id] = future
+                
+                # 發送認證請求
+                await self.ws.send(json.dumps(auth_request))
+                
+                # 等待認證響應
+                try:
+                    # 使用future等待響應，而不是直接等待接收消息
+                    response_data = await asyncio.wait_for(future, timeout=15)
+                    
+                    # 檢查認證是否成功
+                    if 'error' in response_data:
+                        error_code = response_data.get('error', {}).get('code', 'unknown')
+                        error_msg = response_data.get('error', {}).get('msg', 'Unknown error')
+                        logger.error(f"重新認證失敗: 錯誤碼 {error_code}, 錯誤信息: {error_msg}")
+                        
+                        if error_code == -4056:
+                            logger.error("HMAC_SHA256 API 密鑰不支持 WebSocket API，請在幣安 API 管理界面創建 Ed25519 密鑰")
+                        elif error_code == -1022 or "signature" in error_msg.lower():
+                            logger.error("簽名無效，請檢查 API Secret 格式和正確性")
+                        elif error_code == -1099:
+                            logger.error("API密鑰無權限或未找到，請檢查 API Key 和權限設置")
+                            
+                        self.authenticated = False
+                        return False
+                    elif 'result' in response_data and response_data.get('result', None) is not None:
+                        logger.info("重新認證成功")
+                        self.authenticated = True
+                        # 重置認證刷新計數
+                        self.auth_refresh_count = 0
+                        return True
+                    else:
+                        logger.error("重新認證響應格式異常")
+                        self.authenticated = False
+                        return False
+                except asyncio.TimeoutError:
+                    logger.error("重新認證響應超時")
+                    self.authenticated = False
+                    return False
+                except Exception as e:
+                    logger.error(f"重新認證過程中發生錯誤: {str(e)}")
+                    self.authenticated = False
+                    return False
+                finally:
+                    # 清理：確保無論成功失敗都從response_futures中移除
+                    if request_id in self.response_futures:
+                        del self.response_futures[request_id]
+            except Exception as e:
+                logger.error(f"生成重新認證簽名時出錯: {str(e)}")
+                self.authenticated = False
+                return False
+                
+        except Exception as e:
+            logger.error(f"重新認證過程中發生錯誤: {str(e)}")
+            self.authenticated = False
+            return False
+            
+        return self.authenticated
+
+    async def get_order_status(self, symbol: str, order_id: str = None, orig_client_order_id: str = None) -> Dict[str, Any]:
+        """
+        通過 WebSocket 查詢訂單狀態
+        
+        Args:
+            symbol: 交易對
+            order_id: 幣安訂單ID (與 orig_client_order_id 二選一)
+            orig_client_order_id: 原始客戶端訂單ID (與 order_id 二選一)
+            
+        Returns:
+            訂單狀態信息，包含訂單ID、狀態、成交數量等
+        """
+        # 確保連接已建立
+        if not self.connected or self.ws is None:
+            logger.info("WebSocket 未連接，嘗試建立連接")
+            connected = await self.connect()
+            if not connected:
+                raise ConnectionError("無法建立 WebSocket 連接")
+        
+        # 基本參數
+        params = {
+            "symbol": symbol,
+            "orderId": order_id,
+            "origClientOrderId": orig_client_order_id,
+            "timestamp": int(time.time() * 1000),
+            "recvWindow": 60000  # 延長接收窗口，避免時間同步問題
+        }
+        
+        # 格式化參數
+        formatted_params = self._format_params(params)
+        
+        # 生成請求ID
+        request_id = str(uuid.uuid4())
+        
+        # 構建請求
+        request = {
+            "id": request_id,
+            "method": "order.status",
+            "params": formatted_params
+        }
+        
+        # 記錄請求
+        logger.debug(f"查詢訂單狀態請求: {json.dumps(request, ensure_ascii=False)}")
+        
+        # 設置響應Future
+        future = asyncio.get_event_loop().create_future()
+        self.response_futures[request_id] = future
+        
+        # 發送請求
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                # 檢查連接狀態
+                if not self.connected or self.ws is None:
+                    logger.warning("連接已關閉，嘗試重新連接...")
+                    connected = await self.connect()
+                    if not connected:
+                        raise ConnectionError("重新連接失敗")
+                
+                try:
+                    await self.ws.send(json.dumps(request))
+                except Exception as send_err:
+                    logger.error(f"發送訂單狀態查詢請求失敗: {str(send_err)}")
+                    retry_count += 1
+                    await asyncio.sleep(1)
+                    continue
+                    
+                # 等待響應
+                try:
+                    response = await asyncio.wait_for(future, 10)  # 10秒超時
+                    logger.debug(f"查詢訂單狀態響應摘要: {_log_response_summary(response)}")
+                    
+                    # 檢查錯誤
+                    if 'error' in response:
+                        error_code = response['error']['code']
+                        error_message = response['error']['msg']
+                        
+                        # 檢查是否需要重試
+                        if error_code in [-1021, -1022]:  # 時間同步錯誤或簽名錯誤
+                            logger.warning(f"時間同步或簽名錯誤: {error_message}，重試中...")
+                            retry_count += 1
+                            # 更新時間戳
+                            formatted_params['timestamp'] = str(int(time.time() * 1000))
+                            request['params'] = formatted_params
+                            continue
+                        elif error_code == -2013:  # 訂單不存在
+                            logger.warning(f"訂單不存在: {error_message}")
+                            return {"status": "CANCELED", "message": "Order not found"}
+                        else:
+                            # 其他錯誤，直接返回
+                            logger.error(f"查詢訂單狀態錯誤: {error_code} - {error_message}")
+                            raise ApiError(f"查詢訂單狀態錯誤: {error_code} - {error_message}")
+                    
+                    # 如果沒有錯誤，則返回結果
+                    result = response.get('result', {})
+                    return result
+                    
+                except asyncio.TimeoutError:
+                    # 超時，重試
+                    logger.warning("查詢訂單狀態請求超時，重試中...")
+                    retry_count += 1
+                    continue
+                    
+            except Exception as e:
+                # 其他錯誤，重試
+                logger.error(f"查詢訂單狀態過程中發生錯誤: {str(e)}")
+                retry_count += 1
+                continue
+        
+        # 超過最大重試次數
+        raise ApiError("查詢訂單狀態失敗: 超過最大重試次數")
+
+    # 新增用戶數據流相關方法
+    async def get_listen_key(self) -> str:
+        """
+        獲取用戶數據流的listenKey
+        
+        對於U本位合約，需要調用特定的API獲取listenKey
+        返回的listenKey用於訂閱用戶特定的WebSocket數據流
+        
+        Returns:
+            listenKey字符串
+        """
+        # 確保連接已建立
+        if not self.connected or self.ws is None:
+            logger.info("WebSocket 未連接，嘗試建立連接")
+            connected = await self.connect()
+            if not connected:
+                raise ConnectionError("無法建立 WebSocket 連接")
+            
+        # 構建獲取listenKey的請求
+        params = {
+            "timestamp": int(time.time() * 1000),
+            "recvWindow": 60000
+        }
+        
+        # 格式化參數
+        formatted_params = self._format_params(params)
+        
+        # 生成請求ID
+        request_id = str(uuid.uuid4())
+        
+        # 構建請求
+        request = {
+            "id": request_id,
+            "method": "userDataStream.start",
+            "params": formatted_params
+        }
+        
+        # 設置響應Future
+        future = asyncio.get_event_loop().create_future()
+        self.response_futures[request_id] = future
+        
+        # 發送請求
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                await self.ws.send(json.dumps(request))
+                
+                # 等待響應
+                response = await asyncio.wait_for(future, 10)  # 10秒超時
+                
+                # 檢查錯誤
+                if 'error' in response:
+                    error_code = response['error']['code']
+                    error_message = response['error']['msg']
+                    
+                    # 檢查是否需要重試
+                    if error_code in [-1021, -1022]:  # 時間同步錯誤或簽名錯誤
+                        logger.warning(f"時間同步或簽名錯誤: {error_message}，重試中...")
+                        retry_count += 1
+                        # 更新時間戳
+                        formatted_params['timestamp'] = str(int(time.time() * 1000))
+                        request['params'] = formatted_params
+                        continue
+                    else:
+                        # 其他錯誤，直接返回
+                        raise ApiError(f"獲取listenKey錯誤: {error_code} - {error_message}")
+                
+                # 獲取listenKey
+                result = response.get('result', {})
+                listen_key = result.get('listenKey')
+                
+                if not listen_key:
+                    raise ApiError("返回數據中未找到listenKey")
+                
+                logger.info(f"成功獲取listenKey: {listen_key[:10]}***")
+                return listen_key
+                
+            except asyncio.TimeoutError:
+                logger.warning("獲取listenKey超時，重試中...")
+                retry_count += 1
+                continue
+            except Exception as e:
+                logger.error(f"獲取listenKey時發生錯誤: {str(e)}")
+                retry_count += 1
+                continue
+                
+        raise ApiError("獲取listenKey失敗: 超過最大重試次數")
     
+    async def extend_listen_key(self, listen_key: str) -> bool:
+        """
+        延長listenKey的有效期
+        
+        listenKey有效期為60分鐘，每30分鐘需要發送一次延長請求
+        
+        Args:
+            listen_key: 需要延長的listenKey
+            
+        Returns:
+            操作是否成功
+        """
+        # 確保連接已建立
+        if not self.connected or self.ws is None:
+            logger.info("WebSocket 未連接，嘗試建立連接")
+            connected = await self.connect()
+            if not connected:
+                raise ConnectionError("無法建立 WebSocket 連接")
+            
+        # 構建延長listenKey的請求
+        params = {
+            "listenKey": listen_key,
+            "timestamp": int(time.time() * 1000),
+            "recvWindow": 60000
+        }
+        
+        # 格式化參數
+        formatted_params = self._format_params(params)
+        
+        # 生成請求ID
+        request_id = str(uuid.uuid4())
+        
+        # 構建請求
+        request = {
+            "id": request_id,
+            "method": "userDataStream.ping",
+            "params": formatted_params
+        }
+        
+        # 設置響應Future
+        future = asyncio.get_event_loop().create_future()
+        self.response_futures[request_id] = future
+        
+        try:
+            await self.ws.send(json.dumps(request))
+            
+            # 等待響應
+            response = await asyncio.wait_for(future, 10)  # 10秒超時
+            
+            # 檢查錯誤
+            if 'error' in response:
+                error_code = response['error']['code']
+                error_message = response['error']['msg']
+                logger.error(f"延長listenKey失敗: {error_code} - {error_message}")
+                return False
+            
+            logger.debug(f"成功延長listenKey有效期: {listen_key[:10]}***")
+            return True
+            
+        except Exception as e:
+            logger.error(f"延長listenKey時發生錯誤: {str(e)}")
+            return False
+    
+    async def close_listen_key(self, listen_key: str) -> bool:
+        """
+        關閉listenKey
+        
+        當不再需要用戶數據流時，應該主動關閉listenKey以釋放資源
+        
+        Args:
+            listen_key: 需要關閉的listenKey
+            
+        Returns:
+            操作是否成功
+        """
+        # 確保連接已建立
+        if not self.connected or self.ws is None:
+            return False
+            
+        # 構建關閉listenKey的請求
+        params = {
+            "listenKey": listen_key,
+            "timestamp": int(time.time() * 1000),
+            "recvWindow": 60000
+        }
+        
+        # 格式化參數
+        formatted_params = self._format_params(params)
+        
+        # 生成請求ID
+        request_id = str(uuid.uuid4())
+        
+        # 構建請求
+        request = {
+            "id": request_id,
+            "method": "userDataStream.stop",
+            "params": formatted_params
+        }
+        
+        # 設置響應Future
+        future = asyncio.get_event_loop().create_future()
+        self.response_futures[request_id] = future
+        
+        try:
+            await self.ws.send(json.dumps(request))
+            
+            # 等待響應
+            response = await asyncio.wait_for(future, 10)  # 10秒超時
+            
+            # 檢查錯誤
+            if 'error' in response:
+                error_code = response['error']['code']
+                error_message = response['error']['msg']
+                logger.error(f"關閉listenKey失敗: {error_code} - {error_message}")
+                return False
+            
+            logger.info(f"成功關閉listenKey: {listen_key[:10]}***")
+            return True
+            
+        except Exception as e:
+            logger.error(f"關閉listenKey時發生錯誤: {str(e)}")
+            return False
+    
+    async def subscribe_user_data_stream(self, callback=None):
+        """
+        訂閱用戶數據流
+        
+        建立WebSocket連接並訂閱用戶特定的數據流，包括訂單更新、賬戶更新等
+        
+        Args:
+            callback: 可選的回調函數，用於處理收到的數據流消息
+            
+        Returns:
+            WebSocket連接和listenKey
+        """
+        try:
+            # 獲取listenKey
+            listen_key = await self.get_listen_key()
+            
+            # 構建用戶數據流WebSocket URL
+            user_stream_url = f"wss://fstream.binance.com/ws/{listen_key}"
+            logger.info(f"連接到用戶數據流: {user_stream_url[:30]}***")
+            
+            # 建立WebSocket連接
+            user_ws = await websockets.connect(
+                user_stream_url,
+                ping_interval=30,
+                ping_timeout=10,
+                close_timeout=10
+            )
+            
+            # 啟動keepalive任務，每30分鐘延長一次listenKey有效期
+            keepalive_task = asyncio.create_task(
+                self._keep_listen_key_alive(listen_key)
+            )
+            
+            # 啟動消息監聽任務
+            listen_task = asyncio.create_task(
+                self._listen_user_data_stream(user_ws, callback)
+            )
+            
+            return {
+                "user_ws": user_ws,
+                "listen_key": listen_key,
+                "keepalive_task": keepalive_task,
+                "listen_task": listen_task
+            }
+            
+        except Exception as e:
+            logger.error(f"訂閱用戶數據流失敗: {str(e)}")
+            raise ApiError(f"訂閱用戶數據流失敗: {str(e)}")
+    
+    async def _keep_listen_key_alive(self, listen_key: str):
+        """
+        保持listenKey活躍的後台任務
+        
+        每30分鐘發送一次ping請求，確保listenKey不過期
+        
+        Args:
+            listen_key: 需要保持活躍的listenKey
+        """
+        try:
+            while True:
+                # 等待30分鐘
+                await asyncio.sleep(30 * 60)
+                
+                try:
+                    # 延長listenKey有效期
+                    success = await self.extend_listen_key(listen_key)
+                    if not success:
+                        logger.warning(f"延長listenKey失敗，嘗試重新獲取")
+                        listen_key = await self.get_listen_key()
+                except Exception as e:
+                    logger.error(f"延長listenKey時發生錯誤: {str(e)}")
+        except asyncio.CancelledError:
+            # 任務被取消
+            logger.info("保持listenKey活躍的任務已取消")
+            # 主動關閉listenKey
+            await self.close_listen_key(listen_key)
+        except Exception as e:
+            logger.error(f"保持listenKey活躍的任務出錯: {str(e)}")
+    
+    async def _listen_user_data_stream(self, user_ws, callback=None):
+        """
+        監聽用戶數據流
+        
+        持續接收來自WebSocket的用戶數據流消息，並進行處理
+        
+        Args:
+            user_ws: 用戶數據流WebSocket連接
+            callback: 可選的回調函數，用於處理收到的消息
+        """
+        try:
+            while True:
+                try:
+                    # 接收消息
+                    message = await user_ws.recv()
+                    
+                    # 解析消息
+                    data = json.loads(message)
+                    
+                    # 處理不同類型的事件
+                    event_type = data.get("e")
+                    
+                    if event_type == "ORDER_TRADE_UPDATE":
+                        # 訂單更新事件
+                        logger.debug(f"收到訂單更新事件: {json.dumps(data)[:100]}...")
+                        
+                        # 提取訂單信息
+                        order_update = data.get("o", {})
+                        symbol = order_update.get("s")  # 交易對
+                        order_id = order_update.get("i")  # 訂單ID
+                        order_status = order_update.get("X")  # 訂單狀態
+                        
+                        logger.info(f"訂單狀態更新: {symbol} - {order_id} - {order_status}")
+                        
+                    elif event_type == "ACCOUNT_UPDATE":
+                        # 賬戶更新事件
+                        logger.debug(f"收到賬戶更新事件: {json.dumps(data)[:100]}...")
+                        
+                    elif event_type == "MARGIN_CALL":
+                        # 保證金不足事件
+                        logger.warning(f"收到保證金不足事件: {json.dumps(data)}")
+                    
+                    # 如果有回調函數，則調用它
+                    if callback and callable(callback):
+                        asyncio.create_task(callback(data))
+                        
+                except json.JSONDecodeError:
+                    logger.error(f"無法解析WebSocket消息: {message}")
+                    continue
+                except Exception as msg_err:
+                    logger.error(f"處理用戶數據流消息時出錯: {str(msg_err)}")
+                    continue
+                    
+        except asyncio.CancelledError:
+            # 任務被取消
+            logger.info("用戶數據流監聽任務已取消")
+        except Exception as e:
+            logger.error(f"用戶數據流監聽任務出錯: {str(e)}")
+            # 嘗試重新連接
+            await asyncio.sleep(5)
+            raise
+
     async def place_order(self, symbol: str, side: str, order_type: str, 
-                          quantity: float = None, quote_quantity: float = None, price: float = None, 
-                          time_in_force: str = None, stop_price: float = None, **kwargs) -> Dict:
+                         quantity: float = None, quote_quantity: float = None, price: float = None, 
+                         time_in_force: str = None, stop_price: float = None, **kwargs) -> Dict:
         """
         通過 WebSocket 下單
         
@@ -914,6 +1592,27 @@ class BinanceWebSocketClient:
                         error_code = response['error']['code']
                         error_message = response['error']['msg']
                         
+                        # 處理認證錯誤 - 新增自動認證刷新邏輯
+                        if await self._handle_auth_error(error_code, error_message):
+                            logger.info("認證已刷新，重試下單請求")
+                            retry_count += 1
+                            
+                            # 清理舊的 future
+                            if request_id in self.response_futures:
+                                del self.response_futures[request_id]
+                                
+                            # 建立新的 future 和請求 ID
+                            request_id = str(uuid.uuid4())
+                            request['id'] = request_id
+                            future = asyncio.get_event_loop().create_future()
+                            self.response_futures[request_id] = future
+                            
+                            # 更新時間戳，避免時間同步問題
+                            formatted_params['timestamp'] = str(int(time.time() * 1000))
+                            request['params'] = formatted_params
+                            
+                            continue
+                        
                         # 檢查是否需要重試
                         if error_code in [-1021, -1022]:  # 時間同步錯誤或簽名錯誤
                             logger.warning(f"時間同步或簽名錯誤: {error_message}，重試中...")
@@ -944,7 +1643,7 @@ class BinanceWebSocketClient:
         
         # 超過最大重試次數
         raise ApiError("下單失敗: 超過最大重試次數")
-    
+
     async def cancel_order(self, symbol: str, order_id: str = None, orig_client_order_id: str = None, **kwargs) -> Dict:
         """
         通過 WebSocket 取消訂單
@@ -1015,6 +1714,27 @@ class BinanceWebSocketClient:
                         error_code = response['error']['code']
                         error_message = response['error']['msg']
                         
+                        # 處理認證錯誤 - 新增自動認證刷新邏輯
+                        if await self._handle_auth_error(error_code, error_message):
+                            logger.info("認證已刷新，重試取消訂單請求")
+                            retry_count += 1
+                            
+                            # 清理舊的 future
+                            if request_id in self.response_futures:
+                                del self.response_futures[request_id]
+                                
+                            # 建立新的 future 和請求 ID
+                            request_id = str(uuid.uuid4())
+                            request['id'] = request_id
+                            future = asyncio.get_event_loop().create_future()
+                            self.response_futures[request_id] = future
+                            
+                            # 更新時間戳，避免時間同步問題
+                            formatted_params['timestamp'] = str(int(time.time() * 1000))
+                            request['params'] = formatted_params
+                            
+                            continue
+                        
                         # 檢查是否需要重試
                         if error_code in [-1021, -1022]:  # 時間同步錯誤或簽名錯誤
                             logger.warning(f"時間同步或簽名錯誤: {error_message}，重試中...")
@@ -1048,59 +1768,6 @@ class BinanceWebSocketClient:
         
         # 超過最大重試次數
         raise ApiError("取消訂單失敗: 超過最大重試次數")
-    
-    def is_connected(self) -> bool:
-        """
-        檢查WebSocket連接是否仍然連接
-        """
-        return self.ws and self.ws.open
-
-    def _format_params(self, params: Dict[str, Any]) -> Dict[str, str]:
-        """
-        格式化參數為 WebSocket API 要求的格式
-        
-        Args:
-            params: 原始參數
-            
-        Returns:
-            格式化後的參數
-        """
-        formatted = {}
-        
-        for key, value in params.items():
-            # 跳過 None 值
-            if value is None:
-                continue
-                
-            # 將布爾值轉換為 'true' 或 'false'
-            if isinstance(value, bool):
-                formatted[key] = 'true' if value else 'false'
-            # 將列表轉換為逗號分隔的字符串
-            elif isinstance(value, list):
-                formatted[key] = ','.join([str(item) for item in value])
-            # 其他值轉換為字符串
-            else:
-                formatted[key] = str(value)
-                
-        return formatted
-
-    def _start_background_tasks(self):
-        """
-        啟動響應處理器和ping保持活躍任務
-        """
-        # 清理之前的任務
-        for task in self.tasks:
-            if not task.done():
-                task.cancel()
-        self.tasks = []
-        
-        # 啟動新任務
-        self.response_handler_task = asyncio.create_task(self._response_handler())
-        self.ping_task = asyncio.create_task(self._ping_loop())
-        
-        # 添加到任務列表
-        self.tasks.extend([self.response_handler_task, self.ping_task])
-        logger.info("已啟動後台任務: 響應處理器和ping保持活躍")
 
     async def get_account_balance(self) -> Dict[str, Any]:
         """
@@ -1173,6 +1840,27 @@ class BinanceWebSocketClient:
                             error_code = response['error']['code']
                             error_message = response['error']['msg']
                             
+                            # 處理認證錯誤 - 新增自動認證刷新邏輯
+                            if await self._handle_auth_error(error_code, error_message):
+                                logger.info("認證已刷新，重試獲取餘額請求")
+                                retry_count += 1
+                                
+                                # 清理舊的 future
+                                if request_id in self.response_futures:
+                                    del self.response_futures[request_id]
+                                    
+                                # 建立新的 future 和請求 ID
+                                request_id = str(uuid.uuid4())
+                                request['id'] = request_id
+                                future = asyncio.get_event_loop().create_future()
+                                self.response_futures[request_id] = future
+                                
+                                # 更新時間戳，避免時間同步問題
+                                formatted_params['timestamp'] = str(int(time.time() * 1000))
+                                request['params'] = formatted_params
+                                
+                                continue
+                            
                             # 檢查是否需要重試
                             if error_code in [-1021, -1022]:  # 時間同步錯誤或簽名錯誤
                                 logger.warning(f"時間同步或簽名錯誤: {error_message}，重試中...")
@@ -1235,7 +1923,7 @@ class BinanceWebSocketClient:
                                     logger.error("重新連接失敗")
                             except Exception as conn_err:
                                 logger.error(f"重新連接過程中出錯: {str(conn_err)}")
-                    
+                        
                         continue
                 except Exception as e:
                     logger.error(f"發送請求或處理響應時出錯: {str(e)}")
@@ -1273,101 +1961,71 @@ class BinanceWebSocketClient:
         # 超過最大重試次數
         raise ApiError("獲取U本位合約賬戶餘額失敗: 超過最大重試次數")
 
-    async def refresh_auth(self):
+    def is_connected(self) -> bool:
         """
-        重新進行身份驗證
+        檢查WebSocket連接是否仍然連接
         
-        當使用長期連接時，認證可能會過期
-        此方法用於重新進行身份驗證，以確保 API 請求能夠正常處理
+        連接管理器和其他組件使用此方法檢查連接狀態。
         
         Returns:
-            bool: 重新認證是否成功
+            布爾值，表示連接是否處於活躍狀態
         """
-        try:
-            logger.info("開始重新進行身份驗證")
+        return self.ws is not None and self.ws.open and self.connected
+    
+    # 添加一個屬性，用於屬性訪問
+    @property
+    def connection_status(self) -> bool:
+        """
+        連接狀態屬性，與 is_connected() 方法功能相同，但可以作為屬性訪問
+        
+        Returns:
+            布爾值，表示連接是否處於活躍狀態
+        """
+        return self.is_connected()
+    
+    def _format_params(self, params: Dict[str, Any]) -> Dict[str, str]:
+        """
+        格式化參數為 WebSocket API 要求的格式
+        
+        Args:
+            params: 原始參數
             
-            # 構建認證請求參數
-            params = {
-                "apiKey": self.api_key,
-                "timestamp": str(int(time.time() * 1000)),
-                "recvWindow": "15000"  # 增加接收窗口時間到15秒，避免時間同步問題
-            }
-            
-            # 按參數名稱排序
-            sorted_params = {key: params[key] for key in sorted(params.keys())}
-            
-            try:
-                # 生成簽名
-                logger.debug("正在生成重新認證簽名")
-                signature = self.sign_parameters(sorted_params)
-                sorted_params["signature"] = signature
+        Returns:
+            格式化後的參數
+        """
+        formatted = {}
+        
+        for key, value in params.items():
+            # 跳過 None 值
+            if value is None:
+                continue
                 
-                # 構建認證請求
-                request_id = str(uuid.uuid4())
-                auth_request = {
-                    "id": request_id,
-                    "method": "session.logon",
-                    "params": sorted_params
-                }
+            # 將布爾值轉換為 'true' 或 'false'
+            if isinstance(value, bool):
+                formatted[key] = 'true' if value else 'false'
+            # 將列表轉換為逗號分隔的字符串
+            elif isinstance(value, list):
+                formatted[key] = ','.join([str(item) for item in value])
+            # 其他值轉換為字符串
+            else:
+                formatted[key] = str(value)
                 
-                # 關鍵修改：創建一個Future對象並存儲在response_futures中
-                future = asyncio.get_event_loop().create_future()
-                self.response_futures[request_id] = future
-                
-                # 發送認證請求
-                await self.ws.send(json.dumps(auth_request))
-                
-                # 等待認證響應
-                try:
-                    # 使用future等待響應，而不是直接等待接收消息
-                    response_data = await asyncio.wait_for(future, timeout=15)
-                    
-                    # 檢查認證是否成功
-                    if 'error' in response_data:
-                        error_code = response_data.get('error', {}).get('code', 'unknown')
-                        error_msg = response_data.get('error', {}).get('msg', 'Unknown error')
-                        logger.error(f"重新認證失敗: 錯誤碼 {error_code}, 錯誤信息: {error_msg}")
-                        
-                        if error_code == -4056:
-                            logger.error("HMAC_SHA256 API 密鑰不支持 WebSocket API，請在幣安 API 管理界面創建 Ed25519 密鑰")
-                        elif error_code == -1022 or "signature" in error_msg.lower():
-                            logger.error("簽名無效，請檢查 API Secret 格式和正確性")
-                        elif error_code == -1099:
-                            logger.error("API密鑰無權限或未找到，請檢查 API Key 和權限設置")
-                            
-                        self.authenticated = False
-                        return False
-                    elif 'result' in response_data and response_data.get('result', None) is not None:
-                        logger.info("重新認證成功")
-                        self.authenticated = True
-                        return True
-                    else:
-                        logger.error("重新認證響應格式異常")
-                        self.authenticated = False
-                        return False
-                except asyncio.TimeoutError:
-                    logger.error("重新認證響應超時")
-                    self.authenticated = False
-                    return False
-                except Exception as e:
-                    logger.error(f"重新認證過程中發生錯誤: {str(e)}")
-                    self.authenticated = False
-                    return False
-                finally:
-                    # 清理：確保無論成功失敗都從response_futures中移除
-                    if request_id in self.response_futures:
-                        del self.response_futures[request_id]
-            except Exception as e:
-                logger.error(f"生成重新認證簽名時出錯: {str(e)}")
-                self.authenticated = False
-                return False
-                
-        except Exception as e:
-            logger.error(f"重新認證過程中發生錯誤: {str(e)}")
-            self.authenticated = False
-            return False
-            
-        return self.authenticated
+        return formatted
+        
+    async def _handle_auth_error(self, error_code: int, error_message: str) -> bool:
+        """
+        處理認證相關錯誤
+        
+        當檢測到認證錯誤時，嘗試重新進行認證
+        
+        Returns:
+            bool: 是否成功重新認證
+        """
+        if error_code in self.auth_error_codes:
+            logger.warning(f"檢測到認證錯誤: 錯誤碼 {error_code}, 錯誤信息: {error_message}")
+            logger.info("嘗試重新認證")
+            return await self.refresh_auth()
+        return False
 
 
 class ConnectionError(Exception):

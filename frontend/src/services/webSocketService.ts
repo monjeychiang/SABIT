@@ -13,6 +13,7 @@ interface WebSocketState {
   reconnectAttempts: number;
   heartbeatTimer: number | null;
   lastPongTime: number; // 新增：上次收到pong的時間
+  lastConnectionAttemptTime: number; // 新增：上次嘗試連接的時間
 }
 
 // 主WebSocket配置
@@ -34,10 +35,14 @@ class MainWebSocketManager {
     connected: false,
     reconnectAttempts: 0,
     heartbeatTimer: null,
-    lastPongTime: 0 // 初始化
+    lastPongTime: 0, // 初始化
+    lastConnectionAttemptTime: 0 // 初始化上次連接時間
   };
   private options: MainWebSocketOptions = {};
   private isInitialized = ref(false);
+  
+  // 最小連接間隔（毫秒）- 增加防抖閾值
+  private static MIN_CONNECTION_INTERVAL = 5000; // 增加到5秒內不重複連接
 
   // 註冊主WebSocket處理器
   public register(options: MainWebSocketOptions): void {
@@ -66,6 +71,31 @@ class MainWebSocketManager {
 
   // 連線主WebSocket
   public async connect(): Promise<boolean> {
+    // 檢查是否在短時間內重複連接
+    const now = Date.now();
+    const timeSinceLastConnection = now - this.state.lastConnectionAttemptTime;
+    
+    // 如果距離上次連接嘗試時間太短，且已有活躍連接或正在連接中，則忽略此次連接請求
+    if (timeSinceLastConnection < MainWebSocketManager.MIN_CONNECTION_INTERVAL) {
+      // 檢查是否有活躍連接或者正在連接過程中
+      if (this.state.socket) {
+        const isValidSocket = this.state.socket.readyState === WebSocket.OPEN || 
+                              this.state.socket.readyState === WebSocket.CONNECTING;
+                              
+        if (isValidSocket) {
+          console.log(`[WebSocket] 忽略短時間內的重複連接請求 (${timeSinceLastConnection}ms), 當前狀態: ${
+            this.state.socket.readyState === WebSocket.OPEN ? '已連接' : '連接中'
+          }`);
+          
+          // 如果連接已經成功建立，返回true；否則返回當前連接狀態
+          return this.state.socket.readyState === WebSocket.OPEN || this.state.connected;
+        }
+      }
+    }
+    
+    // 更新上次嘗試連接時間
+    this.state.lastConnectionAttemptTime = now;
+    
     if (this.state.socket && this.state.socket.readyState !== WebSocket.CLOSED) {
       this.disconnect();
     }

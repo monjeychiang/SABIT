@@ -26,8 +26,8 @@ from ..schemas.trading import (
     OrderInfo, Position, AccountInfo, Balance,
     StopOrder, BatchOrderRequest, BatchCancelRequest
 )
-from ..utils.exchange import get_exchange_client
-from ..utils.connection_pool import ExchangeConnectionPool
+from backend.utils.exchange import get_exchange_client
+from backend.utils.connection_pool import ExchangeConnectionPool
 
 logger = logging.getLogger(__name__)
 

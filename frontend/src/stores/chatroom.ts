@@ -87,6 +87,9 @@ export const useChatroomStore = defineStore('chatroom', {
     
     // 未读消息计数 - 新增
     unreadMessagesByRoom: {} as Record<number, number>,
+    
+    // 新增：記錄每個聊天室的最後加入時間
+    lastJoinedRoomTimes: {} as Record<number, number>,
   }),
 
   getters: {
@@ -295,7 +298,20 @@ export const useChatroomStore = defineStore('chatroom', {
     
     // 發送聊天室加入通知
     sendJoinRoomNotification(roomId: number) {
-      // 发送订阅消息，通知WebSocket服务器用户加入了此聊天室
+      // 新增：檢查是否在短時間內重複加入同一聊天室
+      const now = Date.now();
+      const lastJoinTime = this.lastJoinedRoomTimes[roomId] || 0;
+      const MIN_JOIN_INTERVAL = 3000; // 3秒內不重複加入
+      
+      if (now - lastJoinTime < MIN_JOIN_INTERVAL) {
+        console.log(`[Chat] 忽略短時間內重複加入聊天室 ${roomId} (${now - lastJoinTime}ms)`);
+        return;
+      }
+      
+      // 更新最後加入時間
+      this.lastJoinedRoomTimes[roomId] = now;
+      
+      // 發送訂閱消息，通知WebSocket服務器用戶加入了此聊天室
       const message = {
         type: 'chat/join_room',
         room_id: roomId
@@ -313,12 +329,20 @@ export const useChatroomStore = defineStore('chatroom', {
         return;
       }
       
-      // 对每个已加入的聊天室发送加入通知
-      this.joinedRoomIds.forEach(roomId => {
-        this.sendJoinRoomNotification(roomId);
-      });
+      // 使用setTimeout錯開發送時間，避免同時發送大量請求
+      console.log(`[Chat] 準備重新訂閱 ${this.joinedRoomIds.length} 個聊天室，將在連接穩定後開始`);
       
-      console.log(`[Chat] 已重新订阅 ${this.joinedRoomIds.length} 个聊天室`);
+      // 新增：先延遲500ms再開始訂閱，確保WebSocket連接已穩定
+      setTimeout(() => {
+        this.joinedRoomIds.forEach((roomId, index) => {
+          // 每個房間錯開300ms發送請求
+          setTimeout(() => {
+            this.sendJoinRoomNotification(roomId);
+          }, index * 300);
+        });
+        
+        console.log(`[Chat] 已安排重新訂閱 ${this.joinedRoomIds.length} 个聊天室`);
+      }, 500);
     },
 
     // 处理聊天消息

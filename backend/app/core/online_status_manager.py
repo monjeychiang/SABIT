@@ -3,14 +3,14 @@
 
 該模組提供了用戶線上狀態的管理功能，包括：
 1. 追蹤用戶的線上/離線狀態
-2. 只向真正線上的用戶發送訊息
+2. 提供用戶在線狀態查詢功能
 3. 自動清理斷開連接的WebSocket
-4. 提供線上用戶統計和查詢功能
+4. 提供線上用戶統計功能
 """
 
 import logging
 import json
-from typing import Dict, List, Set, Any, Optional
+from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 import asyncio
 from fastapi import WebSocket, WebSocketDisconnect
@@ -19,15 +19,11 @@ from fastapi import WebSocket, WebSocketDisconnect
 logger = logging.getLogger(__name__)
 
 class OnlineStatusManager:
-    """線上狀態管理器 - 負責管理用戶的線上狀態和WebSocket連接"""
+    """線上狀態管理器 - 負責管理用戶的線上狀態"""
     
     def __init__(self):
         # 存儲活躍的WebSocket連接: {user_id: websocket}
         self.active_connections: Dict[int, WebSocket] = {}
-        # 用戶加入的聊天室: {user_id: set(room_id)}
-        self.user_rooms: Dict[int, Set[int]] = {}
-        # 聊天室成員: {room_id: set(user_id)}
-        self.room_members: Dict[int, Set[int]] = {}
         # 用戶狀態記錄: {user_id: {online: bool, last_active: datetime, ...}}
         self.user_status: Dict[int, Dict[str, Any]] = {}
         # 用戶最後活躍時間
@@ -140,9 +136,6 @@ class OnlineStatusManager:
         connection_id = f"online_status_{user_id}_{id(websocket)}"
         
         logger.info(f"[OnlineStatus] WebSocket連接已建立: 用戶ID={user_id}, 連接ID={connection_id}, 當前連接總數={len(self.active_connections)}")
-        
-        # 向所有相關聊天室通知用戶線上
-        await self.broadcast_user_status_change(user_id, True)
     
     async def disconnect_user(self, user_id: int):
         """斷開用戶連接並更新狀態"""
@@ -169,9 +162,6 @@ class OnlineStatusManager:
         connection_id = f"online_status_{user_id}_{id(websocket)}" if websocket else "unknown"
         
         logger.info(f"[OnlineStatus] WebSocket連接已斷開: 用戶ID={user_id}, 連接ID={connection_id}, 當前連接總數={len(self.active_connections)}")
-        
-        # 向所有相關聊天室通知用戶離線
-        await self.broadcast_user_status_change(user_id, False)
     
     def update_user_active_time(self, user_id: int):
         """更新用戶的最後活躍時間"""
@@ -179,71 +169,6 @@ class OnlineStatusManager:
             self.last_active[user_id] = datetime.now()
             if user_id in self.user_status:
                 self.user_status[user_id]["last_active"] = datetime.now().isoformat()
-            # 刪除DEBUG日誌記錄
-            # logger.debug(f"更新用戶 {user_id} 的最後活躍時間")
-    
-    def add_user_to_room(self, user_id: int, room_id: int):
-        """添加用戶到聊天室"""
-        # 初始化用戶的聊天室集合
-        if user_id not in self.user_rooms:
-            self.user_rooms[user_id] = set()
-        
-        # 將聊天室添加到用戶的聊天室集合
-        self.user_rooms[user_id].add(room_id)
-        
-        # 初始化聊天室的用戶集合
-        if room_id not in self.room_members:
-            self.room_members[room_id] = set()
-        
-        # 將用戶添加到聊天室的成員集合
-        self.room_members[room_id].add(user_id)
-        
-        logger.info(f"用戶 {user_id} 加入聊天室 {room_id}, 該聊天室目前有 {len(self.room_members[room_id])} 個成員")
-    
-    def remove_user_from_room(self, user_id: int, room_id: int):
-        """從聊天室中移除用戶"""
-        # 從用戶的聊天室集合中移除
-        if user_id in self.user_rooms and room_id in self.user_rooms[user_id]:
-            self.user_rooms[user_id].remove(room_id)
-        
-        # 從聊天室的成員集合中移除
-        if room_id in self.room_members and user_id in self.room_members[room_id]:
-            self.room_members[room_id].remove(user_id)
-            
-        logger.info(f"用戶 {user_id} 離開聊天室 {room_id}, 該聊天室剩餘 {len(self.room_members.get(room_id, set()))} 個成員")
-    
-    async def broadcast_to_room(self, message: Dict[str, Any], room_id: int, exclude_user_id: Optional[int] = None):
-        """向聊天室的所有線上成員廣播訊息"""
-        if room_id not in self.room_members:
-            return
-            
-        disconnected_users = []  # 記錄發送失敗的用戶，可能是連接已斷開
-        sent_count = 0
-        
-        # 遍歷聊天室成員
-        for user_id in self.room_members[room_id]:
-            # 排除指定用戶
-            if exclude_user_id is not None and user_id == exclude_user_id:
-                continue
-                
-            # 只向線上用戶發送訊息
-            if user_id in self.active_connections:
-                try:
-                    await self.active_connections[user_id].send_json(message)
-                    self.update_user_active_time(user_id)  # 更新活躍時間
-                    sent_count += 1
-                    self.stats["messages_sent"] += 1
-                except Exception as e:
-                    logger.error(f"向用戶 {user_id} 發送訊息失敗: {str(e)}")
-                    # 將發送失敗的用戶添加到斷開列表
-                    disconnected_users.append(user_id)
-                    self.stats["messages_failed"] += 1
-        
-        # 處理斷開連接的用戶
-        for user_id in disconnected_users:
-            await self.disconnect_user(user_id)
-        
-        return sent_count
     
     async def send_personal_message(self, message: Dict[str, Any], user_id: int):
         """向特定用戶發送私人訊息"""
@@ -262,36 +187,9 @@ class OnlineStatusManager:
             await self.disconnect_user(user_id)
             return False
     
-    async def broadcast_user_status_change(self, user_id: int, is_online: bool):
-        """廣播用戶狀態變更到相關聊天室"""
-        if user_id not in self.user_rooms:
-            return
-            
-        status_message = {
-            "type": "user_status_change",
-            "user_id": user_id,
-            "status": "online" if is_online else "offline",
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        # 廣播到用戶所在的所有聊天室
-        for room_id in self.user_rooms[user_id]:
-            await self.broadcast_to_room(status_message, room_id, exclude_user_id=user_id)
-    
     def is_user_online(self, user_id: int) -> bool:
         """檢查用戶是否線上"""
         return user_id in self.active_connections
-    
-    def get_room_online_users(self, room_id: int) -> List[int]:
-        """獲取聊天室中所有線上用戶ID列表"""
-        if room_id not in self.room_members:
-            return []
-        
-        return [user_id for user_id in self.room_members[room_id] if user_id in self.active_connections]
-    
-    def get_room_online_count(self, room_id: int) -> int:
-        """獲取聊天室中線上用戶數量"""
-        return len(self.get_room_online_users(room_id))
     
     def get_total_online_users(self) -> int:
         """獲取總線上用戶數量"""
@@ -317,28 +215,8 @@ class OnlineStatusManager:
         stats = self.stats.copy()
         stats.update({
             "current_connections": len(self.active_connections),
-            "active_rooms": len(self.room_members),
-            "users_with_rooms": len(self.user_rooms)
         })
         return stats
-    
-    def is_user_in_room(self, user_id: int, room_id: int) -> bool:
-        """檢查用戶是否在指定聊天室中"""
-        return (user_id in self.user_rooms and 
-                room_id in self.user_rooms[user_id])
-    
-    def sync_user_rooms(self, user_id: int, room_ids: List[int]):
-        """同步用戶的聊天室列表"""
-        # 先移除用戶從所有現有聊天室的成員資格
-        if user_id in self.user_rooms:
-            for old_room_id in list(self.user_rooms[user_id]):
-                self.remove_user_from_room(user_id, old_room_id)
-        
-        # 將用戶添加到新的聊天室列表
-        for room_id in room_ids:
-            self.add_user_to_room(user_id, room_id)
-        
-        logger.info(f"已同步用戶 {user_id} 的聊天室列表，現在在 {len(room_ids)} 個聊天室中")
 
     def disable_auto_cleanup_feature(self, disable: bool = True):
         """

@@ -8,6 +8,7 @@ from datetime import datetime
 import json
 
 from .config import settings
+from .chat_room_manager import ChatRoomManager
 
 # 配置日誌
 logger = logging.getLogger(__name__)
@@ -127,11 +128,12 @@ class GlobalWebSocketManager:
         # 從配置中讀取全域連接限制
         self.MAX_GLOBAL_CONNECTIONS = settings.WS_MAX_GLOBAL_CONNECTIONS
         self.MAX_CONNECTIONS_PER_USER = settings.WS_MAX_CONNECTIONS_PER_USER
-        self.MAX_CONNECTIONS_PER_ROOM = settings.WS_MAX_CONNECTIONS_PER_ROOM
         
         # 連接追蹤
         self.user_connections: Dict[int, Set[WebSocket]] = {}  # 用戶ID -> WebSocket集合
-        self.room_connections: Dict[int, Dict[int, WebSocket]] = {}  # 聊天室ID -> {用戶ID -> WebSocket}
+        
+        # 聊天室管理器 - 專門處理聊天室相關功能
+        self.chat_room_manager = ChatRoomManager()
         
         # 從配置中讀取速率限制
         self.user_message_rates: Dict[int, List[float]] = {}  # 用戶ID -> 訊息時間戳列表
@@ -142,7 +144,7 @@ class GlobalWebSocketManager:
         self.stats = WebSocketStatsCollector()
         self.stats.start()
         
-        logger.info(f"全域WebSocket管理器已初始化，連接限制：全域={self.MAX_GLOBAL_CONNECTIONS}，每用戶={self.MAX_CONNECTIONS_PER_USER}，每聊天室={self.MAX_CONNECTIONS_PER_ROOM}，訊息速率={self.MESSAGE_RATE_LIMIT}/{self.RATE_LIMIT_WINDOW}秒")
+        logger.info(f"全域WebSocket管理器已初始化，連接限制：全域={self.MAX_GLOBAL_CONNECTIONS}，每用戶={self.MAX_CONNECTIONS_PER_USER}，訊息速率={self.MESSAGE_RATE_LIMIT}/{self.RATE_LIMIT_WINDOW}秒")
     
     async def shutdown(self):
         """關閉管理器"""
@@ -157,7 +159,6 @@ class GlobalWebSocketManager:
         
         # 清空連接
         self.user_connections.clear()
-        self.room_connections.clear()
         logger.info("全域WebSocket管理器已關閉")
     
     def can_connect(self, user_id: int, room_id: int) -> bool:
@@ -174,10 +175,8 @@ class GlobalWebSocketManager:
             logger.warning(f"用戶 {user_id} 的連接數已達上限 ({user_connection_count}/{self.MAX_CONNECTIONS_PER_USER})")
             return False
         
-        # 檢查聊天室連接數
-        room_connection_count = len(self.room_connections.get(room_id, {}))
-        if room_connection_count >= self.MAX_CONNECTIONS_PER_ROOM:
-            logger.warning(f"聊天室 {room_id} 的連接數已達上限 ({room_connection_count}/{self.MAX_CONNECTIONS_PER_ROOM})")
+        # 檢查聊天室連接數 - 委託給聊天室管理器
+        if not self.chat_room_manager.can_join_room(room_id):
             return False
         
         return True
@@ -191,12 +190,8 @@ class GlobalWebSocketManager:
         # 添加連接到用戶集合
         self.user_connections[user_id].add(websocket)
         
-        # 初始化聊天室連接字典
-        if room_id not in self.room_connections:
-            self.room_connections[room_id] = {}
-        
-        # 添加連接到聊天室字典
-        self.room_connections[room_id][user_id] = websocket
+        # 添加到聊天室 - 委託給聊天室管理器
+        self.chat_room_manager.add_user_to_room(room_id, user_id, websocket)
         
         # 記錄統計資訊
         self.stats.record_connection()
@@ -205,25 +200,20 @@ class GlobalWebSocketManager:
     
     def unregister_connection(self, user_id: int, room_id: int):
         """註銷連接"""
+        # 從聊天室移除 - 委託給聊天室管理器
+        websocket = None
+        if room_id is not None:
+            websocket = self.chat_room_manager.get_user_room_websocket(room_id, user_id)
+            self.chat_room_manager.remove_user_from_room(room_id, user_id)
+        
         # 從用戶連接集合中移除
-        if user_id in self.user_connections:
-            # 嘗試找到並移除特定的連接
-            if room_id in self.room_connections and user_id in self.room_connections[room_id]:
-                websocket = self.room_connections[room_id][user_id]
-                if websocket in self.user_connections[user_id]:
-                    self.user_connections[user_id].remove(websocket)
+        if user_id in self.user_connections and websocket:
+            if websocket in self.user_connections[user_id]:
+                self.user_connections[user_id].remove(websocket)
             
             # 如果用戶沒有更多連接，刪除用戶條目
             if not self.user_connections[user_id]:
                 del self.user_connections[user_id]
-        
-        # 從聊天室連接字典中移除
-        if room_id in self.room_connections and user_id in self.room_connections[room_id]:
-            del self.room_connections[room_id][user_id]
-            
-            # 如果聊天室沒有更多連接，刪除聊天室條目
-            if not self.room_connections[room_id]:
-                del self.room_connections[room_id]
         
         # 記錄統計資訊
         self.stats.record_disconnection()
@@ -278,44 +268,27 @@ class GlobalWebSocketManager:
             return False
     
     async def broadcast_to_room(self, room_id: int, message: Dict[str, Any], exclude_user_id: Optional[int] = None):
-        """向聊天室廣播訊息"""
-        if room_id not in self.room_connections:
-            return 0
+        """向聊天室廣播訊息 - 委託給聊天室管理器"""
+        sent_count = await self.chat_room_manager.broadcast_to_room(room_id, message, exclude_user_id)
         
-        sent_count = 0
-        # 獲取聊天室內的所有用戶
-        users = list(self.room_connections[room_id].keys())
-        
-        # 轉換消息為JSON字符串
-        message_str = json.dumps(message)
-        
-        # 向每個用戶發送消息
-        for user_id in users:
-            if exclude_user_id is not None and user_id == exclude_user_id:
-                continue
-            
-            websocket = self.room_connections[room_id].get(user_id)
-            if websocket:
-                try:
-                    await websocket.send_text(message_str)
-                    sent_count += 1
-                    self.stats.record_message_sent()
-                except Exception as e:
-                    logger.error(f"向用戶 {user_id} 發送聊天室 {room_id} 的廣播訊息失敗: {str(e)}")
-                    self.stats.record_error()
-                    # 可能需要從連接池中移除
-                    self.unregister_connection(user_id, room_id)
+        # 更新統計信息
+        for _ in range(sent_count):
+            self.stats.record_message_sent()
         
         return sent_count
     
     def get_stats(self) -> Dict[str, Any]:
         """獲取WebSocket管理器統計資訊"""
         stats = self.stats.get_stats()
+        
+        # 添加聊天室統計
+        chat_room_stats = self.chat_room_manager.get_room_stats()
+        
         stats.update({
             "user_connections": len(self.user_connections),
-            "room_connections": len(self.room_connections),
             "rate_limited_users": sum(1 for user_id, timestamps in self.user_message_rates.items() 
-                                 if len(timestamps) >= self.MESSAGE_RATE_LIMIT)
+                                 if len(timestamps) >= self.MESSAGE_RATE_LIMIT),
+            "chat_rooms": chat_room_stats
         })
         return stats
 

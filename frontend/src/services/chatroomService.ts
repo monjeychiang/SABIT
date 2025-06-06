@@ -179,7 +179,7 @@ export const chatroomService = {
     // 使用本地存储中的访问令牌，这是WebSocket验证需要的
     const token = localStorage.getItem('token') || ''
     
-    // 改为使用用户级别的连接，不再需要房间ID
-    return `${wsBaseUrl}/api/v1/chatroom/ws/user/${token}`
+    // 主WebSocket連接URL
+    return `${wsBaseUrl}/api/v1/ws/main?token=${token}`
   }
 } 

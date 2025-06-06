@@ -42,7 +42,7 @@ os.makedirs(static_dir, exist_ok=True)
 
 # 配置日誌 - 設置級別為INFO，減少過度詳細的輸出
 logging.basicConfig(
-    level=logging.INFO,  # 將日誌級別從DEBUG改為INFO，減少詳細輸出
+    level=logging.DEBUG,  # 將日誌級別從INFO改為DEBUG，以獲取更詳細的輸出
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler(
@@ -120,6 +120,15 @@ async def lifespan(app: FastAPI):
     # 確保日誌目錄存在
     if not os.path.exists("logs"):
         os.makedirs("logs")
+    
+    # 初始化交易所連接管理器
+    try:
+        from backend.utils.exchange_connection_manager import exchange_connection_manager
+        logger.info("正在初始化交易所連接管理器...")
+        await exchange_connection_manager.initialize()
+        logger.info("交易所連接管理器初始化完成，已連接到WebSocket客戶端池")
+    except Exception as e:
+        logger.error(f"初始化交易所連接管理器失敗: {str(e)}")
     
     # 初始化市場數據服務
     try:
@@ -336,6 +345,10 @@ app.include_router(ws_main.router, tags=["WebSocket"])  # 註冊主要WebSocket�
 # 導入和註冊交易API路由
 #from app.api.endpoints import trading
 #app.include_router(trading.router, prefix="/api/v1/trading", tags=["交易"])  # 註冊交易API路由
+
+# 新增: 導入並註冊網格交易路由 (從gridbot.py)
+from app.api.endpoints import gridbot
+app.include_router(gridbot.router, prefix="/api/v1/trading", tags=["網格交易"])  # 註冊網格交易API路由
 
 # 包含用戶活躍狀態API路由
 app.include_router(

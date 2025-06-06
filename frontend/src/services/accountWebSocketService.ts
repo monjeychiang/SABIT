@@ -574,7 +574,7 @@ class AccountWebSocketService {
     // 確保使用正確的消息格式
     const message = {
       type: 'place_order',
-      params: orderParams // 將 order_params 修改為 params 作為鍵名
+      data: orderParams // 將 params 修改為 data 作為鍵名，以符合後端期望
     };
     
     return await this.sendMessage(message);
@@ -622,7 +622,7 @@ class AccountWebSocketService {
       // 發送取消訂單請求
       const success = this.send({
         type: 'cancel_order',
-        params: cancelParams,  // 將 cancel_params 改為 params 作為鍵名
+        data: cancelParams,  // 將 params 改為 data 作為鍵名，以符合後端期望
         request_id: requestId
       });
       

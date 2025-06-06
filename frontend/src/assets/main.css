@@ -2,67 +2,67 @@
 
 /* Default theme variables */
 :root {
-  /* 主要颜色 - 使用 Gmail 風格的紅色 */
-  --primary-color: #d93025;
-  --primary-dark: #c5221f;
-  --primary-light: #ea4335;
-  --primary-hover: #f8f9fa;
-  --primary-gradient: linear-gradient(135deg, #d93025 0%, #ea4335 100%);
+  /* 主要顏色 - 使用深藍色系 */
+  --primary-color: #3366cc;
+  --primary-dark: #254e94;
+  --primary-light: #5987e5;
+  --primary-hover: #f5f8ff;
+  --primary-gradient: linear-gradient(135deg, #3366cc 0%, #5987e5 100%);
   
-  /* 辅助颜色 - Gmail 風格 */
-  --secondary-color: #1a73e8;
-  --accent-color: #fbbc04;
-  --danger-color: #d93025;
-  --warning-color: #fbbc04;
-  --info-color: #1a73e8;
-  --success-color: #0f9d58;
+  /* 輔助顏色 - 現代專業風格 */
+  --secondary-color: #2c7873;
+  --accent-color: #ffb347;
+  --danger-color: #e74c3c;
+  --warning-color: #f39c12;
+  --info-color: #3498db;
+  --success-color: #27ae60;
   
-  /* 文本颜色 - Gmail 風格 */
-  --text-primary: #202124;
-  --text-secondary: #5f6368;
-  --text-tertiary: #80868b;
+  /* 文本顏色 - 專業清晰 */
+  --text-primary: #333333;
+  --text-secondary: #555555;
+  --text-tertiary: #777777;
   --text-light: #ffffff;
   
-  /* 背景颜色 - Gmail 風格 */
-  --background-color: #f8f9fa;
+  /* 背景顏色 - 簡潔明亮 */
+  --background-color: #f9fafb;
   --surface-color: #ffffff;
   --card-background: #ffffff;
-  --hover-color: #f1f3f4;
-  --disabled-color: #dadce0;
-  --notification-unread: #f1f3f4;
+  --hover-color: #f0f4f8;
+  --disabled-color: #e0e0e0;
+  --notification-unread: #f0f4f8;
   
-  /* 边框颜色 - Gmail 風格 */
-  --border-color: #dadce0;
-  --border-light: #f1f3f4;
+  /* 邊框顏色 */
+  --border-color: #e0e0e0;
+  --border-light: #f0f4f8;
   
-  /* 边框圆角 - 更大的圆角半径 */
+  /* 邊框圓角 */
   --border-radius-sm: 8px;
   --border-radius-md: 16px;
   --border-radius-lg: 24px;
   
-  /* 阴影 - 更柔和的阴影 */
-  --box-shadow-sm: 0 1px 3px rgba(60, 64, 67, 0.08);
-  --box-shadow-md: 0 4px 8px rgba(60, 64, 67, 0.12);
-  --box-shadow-lg: 0 8px 16px rgba(60, 64, 67, 0.16);
+  /* 陰影 - 柔和陰影 */
+  --box-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --box-shadow-md: 0 4px 8px rgba(0, 0, 0, 0.12);
+  --box-shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.16);
   
-  /* 计算RGB值 */
-  --primary-color-rgb: 217, 48, 37;
+  /* 計算RGB值 */
+  --primary-color-rgb: 51, 102, 204;
   --surface-color-rgb: 255, 255, 255;
   
-  /* 边距 - 更合理的间距系统 */
+  /* 邊距 - 合理的間距系統 */
   --spacing-xs: 4px;
   --spacing-sm: 8px; 
   --spacing-md: 16px;
   --spacing-lg: 24px;
   --spacing-xl: 32px;
   
-  /* 组件尺寸 - 优化布局尺寸 */
+  /* 組件尺寸 - 優化佈局尺寸 */
   --sidebar-width: 280px;
   --sidebar-collapsed-width: 64px;
   --navbar-height: 64px;
   --content-padding: 24px;
   
-  /* 字体 - 使用系统字体栈 */
+  /* 字體 - 使用系統字體堆疊 */
   --font-family: 'Noto Sans TC', '思源黑體', '微軟正黑體', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.875rem;
@@ -71,40 +71,40 @@
   --font-size-xl: 1.25rem;
   --font-size-xxl: 1.5rem;
   
-  /* 动画时间 */
+  /* 動畫時間 */
   --transition-fast: 150ms;
   --transition-normal: 250ms;
   --transition-slow: 350ms;
 }
 
-/* 深色模式变量 - Gmail 風格深色主题 */
+/* 深色模式變數 - 專業深色主題 */
 body.dark-theme {
-  --primary-color: #ea4335;
-  --primary-dark: #d93025;
-  --primary-light: #f25c54;
-  --primary-hover: #202124;
-  --primary-gradient: linear-gradient(135deg, #ea4335 0%, #f25c54 100%);
+  --primary-color: #5987e5;
+  --primary-dark: #3366cc;
+  --primary-light: #7aa5ff;
+  --primary-hover: #1a2233;
+  --primary-gradient: linear-gradient(135deg, #5987e5 0%, #7aa5ff 100%);
   
   --text-primary: #e8eaed;
-  --text-secondary: #9aa0a6;
-  --text-tertiary: #80868b;
+  --text-secondary: #adbac7;
+  --text-tertiary: #768390;
   
-  --background-color: #202124;
-  --surface-color: #202124;
-  --card-background: #2d2e30;
-  --hover-color: #28292c;
-  --disabled-color: #5f6368;
-  --notification-unread: #28292c;
+  --background-color: #121212;
+  --surface-color: #1e1e1e;
+  --card-background: #282828;
+  --hover-color: #2c2c2c;
+  --disabled-color: #404040;
+  --notification-unread: #2c323c;
   
-  --border-color: #5f6368;
-  --border-light: #3c4043;
+  --border-color: #404040;
+  --border-light: #333333;
   
-  /* 阴影 - 更深色的阴影 */
+  /* 陰影 - 更深色的陰影 */
   --box-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
   --box-shadow-md: 0 4px 8px rgba(0, 0, 0, 0.4);
   --box-shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.5);
   
-  --surface-color-rgb: 32, 33, 36;
+  --surface-color-rgb: 30, 30, 30;
 }
 
 /* Global styles */

@@ -6,6 +6,7 @@ import Sidebar from '@/components/Sidebar.vue'
 import NavBar from '@/components/NavBar.vue'
 import Breadcrumb from '@/components/Breadcrumb.vue'
 import FloatingChatButton from './components/FloatingChatButton.vue'
+import VersionHistoryDialog from './components/VersionHistoryDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 import { useChatroomStore } from '@/stores/chatroom'
@@ -54,6 +55,9 @@ const latencyStatus = ref<'excellent' | 'good' | 'fair' | 'poor' | 'failed'>('fa
 
 // 新增：WebSocket详情弹窗控制
 const showWsDetails = ref(false);
+
+// 新增：版本歷史對話框控制
+const showVersionHistory = ref(false);
 
 // 添加网络测试状态
 const networkTestInProgress = ref(false);
@@ -515,6 +519,11 @@ watch(showWsDetails, (newValue) => {
   }
 });
 
+// 新增：從環境變數獲取應用版本
+const appVersion = import.meta.env.VITE_APP_VERSION || '開發版'
+const appName = import.meta.env.VITE_APP_NAME || 'SABIT'
+const appDescription = import.meta.env.VITE_APP_DESCRIPTION || '智能管理系統'
+
 // 初始化
 onMounted(async () => {
   // 监听加载动画开始和结束事件
@@ -693,6 +702,13 @@ onUnmounted(() => {
   window.removeEventListener('auth-loading-start', () => {});
   window.removeEventListener('auth-loading-end', () => {});
 });
+
+// 添加打開版本歷史對話框的方法
+const openVersionHistory = () => {
+  console.log('打開版本歷史對話框');
+  showVersionHistory.value = true;
+  console.log('showVersionHistory 值:', showVersionHistory.value);
+};
 </script>
 
 <template>
@@ -850,11 +866,13 @@ onUnmounted(() => {
             
             <div class="status-bar-section">
               <span class="status-value">{{ formatServerTime(serverTime) }}</span>
+              <span class="version-badge clickable" @click="openVersionHistory">v{{ appVersion }}</span>
             </div>
           </div>
         </div>
       </div>
     </template>
+    
     
     <!-- 認證佈局：沒有導航欄和側邊欄，全屏顯示 -->
     <template v-else-if="currentLayout === 'auth'">
@@ -978,6 +996,7 @@ onUnmounted(() => {
           
           <div class="status-bar-section">
             <span class="status-value">{{ formatServerTime(serverTime) }}</span>
+            <span class="version-badge clickable" @click="openVersionHistory">v{{ appVersion }}</span>
           </div>
         </div>
       </div>
@@ -988,6 +1007,14 @@ onUnmounted(() => {
   
   <!-- 在最外层添加浮动聊天按钮，确保它不受布局影响 -->
   <FloatingChatButton />
+
+  <!-- 添加版本歷史對話框 -->
+  <VersionHistoryDialog 
+    :visible="showVersionHistory"
+    @update:visible="showVersionHistory = $event"
+    :current-version="appVersion.replace('-dev', '')"
+    @close="showVersionHistory = false"
+  />
 </template>
 
 <style>
@@ -1026,10 +1053,22 @@ html, body {
 
 .main-content {
   flex: 1;
-  padding: var(--content-padding);
-  padding-top: calc(var(--navbar-height) + var(--content-padding));
-  transition: padding-left 0.3s ease, background-color 0.3s ease, color 0.3s ease;
-  width: 100%;
+  margin: var(--spacing-md); /* 恢復頂部邊距 */
+  margin-bottom: calc(var(--spacing-md) + var(--status-bar-height, 24px) + 8px); /* 增加底部間距，確保不被狀態欄遮擋 */
+  border-radius: var(--border-radius-lg);
+  max-height: calc(100vh - var(--navbar-height) - var(--spacing-sm) - var(--spacing-md) * 2 - var(--status-bar-height, 24px)); /* 更新高度計算，考慮頂部間距 */
+  background-color: var(--card-background);
+  position: relative;
+  box-shadow: var(--box-shadow-sm);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* 防止整個卡片滾動 */
+  height: auto; /* 讓卡片高度根據內容自適應，而不是固定高度 */
+  min-height: 300px; /* 設置最小高度，確保卡片不會太小 */
+  max-width: calc(100% - var(--spacing-md) * 2); /* 確保卡片寬度不超過可用空間 */
+  margin-left: auto;
+  margin-right: auto;
+  padding-top: var(--spacing-xs); /* 為卡片頂部添加間距 */
 }
 
 /* 確保整個應用有統一的過渡效果 */
@@ -1052,7 +1091,6 @@ html, body {
   margin: var(--spacing-md); /* 恢復頂部邊距 */
   margin-bottom: calc(var(--spacing-md) + var(--status-bar-height, 24px) + 8px); /* 增加底部間距，確保不被狀態欄遮擋 */
   border-radius: var(--border-radius-lg);
-  transition: all var(--transition-normal) ease;
   max-height: calc(100vh - var(--navbar-height) - var(--spacing-sm) - var(--spacing-md) * 2 - var(--status-bar-height, 24px)); /* 更新高度計算，考慮頂部間距 */
   background-color: var(--card-background);
   position: relative;
@@ -1138,7 +1176,6 @@ html, body {
   width: var(--sidebar-width);
   height: calc(100vh - var(--navbar-height) - var(--status-bar-height, 24px));
   z-index: 100;
-  transition: width var(--transition-normal) ease, transform var(--transition-normal) ease;
   overflow: hidden;
 }
 
@@ -1151,10 +1188,12 @@ html, body {
 @media (max-width: 768px) {
   .sidebar {
     transform: translateX(-100%);
+    /* 移除過渡效果 */
   }
   
   .sidebar.visible {
     transform: translateX(0);
+    /* 移除過渡效果 */
   }
 }
 
@@ -1379,13 +1418,13 @@ html, body {
   transform: translateX(-20px);
 }
 
-/* 侧边栏过渡动画 */
+/* 侧边栏无过渡动画 */
 .main-container {
-  transition: padding-left 0.3s ease;
+  /* 移除過渡效果 */
 }
 
 .sidebar {
-  transition: width 0.3s ease, transform 0.3s ease;
+  /* 移除過渡效果 */
 }
 
 /* 响应式布局调整 */
@@ -1794,5 +1833,100 @@ body,
   padding: 4px 10px;
   font-size: 12px;
   cursor: pointer;
+}
+
+/* 添加版本號徽章樣式 */
+.version-badge {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background-color: var(--surface-color);
+  padding: 2px 6px;
+  border-radius: 10px;
+  margin-left: 8px;
+  border: 1px solid var(--border-color-light);
+  transition: all 0.2s ease;
+}
+
+.version-badge.clickable {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.version-badge.clickable:hover {
+  background-color: var(--surface-hover);
+  color: var(--primary-color);
+  border-color: var(--primary-color);
+}
+
+.dark-theme .version-badge {
+  background-color: var(--surface-color-dark);
+  border-color: var(--border-color-dark);
+}
+
+/* 應用資訊區域樣式 - 已從詳情彈窗中移除，但樣式保留以供未來使用 */
+.app-info-section {
+  margin-bottom: 15px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+  text-align: center;
+}
+
+.app-info-header {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--primary-color);
+  margin-bottom: 4px;
+}
+
+.app-info-description {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.app-info-version {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background-color: var(--surface-color);
+  padding: 2px 8px;
+  border-radius: 12px;
+  display: inline-block;
+  border: 1px solid var(--border-color-light);
+  transition: all 0.2s ease;
+}
+
+.app-info-version.clickable {
+  cursor: pointer;
+}
+
+.app-info-version.clickable:hover {
+  background-color: var(--surface-hover);
+  color: var(--primary-color);
+  border-color: var(--primary-color);
+}
+
+.dark-theme .app-info-version {
+  background-color: var(--surface-color-dark);
+  border-color: var(--border-color-dark);
+}
+
+/* 測試按鈕樣式 */
+.test-version-button {
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: var(--border-radius-sm);
+  padding: 4px 10px;
+  font-size: 12px;
+  margin-left: 8px;
+  cursor: pointer;
+  /* 這個樣式暫時保留，可能在將來的功能中重用 */
+}
+
+.test-version-button:hover {
+  background-color: var(--primary-dark);
+  /* 懸停效果 */
 }
 </style>

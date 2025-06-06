@@ -14,7 +14,7 @@ from ...db.models import User, Notification, NotificationType
 from ...schemas.notification import NotificationCreate, NotificationResponse, NotificationUpdate, PaginatedNotifications
 from ...core.security import get_current_user, verify_token
 from ...api.endpoints.admin import get_current_admin_user
-from ...core.main_ws_manager import main_ws_manager
+from ...core.main_ws_manager import websocket_manager
 
 # 設置日誌記錄
 logger = logging.getLogger(__name__)
@@ -245,14 +245,14 @@ async def broadcast_notification(notification: Notification, db: Session) -> Non
         # 根據通知類型選擇廣播方式
         if notification.is_global:
             logger.info(f"開始廣播全局通知: ID={notification.id}, 標題={notification.title}")
-            # 使用主WebSocket管理器廣播全局通知
-            await main_ws_manager.broadcast(message)
-            logger.info(f"通過主WebSocket管理器成功廣播全局通知，ID: {notification.id}")
+            # 使用WebSocket管理器廣播全局通知
+            await websocket_manager.broadcast(message)
+            logger.info(f"通過WebSocket管理器成功廣播全局通知，ID: {notification.id}")
         elif notification.user_id:
             logger.info(f"開始廣播用戶特定通知: ID={notification.id}, 用戶ID={notification.user_id}")
-            # 使用主WebSocket管理器發送給特定用戶
-            await main_ws_manager.send_to_user(notification.user_id, message)
-            logger.info(f"通過主WebSocket管理器成功發送通知給用戶 {notification.user_id}，通知ID: {notification.id}")
+            # 使用WebSocket管理器發送給特定用戶
+            await websocket_manager.send_to_user(notification.user_id, message)
+            logger.info(f"通過WebSocket管理器成功發送通知給用戶 {notification.user_id}，通知ID: {notification.id}")
     except Exception as e:
         logger.error(f"廣播通知時出錯: {str(e)}")
 

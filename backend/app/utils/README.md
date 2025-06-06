@@ -56,7 +56,7 @@ relative_time = get_time_ago(timestamp)  # 返回如 "5 分鐘前"
 ### 使用示例
 
 ```python
-from app.utils.exchange import get_exchange_client
+from backend.utils.exchange import get_exchange_client
 from app.schemas.trading import ExchangeEnum
 
 # 創建幣安交易所客戶端
@@ -94,7 +94,7 @@ markets = await binance_client.fetch_markets()
 ### 使用示例
 
 ```python
-from app.utils.connection_pool import ExchangeConnectionPool
+from backend.utils.connection_pool import ExchangeConnectionPool
 from app.schemas.trading import ExchangeEnum
 
 # 創建連接池

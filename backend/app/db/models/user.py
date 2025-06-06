@@ -65,6 +65,10 @@ class User(Base):
     # 一对一关系，每个用户只有一条消息使用统计记录
     chat_message_usage = relationship("ChatMessageUsage", back_populates="user", uselist=False)
     
+    # 關聯關係：網格交易策略
+    # 一對多關係，一個用戶可以設置多個網格交易策略
+    grid_strategies = relationship("GridStrategy", back_populates="user", cascade="all, delete-orphan")
+    
     def __repr__(self):
         """
         模型的字符串表示方法

@@ -2,7 +2,8 @@ from .base import get_china_time, NotificationType, UserTag
 from .user import User, RefreshToken
 from .notification import Notification
 from .exchange_api import ExchangeAPI
-from .chat import ChatSession, ChatMessage
+from .chat import ChatSession, ChatMessage, ChatMessageUsage
+from .grid import GridStrategy, GridOrder, SymbolRules
 
 # 確保所有模型都被導入，以便 SQLAlchemy 能夠正確創建資料表
 # 此列表定義了哪些類和函數可以從 app.db.models 模組直接導入
@@ -16,5 +17,9 @@ __all__ = [
     "Notification",         # 通知模型，用於存儲系統通知和用戶消息
     "ExchangeAPI",          # 交易所API密鑰模型，管理用戶的交易所連接憑證
     "ChatSession",          # 聊天會話模型，存儲用戶與Gemini的對話會話
-    "ChatMessage"           # 聊天消息模型，存儲會話中的單條消息
+    "ChatMessage",          # 聊天消息模型，存儲會話中的單條消息
+    "ChatMessageUsage",     # 聊天消息使用統計模型
+    "GridStrategy",         # 網格交易策略模型
+    "GridOrder",            # 網格訂單模型
+    "SymbolRules"           # 交易對規則模型
 ] 

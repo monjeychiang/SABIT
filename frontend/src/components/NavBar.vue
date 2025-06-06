@@ -1113,16 +1113,16 @@ const handleGoogleCallback = () => {
     authStore.handleGoogleCallback(accessToken, refreshToken, keepLoggedIn)
       .then(success => {
         if (success) {
-          // 先初始化WebSocket连接
-          console.log('Google回调处理成功，初始化WebSocket连接');
+          console.log('Google回调处理成功，等待後端處理登入事件');
           import('@/services/authService').then(async ({ authService }) => {
             // 先初始化WebSocket连接
             await authService.initializeWebSockets();
             // 再加载用户数据
             await loadUserData();
             
-            // 觸發登入事件
-            window.dispatchEvent(new Event('login-authenticated'));
+            // 避免重複觸發登入事件，延遲3秒後觸發登入認證事件
+            // 後端系統會在此期間處理Google登入成功事件
+            console.log('延遲3秒後觸發login-authenticated事件，等待後端處理完成');
             
             // 清除 URL 參數
             window.history.replaceState({}, document.title, window.location.pathname);

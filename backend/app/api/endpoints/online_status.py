@@ -1,7 +1,7 @@
 """
 在线状态管理API端点
 
-提供在线状态查询API
+提供在線狀態查詢API
 """
 
 import logging
@@ -15,78 +15,13 @@ from ...db.models.user import User
 from ...db.models.chatroom import ChatRoom, ChatRoomMember, ChatRoomMessage
 from ...core.security import get_current_user
 from ...core.online_status_manager import online_status_manager
-from ...core.main_ws_manager import main_ws_manager
+from ...core.main_ws_manager import websocket_manager
 
 # 配置日志
 logger = logging.getLogger(__name__)
 
 # 创建路由器
 router = APIRouter()
-
-# 获取聊天室在線用戶
-@router.get("/rooms/{room_id}/online", response_model=Dict[str, Any])
-async def get_room_online_users(
-    room_id: int = Path(..., ge=1),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """获取特定聊天室的在線用戶列表"""
-    # 验证聊天室存在
-    room = db.query(ChatRoom).filter(ChatRoom.id == room_id).first()
-    if not room:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="聊天室不存在"
-        )
-    
-    # 验证权限 (公开聊天室或用户是成员)
-    is_member = False
-    member = (
-        db.query(ChatRoomMember)
-        .filter(
-            ChatRoomMember.room_id == room_id,
-            ChatRoomMember.user_id == current_user.id
-        )
-        .first()
-    )
-    
-    if member:
-        is_member = True
-    
-    if not room.is_public and not is_member and not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="您没有权限查看此聊天室"
-        )
-    
-    # 获取在線用戶ID列表
-    online_user_ids = online_status_manager.get_room_online_users(room_id)
-    
-    # 获取用户详细信息
-    online_users = []
-    if online_user_ids:
-        users = (
-            db.query(User)
-            .filter(User.id.in_(online_user_ids))
-            .all()
-        )
-        
-        online_users = [
-            {
-                "id": user.id,
-                "username": user.username,
-                "avatar_url": user.avatar_url,
-                "last_active": online_status_manager.user_status.get(user.id, {}).get("last_active", None)
-            }
-            for user in users
-        ]
-    
-    # 构建响应
-    return {
-        "room_id": room_id,
-        "online_count": len(online_users),
-        "online_users": online_users
-    }
 
 # 获取用户在线状态
 @router.get("/users/online", response_model=Dict[str, Any])
@@ -97,7 +32,7 @@ async def get_online_users(
 ):
     """获取指定用户列表的在线状态"""
     
-    # 如果未提供用户ID列表，则查询当前用户所在聊天室的所有用户
+    # 如果未提供用户ID列表，則查詢當前用户所在聊天室的所有用户
     if not user_ids:
         # 获取当前用户所在的聊天室
         user_rooms = (
@@ -143,8 +78,10 @@ async def get_online_stats(
             detail="只有管理员可以访问此接口"
         )
     
-    # 获取统计信息
+    # 获取統計信息
     stats = online_status_manager.get_stats()
+    # 添加WebSocket管理器的統計信息
+    stats.update(websocket_manager.get_stats())
     
     return stats 
 
