@@ -132,7 +132,15 @@ class BinanceWebSocketClient:
         """
         # 將參數轉換為查詢字符串格式
         query_string = '&'.join([f"{key}={params[key]}" for key in params])
-        logger.debug(f"待簽名參數: {query_string}")
+        
+        # 創建安全的日誌字符串，隱藏敏感信息
+        safe_log_string = query_string
+        if 'apiKey' in params:
+            # 替換 apiKey 參數，只保留前8個字符
+            api_key_val = params['apiKey']
+            safe_log_string = safe_log_string.replace(api_key_val, f"{api_key_val[:8]}......")
+        
+        logger.debug(f"待簽名參數: {safe_log_string}")
         
         try:
             # 檢查 API Secret 是否為 PEM 格式 (帶頭尾標記)

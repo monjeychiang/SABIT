@@ -10,6 +10,7 @@ import time
 import asyncio
 from typing import Dict, Any, Optional, Tuple
 from sqlalchemy.orm import Session
+import string
 
 # 設置日誌
 logger = logging.getLogger(__name__)
@@ -20,6 +21,10 @@ from backend.utils.binance_ws_client import BinanceWebSocketClient
 # 修改導入路徑以適應新位置
 from backend.app.db.models import ExchangeAPI, User
 from backend.app.core.security import decrypt_api_key
+# 導入 ApiKeyManager
+from backend.app.core.api_key_manager import ApiKeyManager
+# 導入 SecureKeyCache
+from backend.app.core.secure_key_cache import SecureKeyCache
 
 class ExchangeConnectionManager:
     """
@@ -34,6 +39,10 @@ class ExchangeConnectionManager:
         self._initialized = False
         # 自己管理連接緩存，不依賴account.py
         self.ws_clients = {}
+        # 創建 ApiKeyManager 實例
+        self.api_key_manager = ApiKeyManager()
+        # 獲取安全密鑰緩存實例
+        self.key_cache = SecureKeyCache()
         
     async def initialize(self):
         """
@@ -81,7 +90,6 @@ class ExchangeConnectionManager:
         
         # 構造緩存鍵
         cache_key = user_id
-        logger.debug(f"[連接管理器] 獲取連接 - 用戶:{user_id}, 交易所:{exchange}, 強制新建:{force_new}")
         
         # 如果不強制創建新連接，檢查緩存中是否有可用連接
         if not force_new and cache_key in self.ws_clients:
@@ -90,10 +98,9 @@ class ExchangeConnectionManager:
             # 檢查連接是否有效
             if client.is_connected():
                 client.last_activity_time = time.time()  # 更新最後活動時間
-                logger.debug(f"[連接管理器] 使用現有連接 - 用戶:{user_id}")
                 return client, False
             else:
-                logger.warning(f"[連接管理器] 緩存中的連接已斷開 - 用戶:{user_id}")
+                logger.info(f"緩存連接已斷開，為用戶 {user_id} 重新創建")
                 # 從緩存中移除
                 try:
                     await client.disconnect()
@@ -103,41 +110,96 @@ class ExchangeConnectionManager:
         
         # 如果沒有可用連接且未提供數據庫會話，無法繼續
         if db_session is None:
-            raise ValueError(f"未找到現有連接且未提供數據庫會話，無法獲取API密鑰 - 用戶:{user_id}")
+            raise ValueError(f"未找到現有連接且未提供數據庫會話")
             
-        # 從數據庫查詢API密鑰
-        api_key_record = db_session.query(ExchangeAPI).filter(
-            ExchangeAPI.user_id == user_id,
-            ExchangeAPI.exchange == exchange
-        ).first()
+        # 首先嘗試從安全密鑰緩存獲取
+        api_key = None
+        api_secret = None
+        
+        # 嘗試從密鑰緩存獲取
+        cached_keys = self.key_cache.get_keys(user_id, exchange)
+        if cached_keys:
+            logger.info(f"從安全緩存獲取用戶 {user_id} 的 {exchange} HMAC-SHA256 密鑰")
+            api_key, api_secret = cached_keys
+        else:
+            # 嘗試從緩存獲取 Ed25519 密鑰
+            cached_ed25519_keys = self.key_cache.get_ed25519_keys(user_id, exchange)
+            if cached_ed25519_keys:
+                logger.info(f"從安全緩存獲取用戶 {user_id} 的 {exchange} Ed25519 密鑰")
+                api_key, _, api_secret = cached_ed25519_keys  # api_key, ed25519_key, ed25519_secret
+        
+        # 如果從緩存獲取成功，直接創建連接
+        if api_key and api_secret:
+            logger.info(f"使用緩存密鑰為用戶 {user_id} 創建新的交易所連接")
+            try:
+                return await self.get_or_create_connection(
+                    api_key, api_secret, exchange, testnet=False, user_id=cache_key
+                )
+            except Exception as e:
+                logger.error(f"使用緩存密鑰創建連接失敗: {str(e)}")
+                # 緩存密鑰可能已過期，繼續使用原來的方法
+        
+        # 使用 ApiKeyManager 獲取 API 密鑰
+        api_key_record = await self.api_key_manager.get_api_key(db_session, user_id, exchange)
         
         if not api_key_record:
-            raise ValueError(f"未找到對應交易所的API密鑰 - 用戶:{user_id}, 交易所:{exchange}")
+            raise ValueError(f"未找到對應交易所的API密鑰")
             
-        # 解密API密鑰
-        logger.debug(f"[連接管理器] 從數據庫獲取並解密API密鑰 - 用戶:{user_id}")
-        
-        # 優先使用Ed25519密鑰
-        api_key = decrypt_api_key(api_key_record.ed25519_key)
-        api_secret = decrypt_api_key(api_key_record.ed25519_secret)
-        
-        # 如果Ed25519密鑰解密失敗，嘗試使用HMAC-SHA256密鑰
-        if not api_key or not api_secret:
-            logger.warning(f"[連接管理器] Ed25519密鑰解密失敗，嘗試使用HMAC-SHA256密鑰 - 用戶:{user_id}")
-            api_key = decrypt_api_key(api_key_record.api_key)
-            api_secret = decrypt_api_key(api_key_record.api_secret)
-            
-            if not api_key or not api_secret:
-                raise ValueError(f"API密鑰解密失敗（Ed25519和HMAC均失敗）- 用戶:{user_id}")
+        # 解密API密鑰 - 使用 ApiKeyManager
+        try:
+            # 檢查是否有虛擬密鑰ID
+            if api_key_record.virtual_key_id:
+                # 獲取真實API密鑰
+                real_keys, _ = await self.api_key_manager.get_real_api_key(
+                    db=db_session,
+                    user_id=user_id,
+                    virtual_key_id=api_key_record.virtual_key_id,
+                    operation="read"  # 讀取操作
+                )
                 
-        # 使用新的get_or_create_connection方法創建或獲取客戶端
-        logger.info(f"[連接管理器] 創建新連接 - 用戶:{user_id}, 交易所:{exchange}")
+                # 檢查解密結果
+                if not real_keys.get("api_key") or not real_keys.get("api_secret"):
+                    raise ValueError("API密鑰解密失敗")
+                    
+                api_key = real_keys.get("api_key")
+                api_secret = real_keys.get("api_secret")
+            else:
+                # 直接解密（舊方法）
+                logger.info(f"使用直接解密方式獲取API密鑰")
+                from ..app.core.security import decrypt_api_key
+                
+                # 優先使用 Ed25519 密鑰
+                api_key = decrypt_api_key(api_key_record.ed25519_key, key_type="API Key (Ed25519)")
+                api_secret = decrypt_api_key(api_key_record.ed25519_secret, key_type="API Secret (Ed25519)")
+                
+                # 如果 Ed25519 密鑰解密成功，存入緩存
+                if api_key and api_secret:
+                    self.key_cache.set_ed25519_keys(user_id, exchange, api_key, api_key, api_secret)
+                    logger.debug(f"已將 Ed25519 密鑰存入緩存")
+                else:
+                    # 如果 Ed25519 密鑰解密失敗，嘗試使用 HMAC-SHA256 密鑰
+                    api_key = decrypt_api_key(api_key_record.api_key, key_type="API Key (HMAC-SHA256)")
+                    api_secret = decrypt_api_key(api_key_record.api_secret, key_type="API Secret (HMAC-SHA256)")
+                    
+                    # 如果 HMAC-SHA256 密鑰解密成功，存入緩存
+                    if api_key and api_secret:
+                        self.key_cache.set_keys(user_id, exchange, api_key, api_secret)
+                        logger.debug(f"已將 HMAC-SHA256 密鑰存入緩存")
+                
+                if not api_key or not api_secret:
+                    raise ValueError("API密鑰解密失敗（所有方法均嘗試失敗）")
+        except Exception as e:
+            logger.error(f"API密鑰解密失敗: {str(e)}")
+            raise ValueError(f"API密鑰解密失敗")
+        
+        # 創建連接
+        logger.info(f"為用戶 {user_id} 創建新的交易所連接")
         try:
             return await self.get_or_create_connection(
                 api_key, api_secret, exchange, testnet=False, user_id=cache_key
             )
         except Exception as e:
-            logger.error(f"[連接管理器] 創建連接出錯 - 用戶:{user_id}, 錯誤:{str(e)}")
+            logger.error(f"創建連接失敗: {str(e)}")
             raise ValueError(f"無法創建交易所連接: {str(e)}")
     
     async def check_connection(self, user_id: int, exchange: str = "binance") -> bool:

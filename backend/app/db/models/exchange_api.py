@@ -1,8 +1,9 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum, Boolean, JSON
 from sqlalchemy.orm import relationship
 from ...db.database import Base
 from .base import get_china_time
 from ...schemas.trading import ExchangeEnum
+import uuid
 
 class ExchangeAPI(Base):
     """
@@ -36,9 +37,19 @@ class ExchangeAPI(Base):
     created_at = Column(DateTime, default=get_china_time)  # 記錄創建時間
     updated_at = Column(DateTime, onupdate=get_china_time)  # 記錄更新時間，自動在更新時更新
     
+    # 中間層相關字段 - 最小改動添加
+    virtual_key_id = Column(String(64), unique=True, index=True, nullable=True)  # 虛擬密鑰標識符
+    permissions = Column(JSON, nullable=True)  # 權限設置，如 {"read": true, "trade": false}
+    rate_limit = Column(Integer, nullable=True)  # 速率限制（每分鐘請求數）
+    last_used_at = Column(DateTime, nullable=True)  # 最後使用時間
+    is_active = Column(Boolean, default=True)  # 是否啟用
+    
     # 關聯關係：所屬用戶
     # 多對一關係，多個交易所API密鑰可以屬於同一個用戶
     user = relationship("User", back_populates="exchange_apis")
+    
+    # 關聯關係：使用日誌（如果需要）
+    # api_usage_logs = relationship("ApiUsageLog", back_populates="exchange_api", cascade="all, delete-orphan")
     
     # Pydantic ORM 模式配置
     # 實現 ORM 模型與 API 模型的自動轉換
@@ -56,4 +67,9 @@ class ExchangeAPI(Base):
             key_types.append("HMAC")
         if self.ed25519_key:
             key_types.append("ED25519")
-        return f"<ExchangeAPI {self.exchange} {'+'.join(key_types)} for user_id={self.user_id}>" 
+        return f"<ExchangeAPI {self.exchange} {'+'.join(key_types)} for user_id={self.user_id}>"
+    
+    @staticmethod
+    def generate_virtual_key_id():
+        """生成唯一的虛擬密鑰標識符"""
+        return str(uuid.uuid4()) 

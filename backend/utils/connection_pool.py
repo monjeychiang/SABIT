@@ -7,6 +7,9 @@ import ccxt.async_support as ccxt
 # 修改導入路徑以適應新位置
 from backend.app.schemas.trading import ExchangeEnum
 from backend.utils.exchange import get_exchange_client
+from backend.app.core.secure_key_cache import SecureKeyCache
+from backend.app.core.api_key_manager import ApiKeyManager
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
@@ -439,3 +442,210 @@ class ExchangeConnectionPool:
             "pools": list(self.pools.keys()),
             "rate_limits": {k.value: v for k, v in self.rate_limits.items()}
         } 
+
+    async def get_client_with_cache(
+        self,
+        user_id: int,
+        exchange: ExchangeEnum,
+        db: Session
+    ) -> ccxt.Exchange:
+        """
+        使用緩存系統獲取密鑰並創建客戶端
+        
+        如果緩存中存在有效的密鑰，則直接使用
+        否則從ApiKeyManager獲取並存入緩存
+        
+        Args:
+            user_id: 用戶ID
+            exchange: 交易所枚舉
+            db: 數據庫會話
+            
+        Returns:
+            ccxt.Exchange: 交易所客戶端實例
+        """
+        try:
+            # 獲取緩存實例
+            key_cache = SecureKeyCache()
+            
+            # 嘗試從緩存獲取密鑰
+            cached_keys = key_cache.get_keys(user_id, exchange.value)
+            api_key = None
+            api_secret = None
+            
+            # 檢查緩存命中情況
+            if cached_keys and cached_keys[0] and cached_keys[1]:
+                logger.debug(f"從緩存獲取密鑰成功 - 用戶:{user_id}, 交易所:{exchange.value}")
+                api_key = cached_keys[0]
+                api_secret = cached_keys[1]
+            else:
+                # 緩存未命中，嘗試使用 Ed25519 密鑰
+                cached_ed25519_keys = key_cache.get_ed25519_keys(user_id, exchange.value)
+                
+                if cached_ed25519_keys and cached_ed25519_keys[0] and cached_ed25519_keys[1]:
+                    logger.debug(f"從緩存獲取 Ed25519 密鑰成功 - 用戶:{user_id}, 交易所:{exchange.value}")
+                    api_key = cached_ed25519_keys[0]
+                    api_secret = cached_ed25519_keys[1]
+                else:
+                    # 緩存中都沒有，從 ApiKeyManager 獲取
+                    logger.debug(f"緩存未命中，從 ApiKeyManager 獲取密鑰 - 用戶:{user_id}, 交易所:{exchange.value}")
+                    api_key_manager = ApiKeyManager()
+                    
+                    # 獲取API密鑰記錄
+                    api_key_record = await api_key_manager.get_api_key(db, user_id, exchange)
+                    
+                    if not api_key_record:
+                        raise ValueError(f"未找到用戶 {user_id} 的 {exchange.value} API密鑰")
+                    
+                    # 獲取解密後的密鑰
+                    api_keys, _ = await api_key_manager.get_real_api_key(
+                        db=db,
+                        user_id=user_id,
+                        virtual_key_id=api_key_record.virtual_key_id,
+                        operation="read"
+                    )
+                    
+                    # 根據獲取結果分配密鑰
+                    if "api_key" in api_keys and "api_secret" in api_keys:
+                        api_key = api_keys["api_key"]
+                        api_secret = api_keys["api_secret"]
+                        
+                        # 將獲取的密鑰存入緩存
+                        key_cache.set_keys(user_id, exchange.value, api_key, api_secret)
+                        logger.debug(f"HMAC-SHA256 密鑰已存入緩存 - 用戶:{user_id}, 交易所:{exchange.value}")
+                    elif "ed25519_key" in api_keys and "ed25519_secret" in api_keys:
+                        api_key = api_keys["ed25519_key"]
+                        api_secret = api_keys["ed25519_secret"]
+                        
+                        # 將獲取的密鑰存入緩存
+                        key_cache.set_ed25519_keys(user_id, exchange.value, api_key, api_key, api_secret)
+                        logger.debug(f"Ed25519 密鑰已存入緩存 - 用戶:{user_id}, 交易所:{exchange.value}")
+                    else:
+                        raise ValueError(f"獲取的API密鑰格式無效 - 用戶:{user_id}, 交易所:{exchange.value}")
+            
+            # 使用獲取的密鑰創建客戶端
+            if api_key and api_secret:
+                return await self.get_client(user_id, exchange, api_key, api_secret)
+            else:
+                raise ValueError(f"無法獲取有效的API密鑰 - 用戶:{user_id}, 交易所:{exchange.value}")
+                
+        except Exception as e:
+            logger.error(f"使用緩存獲取客戶端失敗: {str(e)}")
+            raise
+
+    async def refresh_client_with_cache(
+        self,
+        user_id: int,
+        exchange: ExchangeEnum,
+        db: Session
+    ) -> ccxt.Exchange:
+        """
+        使用緩存系統刷新客戶端連接
+        
+        先從緩存或ApiKeyManager獲取密鑰，然後刷新連接
+        
+        Args:
+            user_id: 用戶ID
+            exchange: 交易所枚舉
+            db: 數據庫會話
+            
+        Returns:
+            ccxt.Exchange: 新的交易所客戶端實例
+        """
+        try:
+            # 使用與get_client_with_cache相同的方式獲取密鑰
+            key_cache = SecureKeyCache()
+            api_key = None
+            api_secret = None
+            
+            # 嘗試從緩存獲取密鑰
+            cached_keys = key_cache.get_keys(user_id, exchange.value)
+            if cached_keys and cached_keys[0] and cached_keys[1]:
+                api_key = cached_keys[0]
+                api_secret = cached_keys[1]
+            else:
+                # 嘗試獲取Ed25519密鑰
+                cached_ed25519_keys = key_cache.get_ed25519_keys(user_id, exchange.value)
+                if cached_ed25519_keys and cached_ed25519_keys[0] and cached_ed25519_keys[1]:
+                    api_key = cached_ed25519_keys[0]
+                    api_secret = cached_ed25519_keys[1]
+                else:
+                    # 從ApiKeyManager獲取
+                    api_key_manager = ApiKeyManager()
+                    api_key_record = await api_key_manager.get_api_key(db, user_id, exchange)
+                    
+                    if not api_key_record:
+                        raise ValueError(f"未找到用戶 {user_id} 的 {exchange.value} API密鑰")
+                    
+                    api_keys, _ = await api_key_manager.get_real_api_key(
+                        db=db,
+                        user_id=user_id,
+                        virtual_key_id=api_key_record.virtual_key_id,
+                        operation="read"
+                    )
+                    
+                    if "api_key" in api_keys and "api_secret" in api_keys:
+                        api_key = api_keys["api_key"]
+                        api_secret = api_keys["api_secret"]
+                        key_cache.set_keys(user_id, exchange.value, api_key, api_secret)
+                    elif "ed25519_key" in api_keys and "ed25519_secret" in api_keys:
+                        api_key = api_keys["ed25519_key"]
+                        api_secret = api_keys["ed25519_secret"]
+                        key_cache.set_ed25519_keys(user_id, exchange.value, api_key, api_key, api_secret)
+                    else:
+                        raise ValueError(f"獲取的API密鑰格式無效")
+            
+            # 使用獲取的密鑰刷新客戶端
+            if api_key and api_secret:
+                return await self.refresh_client(user_id, exchange, api_key, api_secret)
+            else:
+                raise ValueError(f"無法獲取有效的API密鑰")
+                
+        except Exception as e:
+            logger.error(f"使用緩存刷新客戶端失敗: {str(e)}")
+            raise 
+
+    async def check_client_health_with_cache(
+        self, 
+        user_id: int, 
+        exchange: ExchangeEnum,
+        db: Session
+    ) -> bool:
+        """
+        使用緩存系統檢查客戶端連接是否健康
+        
+        如果池中沒有連接，則使用緩存獲取密鑰並創建連接
+        然後檢查連接健康狀態
+        
+        Args:
+            user_id: 用戶ID
+            exchange: 交易所枚舉
+            db: 數據庫會話
+            
+        Returns:
+            bool: 連接是否健康
+        """
+        pool_key = f"{user_id}:{exchange.value}"
+        
+        # 檢查是否有緩存的健康狀態且未過期
+        current_time = time.time()
+        if pool_key in self.health_status:
+            last_check_time, is_healthy = self.health_status[pool_key]
+            if current_time - last_check_time < self.health_check_interval:
+                return is_healthy
+        
+        # 檢查是否已有連接
+        if pool_key not in self.pools:
+            try:
+                # 使用緩存獲取客戶端
+                await self.get_client_with_cache(user_id, exchange, db)
+            except Exception as e:
+                logger.warning(f"使用緩存創建連接失敗: {str(e)}")
+                self.health_status[pool_key] = (current_time, False)
+                return False
+        
+        # 執行實際的健康檢查
+        is_healthy = await self._perform_health_check(pool_key)
+        
+        # 緩存結果
+        self.health_status[pool_key] = (current_time, is_healthy)
+        return is_healthy 

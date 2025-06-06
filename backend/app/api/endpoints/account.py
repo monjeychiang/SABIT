@@ -17,12 +17,20 @@ import uuid
 from ...db.database import get_db
 from ...schemas.trading import ExchangeEnum
 from ...db.models import User, ExchangeAPI
-from ...core.security import get_current_user, get_current_active_user, decrypt_api_key
-# 導入連接管理器
-from backend.utils.exchange_connection_manager import exchange_connection_manager, initialize_connection_manager
+from ...core.security import get_current_user, get_current_active_user, decrypt_api_key, verify_token
+# 修改導入方式，導入類而不是實例
+from backend.utils.exchange_connection_manager import ExchangeConnectionManager, initialize_connection_manager
+# 導入 ApiKeyManager
+from ...core.api_key_manager import ApiKeyManager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# 創建交易所連接管理器
+exchange_connection_manager = ExchangeConnectionManager()
+
+# 創建 API 密鑰管理器
+api_key_manager = ApiKeyManager()
 
 @router.websocket("/account/futures-account/{exchange}")
 async def futures_account_websocket(
@@ -38,9 +46,13 @@ async def futures_account_websocket(
     新增功能: 支持長期連接，保持WebSocket連接活躍
     新增功能: 支持通過同一WebSocket連接發送下單請求
     """
+    # 獲取安全密鑰緩存實例
+    from backend.app.core.secure_key_cache import SecureKeyCache
+    key_cache = SecureKeyCache()
+    
     # 先接受連接，以避免HTTP 403錯誤
     await websocket.accept()
-    logger.info(f"[AccountWS] 已接受來自 {exchange} 的WebSocket連接請求")
+    logger.info(f"接受WebSocket連接 - 交易所:{exchange}")
     
     try:
         # 如果未通過查詢參數傳遞token，等待客戶端發送token
@@ -49,18 +61,14 @@ async def futures_account_websocket(
         direct_api_mode = False
         
         if not token:
-            logger.info(f"[AccountWS] 沒有通過查詢參數接收到token，等待客戶端發送")
             try:
                 # 等待客戶端發送token
                 token_from_client = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
                 token = token_from_client
-                logger.info(f"[AccountWS] 從WebSocket消息接收到token，長度: {len(token)}")
             except asyncio.TimeoutError:
                 await websocket.send_json({"success": False, "message": "未能接收到認證信息"})
-                logger.warning("[AccountWS] 等待token超時")
+                logger.warning("等待token超時")
                 return
-        else:
-            logger.info(f"[AccountWS] 通過查詢參數接收到token，長度: {len(token)}")
             
         # 手動創建數據庫會話，而不是通過依賴注入
         from ...db.database import SessionLocal
@@ -73,11 +81,11 @@ async def futures_account_websocket(
             
             if not user:
                 await websocket.send_json({"success": False, "message": "用戶驗證失敗"})
-                logger.warning("[AccountWS] 用戶驗證失敗")
+                logger.warning("用戶驗證失敗")
                 return
             
             user_id = user.id
-            logger.info(f"[AccountWS] 用戶 {user.username}(ID:{user_id}) 認證成功")
+            logger.info(f"用戶 {user.username}(ID:{user_id}) 認證成功")
             
             # 檢查是否有直接API密鑰請求
             try:
@@ -86,75 +94,55 @@ async def futures_account_websocket(
                 try:
                     direct_data = json.loads(direct_api_request)
                     if direct_data.get("direct_api") and "api_key" in direct_data and "api_secret" in direct_data:
-                        logger.info(f"[AccountWS] 收到直接API密鑰請求")
                         api_key_data = {
                             "api_key": direct_data["api_key"].strip(),
                             "api_secret": direct_data["api_secret"].strip()
                         }
                         direct_api_mode = True
                 except json.JSONDecodeError:
-                    # 不是JSON格式，可能是其他消息
-                    logger.debug(f"[AccountWS] 收到非JSON格式消息，長度: {len(direct_api_request)}")
                     pass
             except asyncio.TimeoutError:
-                # 沒有收到額外消息，繼續標準流程
-                logger.debug(f"[AccountWS] 沒有收到直接API密鑰請求，使用標準流程")
                 pass
             
             # 如果沒有直接API模式，從數據庫獲取API密鑰
             if not direct_api_mode:
-                # 獲取API密鑰
-                api_key = db.query(ExchangeAPI).filter(
-                    ExchangeAPI.user_id == user_id, 
-                    ExchangeAPI.exchange == exchange
-                ).first()
-        
-                if not api_key:
-                    await websocket.send_json({"success": False, "message": f"未找到{exchange}的API密鑰"})
-                    logger.warning(f"[AccountWS] 用戶 {user_id} 沒有 {exchange} 的API密鑰")
-                    return
+                # 從緩存中獲取密鑰
+                cached_keys = key_cache.get_keys(user_id, exchange)
                 
-                logger.info(f"[AccountWS] 從數據庫獲取到用戶 {user_id} 的 {exchange} API密鑰，開始解密")
-                
-                # 解密API密鑰
-                from ...core.security import decrypt_api_key, clean_api_key
-                
-                # 記錄加密API密鑰的長度（不記錄實際內容以保護安全）
-                encrypted_key_length = len(api_key.ed25519_key) if api_key.ed25519_key else 0
-                encrypted_secret_length = len(api_key.ed25519_secret) if api_key.ed25519_secret else 0
-                logger.debug(f"[AccountWS] 加密的Ed25519 API密鑰長度: {encrypted_key_length}, 加密的Ed25519 API密鑰密碼長度: {encrypted_secret_length}")
-                
-                # 解密Ed25519 API密鑰
-                decrypted_key = decrypt_api_key(api_key.ed25519_key)
-                decrypted_secret = decrypt_api_key(api_key.ed25519_secret)
-                
-                # 檢查解密結果
-                if not decrypted_key or not decrypted_secret:
-                    error_msg = "Ed25519 API密鑰解密失敗"
-                    logger.error(f"[AccountWS] {error_msg}")
-                    
-                    # 嘗試使用HMAC作為後備方案
-                    logger.info(f"[AccountWS] 嘗試使用HMAC-SHA256 API密鑰作為後備")
-                    decrypted_key = decrypt_api_key(api_key.api_key)
-                    decrypted_secret = decrypt_api_key(api_key.api_secret)
-                    
-                    if not decrypted_key or not decrypted_secret:
-                        error_msg = "API密鑰解密失敗（Ed25519和HMAC均失敗）"
-                        logger.error(f"[AccountWS] {error_msg}")
-                        await websocket.send_json({"success": False, "message": error_msg})
-                        return
-                    
-                    logger.info(f"[AccountWS] 成功使用HMAC-SHA256 API密鑰作為後備方案")
-                
-                # 確保API密鑰格式正確
-                api_key_data = {
-                    "api_key": decrypted_key,
-                    "api_secret": decrypted_secret
-                }
-                
-                logger.info(f"[AccountWS] 成功獲取並解密用戶 {user_id} 的 {exchange} API密鑰")
-            else:
-                logger.info(f"[AccountWS] 使用直接提供的API密鑰，繞過數據庫加密/解密")
+                if cached_keys:
+                    logger.info(f"從安全緩存獲取用戶 {user_id} 的 {exchange} HMAC-SHA256 密鑰")
+                    api_key, api_secret = cached_keys
+                    api_key_data = {
+                        "api_key": api_key,
+                        "api_secret": api_secret
+                    }
+                else:
+                    # 嘗試從緩存獲取 Ed25519 密鑰
+                    cached_ed25519_keys = key_cache.get_ed25519_keys(user_id, exchange)
+                    if cached_ed25519_keys:
+                        logger.info(f"從安全緩存獲取用戶 {user_id} 的 {exchange} Ed25519 密鑰")
+                        api_key, ed25519_key, ed25519_secret = cached_ed25519_keys
+                        api_key_data = {
+                            "api_key": api_key,
+                            "api_secret": ed25519_secret  # 使用Ed25519私鑰作為API密碼
+                        }
+                    else:
+                        # 緩存中沒有，需要從數據庫獲取
+                        api_key_record = await api_key_manager.get_api_key(db, user_id, exchange)
+                        
+                        if not api_key_record:
+                            logger.warning(f"未找到用戶 {user_id} 的 {exchange} API密鑰")
+                            await websocket.send_json({"success": False, "message": "未找到API密鑰，請先設置"})
+                            await websocket.close()
+                            return
+                        
+                        # 獲取真實API密鑰
+                        api_key_data, _ = await api_key_manager.get_real_api_key(
+                            db=db,
+                            user_id=user_id,
+                            virtual_key_id=api_key_record.virtual_key_id,
+                            operation="read"
+                        )
             
             # 清理 API 密鑰中可能存在的引號和空白字符
             if api_key_data:
@@ -166,21 +154,6 @@ async def futures_account_websocket(
                             api_key_data[key] = api_key_data[key][1:-1]
                         # 清理空白字符
                         api_key_data[key] = api_key_data[key].strip()
-                
-                # 顯示 API 密鑰長度以進行診斷
-                key_length = len(api_key_data['api_key']) if api_key_data['api_key'] else 0
-                secret_length = len(api_key_data['api_secret']) if api_key_data['api_secret'] else 0
-                logger.debug(f"[AccountWS] 最終使用的API密鑰長度: {key_length}, API密鑰密碼長度: {secret_length}")
-                
-                # 檢查API密鑰格式，提供更多診斷信息
-                if key_length < 10 or secret_length < 10:
-                    logger.warning(f"[AccountWS] API密鑰長度異常，可能解密有問題: key={key_length}, secret={secret_length}")
-                
-                # 檢查是否包含控制字符或不可打印字符
-                if api_key_data['api_key'] and any(c not in string.printable for c in api_key_data['api_key']):
-                    logger.warning("[AccountWS] API密鑰包含不可打印字符，可能解密有問題")
-                if api_key_data['api_secret'] and any(c not in string.printable for c in api_key_data['api_secret']):
-                    logger.warning("[AccountWS] API密鑰密碼包含不可打印字符，可能解密有問題")
             
             # 發送連接成功消息
             await websocket.send_json({
@@ -201,7 +174,7 @@ async def futures_account_websocket(
                 if not direct_api_mode:
                     # 使用用戶ID從連接管理器獲取連接
                     binance_client, is_new = await exchange_connection_manager.get_connection(user_id, exchange, db)
-                    logger.info(f"[AccountWS] 從連接管理器獲取連接 - 用戶ID:{user_id}, 是新連接:{is_new}")
+                    logger.info(f"獲取連接 - 用戶:{user_id}, 新連接:{is_new}")
                 else:
                     # 直接API模式下，創建新連接
                     binance_client, is_new = await exchange_connection_manager.get_or_create_connection(
@@ -210,11 +183,10 @@ async def futures_account_websocket(
                         exchange, 
                         user_id=user_id
                     )
-                    logger.info(f"[AccountWS] 直接API模式：從連接管理器創建連接 - 用戶ID:{user_id}, 是新連接:{is_new}")
+                    logger.info(f"直接API模式創建連接 - 用戶:{user_id}")
                 
                 # 確認連接有效
                 if not binance_client.is_connected():
-                    logger.warning(f"[AccountWS] 連接管理器提供的連接已斷開，嘗試重新連接")
                     await websocket.send_json({
                         "success": False, 
                         "message": "連接已斷開，請刷新頁面重新連接"
@@ -265,7 +237,7 @@ async def futures_account_websocket(
                 })
                 
                 last_account_data = account_data
-                logger.info(f"[AccountWS] 發送初始帳戶數據成功 - 用戶:{user_id}")
+                logger.info(f"發送初始帳戶數據 - 用戶:{user_id}")
                 
                 # 使用心跳機制保持連接
                 last_heartbeat_time = time.time()
@@ -295,7 +267,7 @@ async def futures_account_websocket(
                             # 處理不同類型的消息
                             if message_type == "refresh":
                                 # 刷新請求：重新獲取帳戶數據
-                                logger.info(f"[AccountWS] 收到刷新請求 - 用戶:{user_id}")
+                                logger.info(f"收到刷新請求 - 用戶:{user_id}")
                                 
                                 # 使用現有客戶端獲取最新數據
                                 account_info = await binance_client.get_account_info()
@@ -329,11 +301,10 @@ async def futures_account_websocket(
                                 
                                 last_account_data = account_data
                                 last_data_refresh_time = current_time
-                                logger.info(f"[AccountWS] 發送刷新帳戶數據成功 - 用戶:{user_id}")
                             
                             elif message_type == "place_order":
                                 # 下單請求
-                                logger.info(f"[AccountWS] 收到下單請求 - 用戶:{user_id}")
+                                logger.info(f"收到下單請求 - 用戶:{user_id}")
                                 
                                 # 提取下單參數
                                 order_params = msg.get("data", {})
@@ -366,7 +337,7 @@ async def futures_account_websocket(
                                         "data": result,
                                         "request_id": msg.get("request_id")
                                     })
-                                    logger.info(f"[AccountWS] 下單成功 - 用戶:{user_id}, 訂單ID:{result.get('orderId')}")
+                                    logger.info(f"下單成功 - 用戶:{user_id}, 訂單ID:{result.get('orderId')}")
                                     
                                 except Exception as e:
                                     # 下單失敗，返回錯誤信息
@@ -376,11 +347,11 @@ async def futures_account_websocket(
                                         "message": str(e),
                                         "request_id": msg.get("request_id")
                                     })
-                                    logger.error(f"[AccountWS] 下單失敗 - 用戶:{user_id}, 錯誤:{str(e)}")
+                                    logger.error(f"下單失敗: {str(e)}")
                             
                             elif message_type == "cancel_order":
                                 # 取消訂單請求
-                                logger.info(f"[AccountWS] 收到取消訂單請求 - 用戶:{user_id}")
+                                logger.info(f"收到取消訂單請求 - 用戶:{user_id}")
                                 
                                 # 提取取消訂單參數
                                 cancel_params = msg.get("data", {})
@@ -412,7 +383,7 @@ async def futures_account_websocket(
                                         "data": result,
                                         "request_id": msg.get("request_id")
                                     })
-                                    logger.info(f"[AccountWS] 取消訂單成功 - 用戶:{user_id}, 訂單ID:{order_id}")
+                                    logger.info(f"取消訂單成功 - 訂單ID:{order_id}")
                                     
                                 except Exception as e:
                                     # 取消訂單失敗，返回錯誤信息
@@ -422,27 +393,26 @@ async def futures_account_websocket(
                                         "message": str(e),
                                         "request_id": msg.get("request_id")
                                     })
-                                    logger.error(f"[AccountWS] 取消訂單失敗 - 用戶:{user_id}, 錯誤:{str(e)}")
+                                    logger.error(f"取消訂單失敗: {str(e)}")
                             
                             elif message_type == "ping":
                                 # 客戶端發送的ping請求
-                                logger.debug(f"[AccountWS] 收到ping請求 - 用戶:{user_id}")
                                 await websocket.send_json({"type": "pong"})
                             
                             else:
                                 # 未知消息類型
-                                logger.warning(f"[AccountWS] 收到未知類型的消息 - 用戶:{user_id}, 類型:{message_type}")
+                                logger.warning(f"收到未知類型消息: {message_type}")
                         
                         except json.JSONDecodeError:
                             # 非JSON格式消息
-                            logger.warning(f"[AccountWS] 收到非JSON格式消息 - 用戶:{user_id}")
+                            pass
                     
                     except asyncio.TimeoutError:
                         # 沒有收到新消息，這是正常的，可以繼續其他操作
                         pass
                     except WebSocketDisconnect:
                         # 客戶端斷開連接
-                        logger.info(f"[AccountWS] 客戶端斷開連接 - 用戶:{user_id}")
+                        logger.info(f"客戶端斷開連接 - 用戶:{user_id}")
                         break
                     
                     # 定期刷新數據
@@ -485,21 +455,19 @@ async def futures_account_websocket(
                                 })
                                 
                                 last_account_data = account_data
-                                logger.debug(f"[AccountWS] 發現帳戶數據變化，已發送更新 - 用戶:{user_id}")
                             
                             last_data_refresh_time = current_time
                         
                         except Exception as e:
-                            logger.error(f"[AccountWS] 刷新帳戶數據時出錯 - 用戶:{user_id}, 錯誤:{str(e)}")
+                            logger.error(f"刷新帳戶數據時出錯: {str(e)}")
                     
                     # 定期發送心跳
                     if current_time - last_heartbeat_time > heartbeat_interval:
                         await websocket.send_json({"type": "heartbeat"})
                         last_heartbeat_time = current_time
-                        logger.debug(f"[AccountWS] 發送心跳 - 用戶:{user_id}")
             
             except Exception as e:
-                logger.error(f"[AccountWS] 處理WebSocket連接時出錯 - 用戶:{user_id}, 錯誤:{str(e)}")
+                logger.error(f"處理WebSocket連接時出錯: {str(e)}")
                 await websocket.send_json({
                     "success": False,
                     "message": f"處理連接時出錯: {str(e)}"
@@ -510,9 +478,9 @@ async def futures_account_websocket(
             db.close()
     
     except WebSocketDisconnect:
-        logger.info("[AccountWS] 客戶端斷開連接")
+        logger.info("客戶端斷開連接")
     except Exception as e:
-        logger.error(f"[AccountWS] WebSocket處理時出錯: {str(e)}")
+        logger.error(f"WebSocket處理時出錯: {str(e)}")
         try:
             await websocket.send_json({"success": False, "message": f"發生錯誤: {str(e)}"})
         except:
@@ -541,69 +509,220 @@ async def test_websocket_endpoint(
     except WebSocketDisconnect:
         print("客戶端斷開連接")
 
-async def get_account_data(exchange, api_key, api_secret, user_id=None):
+async def get_account_data(
+    exchange: str,
+    api_key: str = None,
+    api_secret: str = None,
+    user_id: int = None,
+    virtual_key_id: str = None,
+    db: Session = None
+):
     """
-    使用API密鑰獲取帳戶數據
+    獲取用戶在指定交易所的帳戶數據
+    支持直接提供API密鑰或通過用戶ID從數據庫獲取
     
     Args:
         exchange: 交易所名稱
-        api_key: API密鑰
-        api_secret: API密鑰密碼
-        user_id: 用戶ID（用於連接緩存）
+        api_key: 可選，API密鑰
+        api_secret: 可選，API密鑰密碼
+        user_id: 可選，用戶ID，用於從數據庫獲取API密鑰
+        virtual_key_id: 可選，虛擬密鑰ID，用於從API密鑰管理器獲取密鑰
+        db: 可選，數據庫會話
         
     Returns:
-        帳戶數據
+        dict: 帳戶數據，包含餘額和持倉信息
     """
-    logger.info(f"[AccountWS] 開始獲取帳戶數據: {exchange}")
+    logger.info(f"開始獲取帳戶數據: {exchange}, 用戶ID: {user_id}")
     
     try:
-        # 檢查API密鑰
+        # 檢查是否使用 ApiKeyManager 獲取密鑰
+        if not api_key or not api_secret:
+            if user_id and db:
+                # 先從安全密鑰緩存獲取
+                from ...core.secure_key_cache import SecureKeyCache
+                key_cache = SecureKeyCache()
+                
+                # 嘗試從緩存獲取 HMAC-SHA256 密鑰
+                cached_keys = key_cache.get_keys(user_id, exchange)
+                if cached_keys:
+                    logger.info(f"從安全緩存獲取用戶 {user_id} 的 {exchange} HMAC-SHA256 密鑰")
+                    api_key, api_secret = cached_keys
+                else:
+                    # 嘗試從緩存獲取 Ed25519 密鑰
+                    cached_ed25519_keys = key_cache.get_ed25519_keys(user_id, exchange)
+                    if cached_ed25519_keys:
+                        logger.info(f"從安全緩存獲取用戶 {user_id} 的 {exchange} Ed25519 密鑰")
+                        api_key = cached_ed25519_keys[0]
+                        api_secret = cached_ed25519_keys[2]  # 使用Ed25519私鑰作為API密碼
+                    else:
+                        # 緩存中沒有，使用原來的方法從數據庫獲取
+                        logger.info(f"使用 ApiKeyManager 獲取 API 密鑰")
+                        
+                        # 如果提供了虛擬密鑰ID，直接使用它
+                        if virtual_key_id:
+                            logger.info(f"使用提供的虛擬密鑰ID: {virtual_key_id}")
+                        else:
+                            # 獲取API密鑰記錄
+                            api_key_record = await api_key_manager.get_api_key(db, user_id, exchange)
+                            
+                            if not api_key_record:
+                                error_msg = f"未找到{exchange}的API密鑰"
+                                logger.error(error_msg)
+                                raise ValueError(error_msg)
+                            
+                            virtual_key_id = api_key_record.virtual_key_id
+                            
+                            # 確保有虛擬密鑰ID
+                            if not virtual_key_id:
+                                logger.warning(f"API密鑰記錄沒有虛擬密鑰ID，將創建一個")
+                                try:
+                                    # 生成虛擬密鑰ID
+                                    api_key_record.virtual_key_id = str(uuid.uuid4())
+                                    # 設置默認權限
+                                    api_key_record.permissions = {"read": True, "trade": True}
+                                    # 保存到數據庫
+                                    db.commit()
+                                    db.refresh(api_key_record)
+                                    virtual_key_id = api_key_record.virtual_key_id
+                                    logger.info(f"成功為API密鑰創建虛擬密鑰ID: {virtual_key_id}")
+                                except Exception as e:
+                                    logger.error(f"創建虛擬密鑰ID失敗: {str(e)}")
+                                    # 繼續處理，使用備用方法
+                        
+                        # 優先使用 ApiKeyManager 獲取解密後的密鑰
+                        if virtual_key_id:
+                            try:
+                                # 使用 ApiKeyManager 獲取解密後的 API 密鑰
+                                real_keys, _ = await api_key_manager.get_real_api_key(
+                                    db=db,
+                                    user_id=user_id,
+                                    virtual_key_id=virtual_key_id,
+                                    operation="read"  # 讀取操作
+                                )
+                                
+                                if real_keys.get("api_key") and real_keys.get("api_secret"):
+                                    logger.info(f"成功使用 ApiKeyManager 解密 API 密鑰")
+                                    api_key = real_keys.get("api_key")
+                                    api_secret = real_keys.get("api_secret")
+                                else:
+                                    # ApiKeyManager 解密失敗，嘗試備用方法
+                                    logger.warning(f"ApiKeyManager 解密失敗，嘗試使用備用方法")
+                                    
+                                    # 如果虛擬密鑰ID可用但解密失敗，需要獲取API密鑰記錄進行備用解密
+                                    if not api_key_record:
+                                        api_key_record = await api_key_manager.get_api_key(db, user_id, exchange)
+                                        
+                                        if not api_key_record:
+                                            error_msg = f"未找到{exchange}的API密鑰"
+                                            logger.error(error_msg)
+                                            raise ValueError(error_msg)
+                            except Exception as e:
+                                logger.warning(f"使用 ApiKeyManager 解密失敗: {str(e)}")
+                                
+                                # 獲取API密鑰記錄以進行備用解密
+                                if not api_key_record:
+                                    api_key_record = await api_key_manager.get_api_key(db, user_id, exchange)
+                                    
+                                    if not api_key_record:
+                                        error_msg = f"未找到{exchange}的API密鑰"
+                                        logger.error(error_msg)
+                                        raise ValueError(error_msg)
+                        
+                        # 如果 ApiKeyManager 解密失敗，嘗試直接解密
+                        if (not api_key or not api_secret) and api_key_record:
+                            logger.info(f"嘗試使用備用解密方法")
+                            
+                            # 直接使用安全模塊解密
+                            from ...core.security import decrypt_api_key
+                            
+                            # 優先嘗試 HMAC-SHA256 密鑰
+                            api_key = decrypt_api_key(api_key_record.api_key, key_type="API Key (HMAC-SHA256)")
+                            api_secret = decrypt_api_key(api_key_record.api_secret, key_type="API Secret (HMAC-SHA256)")
+                            
+                            # 在解密兩個密鑰後統一記錄結果
+                            if api_key and api_secret:
+                                logger.debug(f"HMAC-SHA256密鑰對解密成功，Key長度: {len(api_key)}, Secret長度: {len(api_secret)}")
+                                # 存入緩存
+                                key_cache.set_keys(user_id, exchange, api_key, api_secret)
+                            else:
+                                logger.warning(f"HMAC-SHA256密鑰解密失敗，嘗試 Ed25519 密鑰")
+                            
+                            # 如果 HMAC-SHA256 密鑰解密失敗，嘗試 Ed25519 密鑰
+                            if not api_key or not api_secret:
+                                api_key = decrypt_api_key(api_key_record.ed25519_key, key_type="API Key (Ed25519)")
+                                api_secret = decrypt_api_key(api_key_record.ed25519_secret, key_type="API Secret (Ed25519)")
+                                
+                                # 統一記錄 Ed25519 密鑰解密結果
+                                if api_key and api_secret:
+                                    logger.debug(f"Ed25519密鑰對解密成功，Key長度: {len(api_key)}, Secret長度: {len(api_secret)}")
+                                    # 存入緩存
+                                    key_cache.set_ed25519_keys(user_id, exchange, api_key, api_key, api_secret)
+                                else:
+                                    logger.error(f"API密鑰解密全部失敗，無法繼續連接")
+                            
+                            if not api_key or not api_secret:
+                                error_msg = "API密鑰解密失敗（所有方法均失敗）"
+                                logger.error(error_msg)
+                                raise ValueError(error_msg)
+            else:
+                error_msg = "API密鑰或密鑰密碼為空，且未提供足夠信息從 ApiKeyManager 獲取"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+                
+        # 檢查 API 密鑰
         if not api_key or not api_secret:
             error_msg = "API密鑰或密鑰密碼為空"
-            logger.error(f"[AccountWS] {error_msg}")
+            logger.error(error_msg)
             raise ValueError(error_msg)
         
+        # 記錄解密成功
+        logger.info(f"成功獲取 API 密鑰，準備連接交易所 {exchange}")
+        
+        # 清理 API 密鑰中可能存在的引號和空白字符
+        for key_var in [api_key, api_secret]:
+            if key_var and key_var.startswith('"') and key_var.endswith('"'):
+                key_var = key_var[1:-1]
+        
+        # 移除空白字符
+        api_key = api_key.strip() if api_key else None
+        api_secret = api_secret.strip() if api_secret else None
+        
         if exchange.lower() == "binance":
+            # 使用WebSocket方式獲取帳戶數據
             try:
-                # 使用連接管理器獲取連接
-                client, is_new = await exchange_connection_manager.get_or_create_connection(
-                    api_key, api_secret, exchange, user_id=user_id
-                )
+                # 從連接管理器獲取客戶端
+                if user_id:
+                    client, is_new = await exchange_connection_manager.get_connection(user_id, exchange, db)
+                else:
+                    # 使用直接提供的API密鑰
+                    client, is_new = await exchange_connection_manager.get_or_create_connection(api_key, api_secret, exchange)
                 
                 # 記錄客戶端來源
                 if is_new:
-                    logger.info(f"[AccountWS] 創建了新的幣安WebSocket客戶端")
+                    logger.info(f"創建了新的幣安WebSocket客戶端")
                 else:
-                    logger.debug(f"[AccountWS] 重用現有的幣安WebSocket客戶端")
+                    logger.debug(f"重用現有的幣安WebSocket客戶端")
                 
                 # 確認客戶端連接狀態
                 if not client.is_connected():
-                    logger.warning(f"[AccountWS] 客戶端連接已斷開，嘗試重新連接")
+                    logger.warning(f"客戶端連接已斷開，嘗試重新連接")
                     connected = await client.connect()
                     if not connected:
-                        logger.error(f"[AccountWS] 重新連接失敗，回退到REST API")
+                        logger.error(f"重新連接失敗，回退到REST API")
                     return await get_account_data_rest(exchange, api_key, api_secret)
                 
-                # 獲取帳戶資訊 - 使用現有連接
+                # 獲取帳戶信息
                 account_info = await client.get_account_info()
-                
-                # 記錄收到的原始數據結構 (僅在日誌中記錄摘要信息，不記錄完整數據)
-                logger.debug(f"[AccountWS] 已從幣安獲取帳戶數據，包含 {len(account_info.get('assets', []))} 個資產和 {len(account_info.get('positions', []))} 個持倉")
                 
                 # 格式化返回數據
                 formatted_data = {
                     "balances": [],
                     "positions": [],
-                    "api_type": "WebSocket API (Ed25519)", # 添加API類型標記
-                    "raw_data": account_info  # 添加原始數據以便前端可以直接使用
+                    "api_type": "WebSocket API (Ed25519)",
                 }
                 
-                # 處理賬戶資訊
+                # 檢查帳戶信息是否有效
                 if isinstance(account_info, dict):
-                    # 記錄數據結構中的關鍵字段，但不顯示具體值
-                    top_level_keys = list(account_info.keys())
-                    logger.debug(f"[AccountWS] 帳戶數據包含以下頂層字段: {', '.join(top_level_keys)}")
-                    
                     # 處理餘額情況
                     if "assets" in account_info:
                         formatted_data["balances"] = account_info["assets"]
@@ -614,21 +733,10 @@ async def get_account_data(exchange, api_key, api_secret, user_id=None):
                                 formatted_data["totalWalletBalance"] = asset.get("walletBalance", "0")
                                 formatted_data["availableBalance"] = asset.get("availableBalance", "0")
                                 break
-                    # 對現貨帳戶的處理
-                    elif "balances" in account_info:
-                        formatted_data["balances"] = [
-                            {
-                                "asset": balance.get("asset", ""),
-                                "walletBalance": balance.get("free", "0"),
-                                "availableBalance": balance.get("free", "0"),
-                                "locked": balance.get("locked", "0")
-                            }
-                            for balance in account_info["balances"]
-                            if float(balance.get("free", 0)) > 0 or float(balance.get("locked", 0)) > 0
-                        ]
-                        
+                    
                     # 處理持倉
                     if "positions" in account_info:
+                        # 只保留持倉數量不為0的持倉
                         formatted_data["positions"] = [
                             pos for pos in account_info["positions"] 
                             if float(pos.get("positionAmt", 0)) != 0
@@ -642,27 +750,20 @@ async def get_account_data(exchange, api_key, api_secret, user_id=None):
                         formatted_data["totalUnrealizedProfit"] = str(total_unrealized_profit)
                 
                 return formatted_data
-                
-            except Exception as e:
-                logger.error(f"[AccountWS] 使用WebSocket獲取幣安帳戶數據時出錯: {str(e)}")
-                import traceback
-                logger.error(f"[AccountWS] 詳細錯誤: {traceback.format_exc()}")
-                # 如果WebSocket方式失敗，回退到REST API方式
-                logger.info(f"[AccountWS] 回退到使用REST API獲取幣安帳戶數據")
-                return await get_account_data_rest(exchange, api_key, api_secret)
-                
-        elif exchange.lower() == "bitget" or exchange.lower() == "okx":
-            # 這些交易所仍使用原始的REST API方式
-            return await get_account_data_rest(exchange, api_key, api_secret)
-        else:
-            raise Exception(f"不支持的交易所: {exchange}")
             
+            except Exception as e:
+                logger.error(f"使用WebSocket獲取幣安帳戶數據時出錯: {str(e)}")
+                # 如果WebSocket方式失敗，回退到REST API方式
+                logger.info(f"回退到使用REST API獲取幣安帳戶數據")
+                return await get_account_data_rest(exchange, api_key, api_secret)
+        
+        else:
+            # 其他交易所使用REST API方式
+            return await get_account_data_rest(exchange, api_key, api_secret)
+        
     except Exception as e:
-        logger.error(f"[AccountWS] 獲取帳戶數據時出錯: {str(e)}")
-        import traceback
-        trace = traceback.format_exc()
-        logger.error(trace)
-        raise Exception(f"獲取帳戶數據時出錯: {str(e)}")
+        logger.error(f"獲取帳戶數據時出錯: {str(e)}")
+        raise
 
 # 保留 get_account_data_rest 函數作為後備方案
 async def get_account_data_rest(exchange, api_key, api_secret):
@@ -691,12 +792,18 @@ async def get_user_exchanges(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    # 查詢當前用戶的交易所 API 密鑰
-    exchanges = db.query(ExchangeAPI.exchange).filter(
-        ExchangeAPI.user_id == current_user.id
-    ).distinct().all()
-    
-    # 將查詢結果轉換為列表
-    exchange_list = [item[0] for item in exchanges]
-    
-    return exchange_list
+    """獲取用戶已配置的交易所列表"""
+    try:
+        # 使用 ApiKeyManager 獲取用戶的所有 API 密鑰
+        api_keys = await api_key_manager.get_api_keys(db, current_user.id)
+        
+        # 提取交易所名稱列表
+        exchange_list = [api_key.exchange for api_key in api_keys]
+        
+        return exchange_list
+    except Exception as e:
+        logger.error(f"獲取用戶交易所列表失敗: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"獲取交易所列表失敗: {str(e)}"
+        )

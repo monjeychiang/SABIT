@@ -14,9 +14,10 @@ from ...schemas.trading import (
     TradeHistoryResponse, PositionResponse, ExchangeEnum, LeverageResponse,
     LeverageUpdate, StopOrderResponse, StopOrder, BatchOrderResponse,
     BatchOrderRequest, BatchCancelResponse, BatchCancelRequest, SymbolInfoResponse,
-    BaseResponse
+    BaseResponse, OrderType, OrderSide, TimeInForce
 )
 from ...services.trading import TradingService
+from ...core.api_key_manager import ApiKeyManager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -446,4 +447,68 @@ async def initialize_account_page_websocket(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"初始化連接失敗: {str(e)}"
+        )
+
+# 添加虛擬密鑰支持
+class VirtualKeyOrderRequest(BaseModel):
+    """使用虛擬密鑰的訂單請求"""
+    virtual_key_id: str = Field(..., description="虛擬密鑰 ID")
+    order: OrderRequest = Field(..., description="訂單詳情")
+
+@router.post("/virtual-trade", response_model=OrderResponse)
+async def place_order_with_virtual_key(
+    request: VirtualKeyOrderRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """使用虛擬密鑰下單接口"""
+    try:
+        # 檢查虛擬密鑰是否存在並屬於當前用戶
+        api_key_manager = ApiKeyManager()
+        virtual_key_exists = await api_key_manager.check_virtual_key_exists(
+            db=db,
+            user_id=current_user.id,
+            virtual_key_id=request.virtual_key_id
+        )
+        
+        if not virtual_key_exists:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"找不到虛擬密鑰 {request.virtual_key_id} 或該密鑰不屬於當前用戶"
+            )
+        
+        trading_service = TradingService()
+        
+        # 根據訂單類型決定使用哪個方法
+        if request.order.type in [OrderType.LIMIT, OrderType.MARKET]:
+            result = await trading_service.place_spot_order(
+                user=current_user,
+                db=db,
+                exchange=request.order.exchange,
+                order=request.order,
+                virtual_key_id=request.virtual_key_id
+            )
+        else:
+            result = await trading_service.place_futures_order(
+                user=current_user,
+                db=db,
+                exchange=request.order.exchange,
+                order=request.order,
+                virtual_key_id=request.virtual_key_id
+            )
+        
+        return {
+            "success": True,
+            "message": "訂單已提交",
+            "order_id": result.get("id") or result.get("order_id"),
+            "details": result
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"使用虛擬密鑰下單失敗: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"下單失敗: {str(e)}"
         ) 

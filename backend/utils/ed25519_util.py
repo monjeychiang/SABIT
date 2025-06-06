@@ -160,7 +160,24 @@ class Ed25519KeyManager:
         Returns:
             Base64編碼的簽名
         """
-        logger.debug(f"使用 Ed25519 簽名消息: {message[:50]}...")
+        # 創建安全的日誌字符串，隱藏敏感信息
+        safe_message = message
+        if len(message) > 20:
+            # 只顯示消息的前20個字符，後面用省略號替換
+            safe_message = message[:20] + "..."
+            
+            # 進一步檢查是否包含API密鑰相關內容
+            if "apiKey=" in message:
+                parts = message.split("apiKey=")
+                if len(parts) > 1:
+                    # 找到apiKey的值
+                    api_key_part = parts[1].split("&")[0]
+                    # 替換為遮蔽版本
+                    if len(api_key_part) > 8:
+                        masked_key = api_key_part[:8] + "..."
+                        safe_message = message.replace(api_key_part, masked_key)
+        
+        logger.debug(f"使用 Ed25519 簽名消息: {safe_message}")
         
         # 如果提供了私鑰，使用它；否則使用實例的私鑰
         key_to_use = private_key if private_key is not None else self.private_key

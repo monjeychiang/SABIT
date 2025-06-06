@@ -207,15 +207,16 @@ def encrypt_api_key(api_key: str) -> str:
         logger.error(f"API密鑰加密失敗: {str(e)}")
         return None
 
-def decrypt_api_key(encrypted_api_key: str) -> str:
+def decrypt_api_key(encrypted_api_key: str, key_type: str = "未指定") -> str:
     """
     解密API密鑰
     
     解密從資料庫中讀取的加密API密鑰，使其可用於API呼叫。
-    解密失敗會記錄錯誤，但不會中斷程序執行。
+    優先使用utf-8解碼，失敗則嘗試latin-1編碼。
     
     參數:
         encrypted_api_key: 加密的API密鑰（base64編碼的字符串）
+        key_type: 密鑰類型標識，用於日誌記錄（例如："API Key", "API Secret"）
         
     返回:
         解密後的API密鑰明文
@@ -225,36 +226,30 @@ def decrypt_api_key(encrypted_api_key: str) -> str:
     if not encrypted_api_key:
         return None
     
+    # 我們不再在這裡記錄解密過程，讓調用者決定如何記錄
+    
     try:
-        logger.debug(f"開始解密API密鑰，加密密鑰長度: {len(encrypted_api_key)}")
-        
         # 解密API密鑰
         decrypted_data = fernet.decrypt(encrypted_api_key.encode())
-        # 獲取解密後的字符串
         decrypted_api_key = decrypted_data.decode()
         
-        # 記錄原始解密結果的長度（不顯示實際內容，保護敏感信息）
-        logger.debug(f"原始解密API密鑰長度: {len(decrypted_api_key)}")
-        
         # 標準化並返回解密後的API密鑰
-        cleaned_api_key = standardize_api_key(decrypted_api_key)
+        result = standardize_api_key(decrypted_api_key)
         
-        # 記錄清理前後長度差異
-        if cleaned_api_key and len(cleaned_api_key) != len(decrypted_api_key):
-            logger.debug(f"API密鑰清理: 原始長度 {len(decrypted_api_key)} -> 清理後長度 {len(cleaned_api_key)}")
-        
-        return cleaned_api_key
+        return result
+    except UnicodeDecodeError:
+        # 嘗試使用latin-1編碼
+        try:
+            decrypted_data = fernet.decrypt(encrypted_api_key.encode())
+            decrypted_api_key = decrypted_data.decode('latin-1')
+            result = standardize_api_key(decrypted_api_key)
+            
+            return result
+        except Exception as e:
+            logger.error(f"{key_type}使用latin-1編碼解密失敗: {str(e)[:50]}")
+            return None
     except Exception as e:
-        logger.error(f"API密鑰解密失敗: {str(e)}")
-        if isinstance(e, UnicodeDecodeError):
-            logger.error(f"這可能是編碼問題，嘗試不同的編碼...")
-            try:
-                # 嘗試使用latin-1編碼解碼
-                decrypted_data = fernet.decrypt(encrypted_api_key.encode())
-                decrypted_api_key = decrypted_data.decode('latin-1')
-                return standardize_api_key(decrypted_api_key)
-            except Exception as latin_err:
-                logger.error(f"使用latin-1編碼解碼失敗: {str(latin_err)}")
+        logger.error(f"{key_type}解密失敗: {str(e)[:50]}")
         return None
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:

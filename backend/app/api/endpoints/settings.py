@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Response, Cookie
 from sqlalchemy.orm import Session
 from typing import Any, Dict, Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import logging
 import os
 import uuid
@@ -10,6 +10,7 @@ from pathlib import Path
 from PIL import Image
 import io
 import json
+import asyncio
 
 from ...db.database import get_db
 from ...db.models import User, ExchangeAPI
@@ -20,6 +21,8 @@ from ...schemas.settings import (
     ExchangeAPICreate, ExchangeAPIUpdate, ExchangeAPIResponse,
     ExchangeAPIListResponse, ApiKeyResponse
 )
+from ...core.api_key_manager import ApiKeyManager
+from ...core.secure_key_cache import SecureKeyCache
 
 # 获取当前代码文件的绝对路径
 current_file_path = Path(__file__).resolve()
@@ -38,33 +41,74 @@ class ApiKeyUpdate(BaseModel):
     api_key: str
     api_secret: str
 
-# 獲取用戶API密鑰（解密後）
+# 獲取用戶 API 密鑰（解密後）
 def get_user_api_keys(user: User, db: Session) -> dict:
     """
     獲取用戶的所有交易所API密鑰
     
     將資料庫中的加密API密鑰解密後返回，供內部使用。
     此函數僅用於系統內部操作，不直接暴露給API。
+    
+    注意：推薦使用 ApiKeyManager.get_real_api_key 方法獲取實際 API 密鑰，
+    本函數保留是為了向後兼容。
     """
     api_keys = {}
-    db_api_keys = db.query(ExchangeAPI).filter(ExchangeAPI.user_id == user.id).all()
+    
+    # 使用 ApiKeyManager 獲取 API 密鑰
+    api_key_manager = ApiKeyManager()
+    
+    # 獲取用戶的所有 API 密鑰
+    db_api_keys = asyncio.run(api_key_manager.get_api_keys(db, user.id))
     
     for api_key in db_api_keys:
         api_keys[api_key.exchange] = {}
         
+        # 嘗試通過 ApiKeyManager 獲取解密後的密鑰
+        if api_key.virtual_key_id:
+            try:
+                # 使用虛擬密鑰 ID 獲取真實密鑰
+                real_keys, permissions = asyncio.run(api_key_manager.get_real_api_key(
+                    db=db,
+                    user_id=user.id,
+                    virtual_key_id=api_key.virtual_key_id,
+                    operation="read"  # 讀取操作
+                ))
+                
+                if real_keys and real_keys.get("api_key") and real_keys.get("api_secret"):
+                    api_keys[api_key.exchange]["hmac"] = {
+                        "api_key": real_keys.get("api_key"),
+                        "api_secret": real_keys.get("api_secret")
+                    }
+                    # 記錄使用了虛擬密鑰
+                    api_keys[api_key.exchange]["uses_virtual_key"] = True
+                    api_keys[api_key.exchange]["permissions"] = permissions
+                    continue  # 跳過直接解密的方式
+            except Exception as e:
+                logger.warning(f"通過 ApiKeyManager 獲取真實密鑰失敗: {str(e)}")
+                # 繼續使用直接解密的方式作為後備
+        
+        # 如果 ApiKeyManager 方法失敗或沒有虛擬密鑰，使用直接解密的方式（舊方法）
         # 添加 HMAC-SHA256 密鑰（如果存在）
         if api_key.api_key:
-            api_keys[api_key.exchange]["hmac"] = {
-                "api_key": decrypt_api_key(api_key.api_key),
-                "api_secret": decrypt_api_key(api_key.api_secret)
-            }
+            try:
+                api_keys[api_key.exchange]["hmac"] = {
+                    "api_key": decrypt_api_key(api_key.api_key),
+                    "api_secret": decrypt_api_key(api_key.api_secret)
+                }
+                # 記錄使用了直接解密
+                api_keys[api_key.exchange]["uses_virtual_key"] = False
+            except Exception as e:
+                logger.error(f"解密 HMAC-SHA256 密鑰失敗: {str(e)}")
         
         # 添加 Ed25519 密鑰（如果存在）
         if api_key.ed25519_key:
-            api_keys[api_key.exchange]["ed25519"] = {
-                "public_key": decrypt_api_key(api_key.ed25519_key),
-                "private_key": decrypt_api_key(api_key.ed25519_secret)
-            }
+            try:
+                api_keys[api_key.exchange]["ed25519"] = {
+                    "public_key": decrypt_api_key(api_key.ed25519_key),
+                    "private_key": decrypt_api_key(api_key.ed25519_secret)
+                }
+            except Exception as e:
+                logger.error(f"解密 Ed25519 密鑰失敗: {str(e)}")
     
     return api_keys
 
@@ -85,8 +129,17 @@ async def get_api_keys(
         包含每個交易所API密鑰部分資訊的列表
     """
     try:
+        # 使用 ApiKeyManager 獲取 API 密鑰
+        api_key_manager = ApiKeyManager()
+        
+        # 獲取安全密鑰緩存實例
+        key_cache = SecureKeyCache()
+        
+        # 獲取用戶的所有 API 密鑰
+        exchange_apis = await api_key_manager.get_api_keys(db, current_user.id)
+        
         api_keys = []
-        for exchange_api in current_user.exchange_apis:
+        for exchange_api in exchange_apis:
             # 初始化返回項目，確保所有必填字段都有值
             response_item = ApiKeyResponse(
                 exchange=exchange_api.exchange,
@@ -102,7 +155,17 @@ async def get_api_keys(
             # 只在密鑰存在時添加最後4位
             if exchange_api.api_key:
                 try:
-                    decrypted_key = decrypt_api_key(exchange_api.api_key)
+                    # 先嘗試從緩存中獲取密鑰
+                    exchange_name = exchange_api.exchange.value
+                    cached_keys = key_cache.get_keys(current_user.id, exchange_name)
+                    
+                    if cached_keys and cached_keys[0]:
+                        decrypted_key = cached_keys[0]  # 第一個元素是 api_key
+                    else:
+                        # 如果緩存中沒有，使用解密函數
+                        decrypted_key = decrypt_api_key(exchange_api.api_key)
+                        # 成功解密後可以存入緩存，但這裡不做，因為只需要顯示末尾4位
+                    
                     response_item.api_key = "•••••••" + decrypted_key[-4:] if len(decrypted_key) >= 4 else "•••••••"
                 except Exception as e:
                     logger.warning(f"解密 API 密鑰失敗: {str(e)}")
@@ -110,7 +173,17 @@ async def get_api_keys(
                     
             if exchange_api.ed25519_key:
                 try:
-                    decrypted_key = decrypt_api_key(exchange_api.ed25519_key)
+                    # 先嘗試從緩存中獲取密鑰
+                    exchange_name = exchange_api.exchange.value
+                    cached_ed25519_keys = key_cache.get_ed25519_keys(current_user.id, exchange_name)
+                    
+                    if cached_ed25519_keys and cached_ed25519_keys[1]:
+                        decrypted_key = cached_ed25519_keys[1]  # 第二個元素是 ed25519_key (公鑰)
+                    else:
+                        # 如果緩存中沒有，使用解密函數
+                        decrypted_key = decrypt_api_key(exchange_api.ed25519_key)
+                        # 成功解密後可以存入緩存，但這裡不做，因為只需要顯示末尾4位
+                    
                     response_item.ed25519_key = "•••••••" + decrypted_key[-4:] if len(decrypted_key) >= 4 else "•••••••"
                 except Exception as e:
                     logger.warning(f"解密 Ed25519 密鑰失敗: {str(e)}")
@@ -150,16 +223,15 @@ async def create_api_key(
     錯誤:
         500: 創建過程中出現伺服器錯誤
     """
-    # 檢查是否已存在相同交易所的API密鑰
-    existing_api = db.query(ExchangeAPI).filter(
-        ExchangeAPI.user_id == current_user.id,
-        ExchangeAPI.exchange == api_key_data.exchange
-    ).first()
-    
-    # 如果已存在，則調用更新接口而不是創建新記錄
-    if existing_api:
-        # 創建更新用的數據模型
-        update_data = ExchangeAPIUpdate(
+    try:
+        # 使用 ApiKeyManager 創建 API 密鑰
+        api_key_manager = ApiKeyManager()
+        
+        # 創建 API 密鑰
+        db_api_key = await api_key_manager.create_api_key(
+            db=db,
+            user_id=current_user.id,
+            exchange=api_key_data.exchange,
             api_key=api_key_data.api_key,
             api_secret=api_key_data.api_secret,
             ed25519_key=api_key_data.ed25519_key,
@@ -167,44 +239,12 @@ async def create_api_key(
             description=api_key_data.description
         )
         
-        # 轉到更新函數處理
-        return await update_api_key(
-            exchange=api_key_data.exchange,
-            api_key_data=update_data,
-            db=db,
-            current_user=current_user
-        )
-    
-    # 創建新的API密鑰記錄
-    db_api_key = ExchangeAPI(
-        user_id=current_user.id,
-        exchange=api_key_data.exchange,
-        description=api_key_data.description
-    )
-    
-    # 添加 HMAC-SHA256 密鑰（如果提供）
-    if api_key_data.api_key:
-        db_api_key.api_key = encrypt_api_key(api_key_data.api_key)
-    if api_key_data.api_secret:
-        db_api_key.api_secret = encrypt_api_key(api_key_data.api_secret)
-    
-    # 添加 Ed25519 密鑰（如果提供）
-    if api_key_data.ed25519_key:
-        db_api_key.ed25519_key = encrypt_api_key(api_key_data.ed25519_key)
-    if api_key_data.ed25519_secret:
-        db_api_key.ed25519_secret = encrypt_api_key(api_key_data.ed25519_secret)
-    
-    try:
-        db.add(db_api_key)
-        db.commit()
-        db.refresh(db_api_key)
         return {
             "success": True,
             "message": f"成功添加{api_key_data.exchange}的API密鑰",
             "data": db_api_key
         }
     except Exception as e:
-        db.rollback()
         logger.error(f"創建API密鑰失敗: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -235,36 +275,29 @@ async def update_api_key(
         404: 指定交易所的API密鑰不存在
         500: 更新過程中出現伺服器錯誤
     """
-    db_api_key = db.query(ExchangeAPI).filter(
-        ExchangeAPI.user_id == current_user.id,
-        ExchangeAPI.exchange == exchange
-    ).first()
-    
-    if not db_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"未找到{exchange}的API密鑰"
-        )
-    
     try:
-        # 更新描述（如果提供）
-        if api_key_data.description is not None:
-            db_api_key.description = api_key_data.description
-            
-        # 更新 HMAC-SHA256 密鑰（如果提供）
-        if api_key_data.api_key is not None:
-            db_api_key.api_key = encrypt_api_key(api_key_data.api_key)
-        if api_key_data.api_secret is not None:
-            db_api_key.api_secret = encrypt_api_key(api_key_data.api_secret)
-            
-        # 更新 Ed25519 密鑰（如果提供）
-        if api_key_data.ed25519_key is not None:
-            db_api_key.ed25519_key = encrypt_api_key(api_key_data.ed25519_key)
-        if api_key_data.ed25519_secret is not None:
-            db_api_key.ed25519_secret = encrypt_api_key(api_key_data.ed25519_secret)
-            
-        db.commit()
-        db.refresh(db_api_key)
+        # 使用 ApiKeyManager 更新 API 密鑰
+        api_key_manager = ApiKeyManager()
+        
+        # 檢查 API 密鑰是否存在
+        db_api_key = await api_key_manager.get_api_key(db, current_user.id, exchange)
+        if not db_api_key:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"未找到{exchange}的API密鑰"
+            )
+        
+        # 更新 API 密鑰
+        db_api_key = await api_key_manager.update_api_key(
+            db=db,
+            user_id=current_user.id,
+            exchange=exchange,
+            api_key=api_key_data.api_key,
+            api_secret=api_key_data.api_secret,
+            ed25519_key=api_key_data.ed25519_key,
+            ed25519_secret=api_key_data.ed25519_secret,
+            description=api_key_data.description
+        )
         
         # 構建響應消息
         message = f"成功更新{exchange}的API密鑰"
@@ -278,8 +311,9 @@ async def update_api_key(
             "message": message,
             "data": db_api_key
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        db.rollback()
         logger.error(f"更新API密鑰失敗: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -308,26 +342,34 @@ async def delete_api_key(
         404: 指定交易所的API密鑰不存在
         500: 刪除過程中出現伺服器錯誤
     """
-    db_api_key = db.query(ExchangeAPI).filter(
-        ExchangeAPI.user_id == current_user.id,
-        ExchangeAPI.exchange == exchange
-    ).first()
-    
-    if not db_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"未找到{exchange}的API密鑰"
-        )
-    
     try:
-        db.delete(db_api_key)
-        db.commit()
-        return {
-            "success": True,
-            "message": f"成功刪除{exchange}的API密鑰"
-        }
+        # 使用 ApiKeyManager 刪除 API 密鑰
+        api_key_manager = ApiKeyManager()
+        
+        # 檢查 API 密鑰是否存在
+        db_api_key = await api_key_manager.get_api_key(db, current_user.id, exchange)
+        if not db_api_key:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"未找到{exchange}的API密鑰"
+            )
+        
+        # 刪除 API 密鑰
+        deleted = await api_key_manager.delete_api_key(db, current_user.id, exchange)
+        
+        if deleted:
+            return {
+                "success": True,
+                "message": f"成功刪除{exchange}的API密鑰"
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="刪除API密鑰失敗"
+            )
+    except HTTPException:
+        raise
     except Exception as e:
-        db.rollback()
         logger.error(f"刪除API密鑰失敗: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -675,4 +717,156 @@ async def delete_avatar(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"删除头像失败: {str(e)}"
+        )
+
+# 添加虛擬密鑰相關的 API 端點
+
+class VirtualKeyCreate(BaseModel):
+    """創建虛擬密鑰請求"""
+    exchange_api_id: int = Field(..., description="API 密鑰 ID")
+    permissions: Dict[str, bool] = Field(
+        default_factory=lambda: {"read": True, "trade": True},
+        description="權限設置"
+    )
+    rate_limit: int = Field(60, description="速率限制（每分鐘請求數）")
+
+class VirtualKeyResponse(BaseModel):
+    """虛擬密鑰響應"""
+    success: bool
+    message: str
+    virtual_key_id: str
+
+class VirtualKeyPermissionUpdate(BaseModel):
+    """更新虛擬密鑰權限請求"""
+    permissions: Dict[str, bool] = Field(..., description="權限設置")
+
+@router.post("/virtual-keys", response_model=VirtualKeyResponse)
+async def create_virtual_key(
+    request: VirtualKeyCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> VirtualKeyResponse:
+    """
+    創建新的虛擬密鑰
+    
+    為現有的 API 密鑰創建虛擬密鑰，可以設置權限和使用限制。
+    虛擬密鑰用於 API 操作，而不是直接使用真實密鑰。
+    """
+    try:
+        # 使用 ApiKeyManager 創建虛擬密鑰
+        api_key_manager = ApiKeyManager()
+        
+        # 檢查 API 密鑰是否存在且屬於當前用戶
+        api_key = await api_key_manager.get_api_key_by_id(db, current_user.id, request.exchange_api_id)
+        
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"未找到 ID 為 {request.exchange_api_id} 的 API 密鑰"
+            )
+        
+        # 創建虛擬密鑰
+        virtual_key_id = await api_key_manager.create_virtual_key(
+            db=db,
+            user_id=current_user.id,
+            exchange_api_id=request.exchange_api_id,
+            permissions=request.permissions,
+            rate_limit=request.rate_limit
+        )
+        
+        return {
+            "success": True,
+            "message": f"成功創建虛擬密鑰",
+            "virtual_key_id": virtual_key_id
+        }
+    except Exception as e:
+        logger.error(f"創建虛擬密鑰失敗: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"創建虛擬密鑰失敗: {str(e)}"
+        )
+
+@router.put("/virtual-keys/{virtual_key_id}/permissions", response_model=Dict[str, Any])
+async def update_virtual_key_permissions(
+    virtual_key_id: str,
+    request: VirtualKeyPermissionUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """
+    更新虛擬密鑰權限
+    
+    更新指定虛擬密鑰的權限設置，可以控制是否允許讀取和交易操作。
+    """
+    try:
+        # 使用 ApiKeyManager 更新虛擬密鑰權限
+        api_key_manager = ApiKeyManager()
+        
+        # 更新權限
+        success = await api_key_manager.update_virtual_key_permissions(
+            db=db,
+            user_id=current_user.id,
+            virtual_key_id=virtual_key_id,
+            permissions=request.permissions
+        )
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"未找到虛擬密鑰 {virtual_key_id}"
+            )
+        
+        return {
+            "success": True,
+            "message": f"成功更新虛擬密鑰 {virtual_key_id} 的權限"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新虛擬密鑰權限失敗: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"更新虛擬密鑰權限失敗: {str(e)}"
+        )
+
+@router.delete("/virtual-keys/{virtual_key_id}", response_model=Dict[str, Any])
+async def deactivate_virtual_key(
+    virtual_key_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """
+    停用虛擬密鑰
+    
+    停用指定的虛擬密鑰，使其無法再用於 API 操作。
+    這不會刪除 API 密鑰本身，只是使虛擬密鑰失效。
+    """
+    try:
+        # 使用 ApiKeyManager 停用虛擬密鑰
+        api_key_manager = ApiKeyManager()
+        
+        # 停用虛擬密鑰
+        success = await api_key_manager.deactivate_virtual_key(
+            db=db,
+            user_id=current_user.id,
+            virtual_key_id=virtual_key_id
+        )
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"未找到虛擬密鑰 {virtual_key_id}"
+            )
+        
+        return {
+            "success": True,
+            "message": f"成功停用虛擬密鑰 {virtual_key_id}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"停用虛擬密鑰失敗: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"停用虛擬密鑰失敗: {str(e)}"
         ) 
