@@ -1054,15 +1054,30 @@ async def get_auth_config():
     特別是與令牌過期時間相關的設置，這樣前端可以
     隨著後端環境變數的變化而自動適應。
     """
+    # 將天數轉換為秒，方便前端直接使用
+    refresh_token_expires_in = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+    
     return {
+        # 訪問令牌有效期（分鐘）
         "access_token_expire_minutes": settings.ACCESS_TOKEN_EXPIRE_MINUTES,
+        
+        # 刷新令牌有效期（天）
         "refresh_token_expire_days": settings.REFRESH_TOKEN_EXPIRE_DAYS,
-        "refresh_threshold_seconds": 300,  # 提前5分鐘刷新
+        
+        # 刷新令牌有效期（秒）- 前端計算過期時間更方便
+        "refresh_token_expires_in": refresh_token_expires_in,
+        
+        # 刷新閾值（秒）- 當訪問令牌剩餘有效期少於此值時自動刷新
+        "refresh_threshold_seconds": settings.REFRESH_THRESHOLD_SECONDS,
+        
+        # 兩因素認證碼有效期（分鐘）
         "two_factor_expire_minutes": settings.TWO_FACTOR_EXPIRE_MINUTES,
+        
+        # Cookie安全設定
         "use_secure_cookies": settings.USE_SECURE_COOKIES,
         "cookie_domain": settings.COOKIE_DOMAIN,
         "cookie_samesite": settings.COOKIE_SAMESITE,
-    } 
+    }
 
 # 添加一個簡單的User Agent解析函數
 def parse_user_agent(user_agent_string: str) -> Dict[str, str]:

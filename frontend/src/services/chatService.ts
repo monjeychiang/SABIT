@@ -1,8 +1,7 @@
 import axios from 'axios'
-import { getTokenManager } from './tokenService'
+import { tokenService } from '@/services/token'
 
-// 获取TokenManager实例
-const tokenManager = getTokenManager()
+// 不再需要獲取 TokenManager 實例，因為 tokenService 已經是單例
 
 // 创建axios实例
 const apiClient = axios.create({
@@ -15,8 +14,8 @@ const apiClient = axios.create({
 // 请求拦截器，添加token
 apiClient.interceptors.request.use(
   config => {
-    // 使用TokenManager获取授权头
-    const authHeader = tokenManager.getAuthorizationHeader()
+    // 使用TokenService获取授权头
+    const authHeader = tokenService.getAuthHeader()
     if (authHeader) {
       config.headers['Authorization'] = authHeader
     }
@@ -53,7 +52,7 @@ export const chatService = {
   },
 
   // 获取指定会话的所有消息
-  async getChatMessages(sessionId) {
+  async getChatMessages(sessionId: number) {
     try {
       const response = await apiClient.get(`/api/v1/chat/sessions/${sessionId}`)
       return response.data
@@ -64,7 +63,7 @@ export const chatService = {
   },
 
   // 发送消息并获取回复
-  async sendMessage(sessionId, message) {
+  async sendMessage(sessionId: number, message: string) {
     try {
       const response = await apiClient.post(`/api/v1/chat/send`, {
         session_id: sessionId,
@@ -78,7 +77,7 @@ export const chatService = {
   },
 
   // 更新会话标题
-  async updateChatSession(sessionId, title) {
+  async updateChatSession(sessionId: number, title: string) {
     try {
       const response = await apiClient.put(`/api/v1/chat/sessions/${sessionId}`, { title })
       return response.data
@@ -89,7 +88,7 @@ export const chatService = {
   },
 
   // 删除会话
-  async deleteChatSession(sessionId) {
+  async deleteChatSession(sessionId: number) {
     try {
       await apiClient.delete(`/api/v1/chat/sessions/${sessionId}`)
       return true

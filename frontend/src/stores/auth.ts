@@ -1,11 +1,11 @@
 import { defineStore } from 'pinia'
 import { ref, computed, inject } from 'vue'
 import axios from 'axios'
-// 移除直接導入，改用全域實例
-// import tokenManager from '@/utils/tokenManager'
-import type { TokenManager } from '@/utils/tokenManager'
-// 引入TokenService單例
-import { getTokenManager } from '@/services/tokenService'
+// 移除舊的 TokenManager 引用
+// import type { TokenManager } from '@/utils/tokenManager'
+// import { getTokenManager } from '@/services/tokenService'
+// 改為引入新的 TokenService
+import { tokenService } from '@/services/token'
 import router from '@/router'
 // 引入 userStore，用於同步用戶資料
 import { useUserStore } from '@/stores/user'
@@ -25,8 +25,9 @@ interface RegisterData {
 }
 
 export const useAuthStore = defineStore('auth', () => {
-  // 獲取TokenManager單例，不再從依賴注入獲取
-  const tokenManager = getTokenManager();
+  // 不再獲取 TokenManager 單例
+  // const tokenManager = getTokenManager();
+  // 直接使用 tokenService
 
   const token = ref<string | null>(null)
   const refreshToken = ref<string | null>(null)
@@ -93,8 +94,8 @@ export const useAuthStore = defineStore('auth', () => {
       token.value = authToken
       refreshToken.value = newRefreshToken
       
-      // 使用tokenManager統一管理令牌
-      tokenManager.setTokens(
+      // 使用 tokenService 統一管理令牌
+      tokenService.setTokens(
         authToken, 
         newRefreshToken, 
         'bearer', 
@@ -181,10 +182,9 @@ export const useAuthStore = defineStore('auth', () => {
       // 因為涉及第三方認證，可能需要更長時間在後端系統中傳播
       await waitForTokenPropagation(2000); // 增加到2000毫秒
       
-      // 再使用tokenManager統一管理令牌
-      // 讓tokenManager根據keepLoggedIn狀態決定過期時間
+      // 使用 tokenService 統一管理令牌
       try {
-        const tokensSetResult = await tokenManager.setTokens(
+        const tokensSetResult = await tokenService.setTokens(
           accessTokenParam, 
           refreshTokenParam, 
           'bearer', 
@@ -192,308 +192,235 @@ export const useAuthStore = defineStore('auth', () => {
           refreshTokenExpiresIn
         )
         
-        // 如果tokenManager中沒有設置刷新令牌或與localStorage中不一致，則嘗試強制同步
-        if (!tokenManager.getRefreshToken() || tokenManager.getRefreshToken() !== refreshTokenParam) {
-          tokenManager.forceUpdateTokens(accessTokenParam, refreshTokenParam, 'bearer');
+        // 如果 tokenService 中沒有設置刷新令牌或與localStorage中不一致，則嘗試強制同步
+        if (!tokenService.getRefreshToken() || tokenService.getRefreshToken() !== refreshTokenParam) {
+          tokenService.forceUpdateTokens(accessTokenParam, refreshTokenParam, 'bearer');
         }
       } catch (tokenError) {
-        console.error('設置tokenManager時出錯:', tokenError);
-        // 即使tokenManager設置失敗，依然繼續流程
+        console.error('設置 tokenService 時出錯:', tokenError);
       }
       
-      // 同步用戶資料並強制獲取 - 新增代碼
+      // 等待Google令牌在後端服務傳播（需要更長的時間）
+      await waitForTokenPropagation(2000);
+      
       try {
+        console.log('嘗試獲取用戶資料');
         const userStore = useUserStore()
         userStore.setToken(accessTokenParam)
-        // 確保 auth_token 也被正確設置
-        localStorage.setItem('auth_token', accessTokenParam)
         await userStore.getUserData(true)
-      } catch (userError) {
-        console.error('Google登錄成功但獲取用戶資料失敗:', userError)
-        // 繼續流程，不影響登錄結果
+        console.log('成功獲取用戶資料')
+        
+        // 觸發認證事件
+        window.dispatchEvent(new Event('login-authenticated'))
+        
+        return {
+          success: true,
+          token: accessTokenParam
+        }
+      } catch (error) {
+        console.error('獲取用戶資料失敗:', error)
+        throw new Error('獲取用戶資料失敗')
       }
-      
-      return true
     } catch (error: any) {
-      console.error('Google回調處理錯誤:', error);
-      
-      // 檢查令牌是否設置成功，以便調用者判斷登錄狀態
-      const hasTokensSet = !!(token.value && refreshToken.value);
-      
-      // 即使出錯也確保狀態被清除，但只在令牌未設置成功時清除
-      if (!hasTokensSet) {
-        token.value = null;
-        refreshToken.value = null;
-        delete axios.defaults.headers.common['Authorization'];
-      }
-      
-      return hasTokensSet;
+      console.error('處理Google回調錯誤:', error)
+      error.value = error.response?.data?.detail || '處理Google登錄失敗'
+      throw new Error(error.response?.data?.detail || '處理Google登錄失敗')
     } finally {
       loading.value = false
     }
   }
 
-  // 註冊
+  // 注冊
   const register = async (data: RegisterData) => {
     try {
       loading.value = true
       error.value = null
       
-      // 準備註冊數據，包含推薦碼
-      const registerData = {
-        username: data.username,
-        email: data.email,
-        password: data.password,
-        confirm_password: data.confirm_password
+      const response = await axios.post('/api/v1/auth/register', data)
+      
+      return {
+        success: true,
+        message: '註冊成功，請登錄'
       }
-      
-      // 如果提供了推薦碼，添加到請求數據中
-      if (data.referral_code) {
-        Object.assign(registerData, { referral_code: data.referral_code })
-      }
-      
-      const response = await axios.post('/api/v1/auth/register', registerData)
-      
-      return response.data
     } catch (error: any) {
       console.error('註冊錯誤:', error)
-      error.value = error.response?.data?.detail || '註冊失敗'
-      throw new Error(error.response?.data?.detail || '註冊失敗')
+      error.value = error.response?.data?.detail || '註冊失敗，請檢查輸入信息'
+      throw new Error(error.response?.data?.detail || '註冊失敗，請檢查輸入信息')
     } finally {
       loading.value = false
     }
   }
 
-  // 刷新令牌
+  // 刷新訪問令牌
   const refreshAccessToken = async (keepLoggedIn = false) => {
     try {
-      loading.value = true
-      
-      // 使用tokenManager處理刷新邏輯，確保只有一套刷新邏輯
-      const refreshSuccess = await tokenManager.refreshAccessToken(keepLoggedIn);
-      
-      if (!refreshSuccess) {
-        clearAuth();
-        error.value = '令牌刷新失敗，請重新登錄';
-        return false;
+      // 檢查是否有刷新令牌
+      if (!refreshToken.value) {
+        console.error('沒有刷新令牌可用')
+        return false
       }
       
-      // 從tokenManager獲取更新後的令牌狀態
-      const tokenStatus = tokenManager.getTokenStatus();
-      
-      // 更新store中的令牌
-      if (tokenStatus.accessToken) {
-        token.value = tokenStatus.accessToken;
-        setAxiosAuthHeader(tokenStatus.accessToken);
+      // 使用 tokenService 刷新令牌
+      const result = await tokenService.refreshTokenIfNeeded()
+      if (result) {
+        // 更新本地 token 變量
+        token.value = tokenService.getAccessToken()
+        refreshToken.value = tokenService.getRefreshToken()
+        return true
       }
       
-      if (tokenStatus.refreshToken) {
-        refreshToken.value = tokenStatus.refreshToken;
-      }
-      
-      // 等待令牌傳播
-      await waitForTokenPropagation();
-      
-      return true;
-    } catch (error: any) {
-      console.error('刷新令牌錯誤:', error);
-      clearAuth();
-      error.value = '令牌刷新失敗，請重新登錄';
-      return false;
-    } finally {
-      loading.value = false;
+      return false
+    } catch (error) {
+      console.error('刷新令牌錯誤:', error)
+      return false
     }
   }
 
   // 登出
   const logout = async () => {
     try {
-      // 防止重複調用
-      if (loading.value) {
-        return true;
-      }
-      
       loading.value = true
       
-      // 使用tokenManager作為唯一的登出實現者
-      // 它會處理API調用、令牌清除和事件觸發
-      const success = await tokenManager.logout();
+      // 清除 tokenService 中的令牌
+      tokenService.clearTokens()
       
-      // 只更新本地狀態，不進行重複的令牌清除
-      token.value = null;
-      refreshToken.value = null;
+      // 清除本地存儲的令牌
+      clearAuth()
       
-      // 清除axios授權頭
-      delete axios.defaults.headers.common['Authorization'];
+      // 分發登出事件
+      window.dispatchEvent(new Event('auth:logout'))
       
-      return success;
+      // 將用戶重定向到首頁，而非直接使用特定的路由名稱
+      try {
+        // 判斷當前路由是否需要認證，如果需要則跳轉到首頁
+        const currentRoute = router.currentRoute.value;
+        if (currentRoute.meta.requiresAuth === true && currentRoute.path !== '/') {
+          await router.push('/');
+        }
+      } catch (routerError) {
+        console.warn('登出後導航失敗，但不影響登出流程', routerError)
+      }
+      
+      return {
+        success: true,
+        message: '登出成功'
+      }
     } catch (error: any) {
-      console.error('登出錯誤:', error);
+      console.error('登出錯誤:', error)
+      error.value = '登出發生錯誤'
       
-      // 即使出錯也確保狀態被清除
-      token.value = null;
-      refreshToken.value = null;
-      delete axios.defaults.headers.common['Authorization'];
+      // 即使出錯也嘗試清除令牌
+      try {
+        tokenService.clearTokens();
+        clearAuth();
+      } catch {}
       
-      return true;
+      return {
+        success: false,
+        message: '登出發生錯誤'
+      }
     } finally {
-      loading.value = false;
+      loading.value = false
     }
   }
 
-  // 初始化認證狀態
+  // 初始化認證狀態（應用啟動時調用）
   const initAuth = async () => {
-    const savedToken = localStorage.getItem('token')
-    const savedRefreshToken = localStorage.getItem('refreshToken')
-    
-    if (savedToken && savedRefreshToken) {
-      token.value = savedToken
-      refreshToken.value = savedRefreshToken
-      
-      // 確保 auth_token 和 token 保持一致
-      localStorage.setItem('auth_token', savedToken)
-      
-      // 檢查令牌是否過期
-      const tokenExpiry = localStorage.getItem('tokenExpiry')
-      const keepLoggedIn = localStorage.getItem('keepLoggedIn') === 'true'
-      
-      if (tokenExpiry) {
-        const expiryDate = new Date(tokenExpiry)
-        const now = new Date()
-        const timeUntilExpiry = expiryDate.getTime() - now.getTime();
+    try {
+      // 檢查 tokenService 中是否有有效令牌
+      if (tokenService.isAuthenticated()) {
+        token.value = tokenService.getAccessToken()
+        refreshToken.value = tokenService.getRefreshToken()
         
-        // 檢查令牌是否有效
-        let isTokenValid = expiryDate > now;
-        
-        // 如果令牌已過期
-        if (!isTokenValid) {
-          // 只有在保持登入狀態下才嘗試刷新
-          if (keepLoggedIn) {
-            const refreshSuccess = await refreshAccessToken(keepLoggedIn)
-            
-            if (!refreshSuccess) {
-              clearAuth()
-              return false
-            } else {
-              isTokenValid = true;
-            }
-          } else {
-            // 非保持登入狀態下，令牌過期直接登出
-            clearAuth();
-            return false;
-          }
-        } else if (timeUntilExpiry < 5 * 60 * 1000) {
-          // 令牌即將過期（小於5分鐘）
-          if (keepLoggedIn) {
-            // 保持登入狀態下，提前刷新令牌
-            const refreshSuccess = await refreshAccessToken(keepLoggedIn);
-            if (!refreshSuccess) {
-              clearAuth();
-              return false;
-            } else {
-              isTokenValid = true;
-            }
-          }
-          // 非保持登入狀態下，讓TokenManager處理過期登出
-        } else {
-          // 令牌未過期，設置全局授權頭
-          setAxiosAuthHeader(savedToken);
-        }
-        
-        // 如果令牌有效，同步並獲取用戶資料 - 新增代碼
-        if (isTokenValid) {
+        // 設置 axios 授權頭
+        if (token.value) {
+          setAxiosAuthHeader(token.value)
+          
           try {
+            // 同步用戶資料
             const userStore = useUserStore()
-            userStore.setToken(savedToken)
+            userStore.setToken(token.value)
             await userStore.getUserData(true)
-          } catch (error) {
-            console.error('令牌有效但獲取用戶資料失敗:', error)
+            
+            return { authenticated: true }
+          } catch (e) {
+            console.error('初始化認證時獲取用戶資料失敗：', e)
+            
+            // 檢查是否可以刷新令牌
+            if (tokenService.isTokenExpired() && refreshToken.value) {
+              // 嘗試刷新令牌並重新獲取用戶資料
+              const refreshed = await refreshAccessToken(localStorage.getItem('keepLoggedIn') === 'true')
+              if (refreshed) {
+                // 再次嘗試獲取用戶資料
+                const userStore = useUserStore()
+                userStore.setToken(token.value!)
+                await userStore.getUserData(true)
+                return { authenticated: true }
+            } else {
+                // 刷新失敗，清除認證狀態
+                await logout()
+                return { authenticated: false, reason: 'refresh_failed' }
+              }
+            } else {
+              // 令牌未過期但仍無法獲取用戶資料，可能是令牌已被撤銷
+              await logout()
+              return { authenticated: false, reason: 'token_revoked' }
+            }
           }
         }
-        
-        return isTokenValid;
-      } else {
-        clearAuth();
-        return false;
       }
+      
+      // 沒有有效令牌
+      return { authenticated: false, reason: 'no_token' }
+    } catch (error) {
+      console.error('初始化認證狀態錯誤:', error)
+      // 發生錯誤，清除可能損壞的認證狀態
+      clearAuth()
+      return { authenticated: false, reason: 'error' }
     }
-    
-    return false
   }
 
   // 檢查認證狀態
   const checkAuth = async () => {
-    const savedToken = localStorage.getItem('token')
-    if (!savedToken) {
-      clearAuth()
+    try {
+      // 使用 tokenService 檢查令牌狀態
+      const tokenStatus = tokenService.getTokenStatus()
+      
+      // 如果沒有令牌或令牌已過期，返回 false
+      if (!tokenStatus.isAuthenticated) {
+        // 嘗試刷新令牌
+        if (tokenStatus.refreshToken && (tokenStatus.isExpired || tokenStatus.isExpiringSoon)) {
+          const refreshed = await refreshAccessToken(localStorage.getItem('keepLoggedIn') === 'true')
+          return refreshed
+        }
+        return false
+      }
+      
+      return true
+    } catch (error) {
+      console.error('檢查認證狀態錯誤:', error)
       return false
     }
-
-    token.value = savedToken
-    // 設置默認的Authorization header
-    setAxiosAuthHeader(savedToken)
-    
-    // 檢查令牌是否過期
-    const tokenExpiry = localStorage.getItem('tokenExpiry')
-    const keepLoggedIn = localStorage.getItem('keepLoggedIn') === 'true'
-    
-    if (tokenExpiry) {
-      const expiryDate = new Date(tokenExpiry)
-      const now = new Date()
-      const timeUntilExpiry = expiryDate.getTime() - now.getTime();
-      
-      // 如果令牌已過期或即將過期
-      if (expiryDate <= now) {
-        // 只有在保持登入狀態下才嘗試刷新
-        if (keepLoggedIn) {
-          const refreshSuccess = await refreshAccessToken(keepLoggedIn);
-          if (!refreshSuccess) {
-            clearAuth();
-            return false;
-          }
-        } else {
-          // 非保持登入狀態下，令牌過期直接登出
-          clearAuth();
-          return false;
-        }
-      } else if (timeUntilExpiry < 5 * 60 * 1000) {
-        // 令牌即將過期（小於5分鐘）
-        if (keepLoggedIn) {
-          // 保持登入狀態下，提前刷新令牌
-          const refreshSuccess = await refreshAccessToken(keepLoggedIn);
-          if (!refreshSuccess) {
-            clearAuth();
-            return false;
-          }
-        }
-        // 非保持登入狀態下，讓TokenManager處理過期登出
+  }
+  
+  // 預熱CCXT連接 - 在用戶登錄後調用，減少首次交易的延遲
+  const preheatCcxtConnections = async () => {
+    try {
+      if (!tokenService.isAuthenticated()) {
+        console.log('用戶未登錄，不需要預熱CCXT連接')
+        return false
       }
-    }
-    
-    // 檢查令牌是否真的有效（通過TokenManager）
-        const isTokenStillValid = tokenManager.isAuthenticated() && !tokenManager.isTokenExpired();
-        
-        if (isTokenStillValid) {
-          return true;
-    } else {
-      clearAuth();
-      return false;
+      
+      console.log('預熱CCXT連接...')
+      await axios.post('/api/v1/trading/preheat')
+      console.log('CCXT連接預熱成功')
+      return true
+    } catch (error) {
+      console.error('預熱CCXT連接失敗:', error)
+      // 預熱失敗不影響用戶使用，只是可能會有首次交易延遲
+      return false
     }
   }
-
-  // 添加令牌過期事件監聽
-  window.addEventListener('auth:token-expired', () => {
-    // 使用tokenManager.clearTokens代替clearAuth
-    // 確保只有一個地方負責清除令牌
-    tokenManager.clearTokens();
-    // 更新本地狀態
-    token.value = null;
-    refreshToken.value = null;
-    delete axios.defaults.headers.common['Authorization'];
-    
-    // 可以在這裡添加通知用戶的邏輯
-    router.push('/auth/login?expired=true');
-  });
 
   return {
     token,
@@ -506,11 +433,10 @@ export const useAuthStore = defineStore('auth', () => {
     handleGoogleCallback,
     register,
     logout,
+    refreshAccessToken,
     initAuth,
     checkAuth,
-    refreshAccessToken,
     clearAuth,
-    // 導出配置參數，允許應用層面調整
-    tokenPropagationDelay
-  };
-}); 
+    preheatCcxtConnections
+  }
+}) 

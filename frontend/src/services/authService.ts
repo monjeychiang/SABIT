@@ -1,12 +1,13 @@
 import { useAuthStore } from '@/stores/auth';
-import { useUserStore } from '@/stores/user';
+import { useUserStore, type User } from '@/stores/user';
 import { useChatroomStore } from '@/stores/chatroom';
 import { useNotificationStore } from '@/stores/notification';
 import { useOnlineStatusStore } from '@/stores/online-status';
 import mainWebSocketManager from '@/services/webSocketService';
 import { accountWebSocketService } from '@/services/accountWebSocketService';
 import { tradingService } from '@/services/tradingService';
-import type { User } from '@/stores/user';
+import axios from 'axios';
+import { tokenService } from '@/services/token';
 
 // 定義登入憑證介面
 interface LoginCredentials {
@@ -271,25 +272,92 @@ export const authService = {
    * 登出用戶
    */
   async logout() {
+    console.log('[AuthService] 統一關閉所有WebSocket連線');
+    // 先关闭所有WebSocket连接
+    this.closeAllWebSockets();
+    
+    console.log('[AuthService] 所有WebSocket連線已關閉');
+    
     const authStore = useAuthStore();
     const userStore = useUserStore();
     const chatroomStore = useChatroomStore();
     const notificationStore = useNotificationStore();
     
-    // 先关闭所有WebSocket连接
-    this.closeAllWebSockets();
-    
     // 重置聊天室状态
     chatroomStore.resetState();
     notificationStore.resetState();
     
-    // 先登出 auth store
-    await authStore.logout();
-    
-    // 再登出 user store
-    userStore.logout();
-    
-    return true;
+    try {
+      // 從 authStore 獲取當前刷新令牌（而非訪問令牌）
+      const currentRefreshToken = authStore.refreshToken;
+      
+      // 如果用戶已登入且有有效刷新令牌，嘗試調用登出 API
+      if (currentRefreshToken) {
+        try {
+          // 嘗試帶有表單格式的請求，使用正確的參數名稱 'refresh_token'
+          try {
+            const formData = new FormData();
+            formData.append('refresh_token', currentRefreshToken);
+            
+            await axios.post('/api/v1/auth/logout', formData, {
+              headers: {
+                'Content-Type': 'multipart/form-data'
+              }
+            });
+            console.log('[AuthService] 登出 API 調用成功 (表單格式)');
+            // 如果成功，不再嘗試其他格式
+            return await this.finalizeLogout(authStore, userStore);
+          } catch (formError) {
+            console.warn('[AuthService] 表單格式登出請求失敗:', formError);
+            // 即使API調用失敗，也繼續本地登出流程
+          }
+        } catch (error) {
+          // 捕獲但不拋出錯誤，確保登出流程繼續
+          console.warn('[AuthService] 登出 API 調用失敗，繼續本地登出流程', error);
+        }
+      } else {
+        console.warn('[AuthService] 沒有刷新令牌可用於登出 API 調用');
+      }
+      
+      // 無論 API 是否成功，都完成本地登出流程
+      return await this.finalizeLogout(authStore, userStore);
+    } catch (error) {
+      console.error('[AuthService] 登出過程中發生錯誤:', error);
+      
+      // 即使發生錯誤，也確保清除用戶狀態
+      try {
+        tokenService.clearTokens();
+        userStore.logout();
+      } catch (e) {
+        console.error('[AuthService] 登出時清除用戶狀態失敗:', e);
+      }
+      
+      return false;
+    }
+  },
+  
+  /**
+   * 完成登出流程的最後步驟
+   * @private
+   */
+  async finalizeLogout(authStore: any, userStore: any): Promise<boolean> {
+    try {
+      // 先登出 auth store (這會清除令牌)
+      await authStore.logout();
+      
+      // 再登出 user store
+      userStore.logout();
+      
+      console.log('[AuthService] 登出完成');
+      return true;
+    } catch (e) {
+      console.error('[AuthService] 完成登出過程失敗:', e);
+      
+      // 確保令牌被清除
+      tokenService.clearTokens();
+      
+      return false;
+    }
   },
   
   /**

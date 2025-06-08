@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7天有效期
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7  # 7天刷新令牌有效期
     TWO_FACTOR_EXPIRE_MINUTES: int = 10  # 兩因素認證碼有效期
+    REFRESH_THRESHOLD_SECONDS: int = int(os.getenv("REFRESH_THRESHOLD_SECONDS", "300"))  # 令牌刷新閾值（秒）
     
     # 加密設定：用於敏感資料加密的密鑰
     ENCRYPTION_KEY: str = os.getenv("ENCRYPTION_KEY", "your-encryption-key")
@@ -50,9 +51,9 @@ class Settings(BaseSettings):
     FRONTEND_CALLBACK_URL: str = os.getenv("FRONTEND_CALLBACK_URL", "http://localhost:5175/auth/callback")
     
     # Cookie 設定
-    USE_SECURE_COOKIES: bool = False
-    COOKIE_DOMAIN: Optional[str] = None
-    COOKIE_SAMESITE: str = "lax"
+    USE_SECURE_COOKIES: bool = os.getenv("USE_SECURE_COOKIES", "False").lower() == "true"
+    COOKIE_DOMAIN: Optional[str] = os.getenv("COOKIE_DOMAIN")
+    COOKIE_SAMESITE: str = os.getenv("COOKIE_SAMESITE", "lax")
     
     # Gemini API相關設定
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")

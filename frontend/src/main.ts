@@ -5,10 +5,9 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 import axios from 'axios'
-// 引入TokenManager类型，但不直接创建实例
-import { TokenManager } from './utils/tokenManager'
-// 引入新的TokenService单例
-import { getTokenManager, initializeTokenService } from './services/tokenService'
+// 引入新的 TokenService
+import { tokenService } from './services/token'
+// 已刪除向後兼容層，移除此引用
 import { useAuthStore } from './stores/auth'
 import { useChatroomStore } from './stores/chatroom'
 import { useOnlineStatusStore } from './stores/online-status'
@@ -44,24 +43,15 @@ const initApp = async () => {
   // 設置axios基礎URL（在開發環境中，Vite處理代理）
   axios.defaults.baseURL = import.meta.env.VITE_API_BASE_URL || '';
   
-  // 初始化TokenService（这将只创建一个TokenManager实例）
-  await initializeTokenService();
-  
-  // 获取TokenManager实例
-  const tokenManagerInstance = getTokenManager();
-  console.log('已獲取TokenManager單例');
-  
-  // 設置tokenManager為全局可用 (为了向后兼容)
-  window.tokenManager = tokenManagerInstance;
-  
-  console.log('已設置全局axios攔截器');
+  // 初始化 TokenService 並設置 axios 攔截器
+  console.log('初始化 Token 服務');
+  tokenService.setupAxiosInterceptors(axios);
   
   // 創建Vue應用實例
   const app = createApp(App);
   
-  // 註冊全局屬性
-  app.provide('tokenManager', tokenManagerInstance);
-  app.config.globalProperties.$tokenManager = tokenManagerInstance;
+  // 註冊全局屬性 - 使用新的 tokenService
+  app.provide('tokenService', tokenService);
   
   // 使用插件
   const pinia = createPinia();
@@ -139,6 +129,8 @@ const initApp = async () => {
   // 监听登出事件
   window.addEventListener('auth:logout', () => {
     // 用户登出时重置状态
+    const chatroomStore = useChatroomStore();
+    const onlineStatusStore = useOnlineStatusStore();
     chatroomStore.resetState()
     onlineStatusStore.resetState()
     // 重置初始化標記
@@ -197,6 +189,7 @@ initApp().catch(error => {
 // 擴展Window接口以支持自定義屬性
 declare global {
   interface Window {
-    tokenManager: TokenManager;
+    // 已移除 tokenManager，不再使用全局變量
+    // 改用 import { tokenService } from '@/services/token'
   }
 }

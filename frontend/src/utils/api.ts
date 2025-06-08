@@ -1,9 +1,9 @@
 import axios from 'axios'
-import { getTokenManager } from '@/services/tokenService'
+import { tokenService } from '@/services/token'
 import { useAuthStore } from '@/stores/auth'
 
-// 獲取 tokenManager 實例
-const tokenManager = getTokenManager()
+// 獲取 tokenService 實例
+// 不再需要獲取實例，因為 tokenService 已經是單例
 
 // 創建API實例
 const api = axios.create({
@@ -16,8 +16,8 @@ const api = axios.create({
 // 請求攔截器
 api.interceptors.request.use(
   (config) => {
-    // 使用TokenManager獲取授權頭
-    const authHeader = tokenManager.getAuthorizationHeader()
+    // 使用TokenService獲取授權頭
+    const authHeader = tokenService.getAuthHeader()
     if (authHeader) {
       config.headers.Authorization = authHeader
     }
@@ -56,12 +56,12 @@ api.interceptors.response.use(
         }
         
         // 嘗試刷新令牌
-        const refreshSuccess = await tokenManager.refreshAccessToken()
+        const refreshSuccess = await tokenService.refreshTokenIfNeeded()
         
         if (refreshSuccess) {
           // 更新授權頭
           const config = error.config
-          const authHeader = tokenManager.getAuthorizationHeader()
+          const authHeader = tokenService.getAuthHeader()
           if (authHeader) {
             config.headers.Authorization = authHeader
           }
@@ -129,12 +129,12 @@ api.interceptors.response.use(
 
 // 提供刷新令牌的方法
 const refreshToken = async (keepLoggedIn = false) => {
-  return tokenManager.refreshAccessToken(keepLoggedIn)
+  return tokenService.refreshTokenIfNeeded()
 }
 
 // 提供登出方法
 const logout = async () => {
-  return tokenManager.logout()
+  return tokenService.clearTokens()
 }
 
 export { api, refreshToken, logout } 

@@ -1,8 +1,7 @@
 import axios from 'axios'
-import { getTokenManager } from './tokenService'
+import { tokenService } from '@/services/token'
 
-// 获取TokenManager实例
-const tokenManager = getTokenManager()
+// 不再需要獲取 TokenManager 實例，因為 tokenService 已經是單例
 
 // 创建axios实例
 const apiClient = axios.create({
@@ -15,8 +14,8 @@ const apiClient = axios.create({
 // 请求拦截器，添加token
 apiClient.interceptors.request.use(
   config => {
-    // 使用TokenManager获取授权头
-    const authHeader = tokenManager.getAuthorizationHeader()
+    // 使用TokenService获取授权头
+    const authHeader = tokenService.getAuthHeader()
     if (authHeader) {
       config.headers['Authorization'] = authHeader
     }

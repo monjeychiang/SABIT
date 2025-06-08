@@ -1,5 +1,149 @@
 # 變更摘要
 
+## 2023-10-04: 完善認證系統配置 - 新增 Refresh Token 有效期
+
+### 背景
+在檢查認證系統配置時，發現前端顯示的認證參數中缺少了 refresh token 有效期的明確設定，這可能影響到系統對 refresh token 過期時間的正確處理。
+
+### 變更內容
+1. 修改 `backend/app/api/endpoints/auth.py` 中的 `/config` 端點：
+   - 新增 `refresh_token_expires_in` 參數（以秒為單位）
+   - 將 refresh token 有效期由天轉換為秒，方便前端直接使用
+   - 為每個配置參數添加了清晰的中文註釋說明其用途
+
+2. 更新 `frontend/src/services/token.ts` 中的 TokenService：
+   - 在 `backendConfig` 介面中添加了 `refresh_token_expires_in` 屬性
+   - 改進 `setTokens` 方法，使其能夠正確處理 refresh token 的過期時間
+   - 實現了多級優先策略：優先使用後端配置，其次使用參數值，最後使用默認配置
+
+### 技術說明
+- refresh token 過期時間現在以三種形式提供：
+  1. `refresh_token_expire_days`：以天為單位的設定（主要用於配置）
+  2. `refresh_token_expires_in`：以秒為單位的設定（用於前端計算）
+  3. 傳入 `setTokens` 方法的 `refreshTokenExpiresIn` 參數（由特定API返回）
+- 改進的日誌記錄顯示了 refresh token 過期時間的來源和具體值
+- 過期時間保存到 localStorage，確保頁面刷新後仍能正確判斷
+
+### 效果
+- 完善了認證系統配置，確保前端正確顯示和處理 refresh token 有效期
+- 提高了系統穩定性，避免因配置不完整導致的令牌刷新問題
+- 增強了日誌信息，便於診斷和監控令牌管理相關問題
+- 保持了向後兼容性，支持舊版本的配置方式
+
+## 2023-10-03: 完整實現認證參數設定系統
+
+### 背景
+在檢查系統配置時，發現前端顯示的認證參數（refresh threshold、cookie設定等）直接硬編碼在後端API中，而非通過環境變數配置。這種做法降低了系統的靈活性和可配置性，不符合模組化開發的原則。
+
+### 變更內容
+1. 在`backend/app/core/config.py`中添加了新的配置參數：
+   - `REFRESH_THRESHOLD_SECONDS`：令牌刷新閾值，控制當訪問令牌剩餘有效期少於多少秒時自動刷新
+   - 將`USE_SECURE_COOKIES`、`COOKIE_DOMAIN`、`COOKIE_SAMESITE`改為從環境變數讀取
+
+2. 更新了`backend/app/api/endpoints/auth.py`中的`/config`端點：
+   - 使用`settings.REFRESH_THRESHOLD_SECONDS`代替硬編碼的300秒值
+
+3. 在`.env`文件中添加了新的環境變數設定：
+   - `REFRESH_THRESHOLD_SECONDS=300`
+   - `USE_SECURE_COOKIES=false`
+   - `COOKIE_DOMAIN=`（留空表示使用當前域名）
+   - `COOKIE_SAMESITE=lax`
+   - 並加入了詳細的中文註釋說明每個參數的用途
+
+### 技術說明
+- 所有認證相關的配置參數現在都可以通過環境變數控制
+- 系統會使用合理的默認值，即使環境變數未設置
+- 前端通過`/api/v1/auth/config`端點動態獲取這些設定
+- 這些參數對令牌刷新和Cookie安全性至關重要
+
+### 效果
+- 提高了系統配置的靈活性，可以根據不同環境調整參數
+- 增強了系統安全性，可在生產環境啟用安全Cookie
+- 改善了代碼的可維護性，減少了硬編碼值
+- 完成了認證系統設定的模組化，符合最佳實踐
+
+## 2023-10-02: 完成 TokenService 遷移清理工作
+
+### 背景
+在 2023-10-01 的遷移工作中，我們已經將所有對 TokenManager 和舊版 TokenService 的引用更新為使用新的 tokenService 單例。然而，為了確保系統平穩過渡，我們保留了向後兼容層和舊有的檔案。現在所有系統組件已經穩定運行，可以安全地移除這些過渡文件。
+
+### 變更內容
+1. 完全刪除了舊版程式碼：
+   - `frontend/src/utils/tokenManager.ts`
+   - `frontend/src/services/tokenService.ts`
+   - `frontend/src/utils/backwardCompatibility.ts`
+
+2. 移除了 Window 介面中的 tokenManager 全局變量定義
+
+3. 修正了所有與 TokenService 方法相關的型別錯誤：
+   - 將 `getAuthorizationHeader()` 更正為 `getAuthHeader()`
+   - 將 `refreshAccessToken()` 更正為 `refreshTokenIfNeeded()`
+   - 將 `logout()` 更正為 `clearTokens()`
+
+### 技術說明
+- 系統現在完全使用新的 TokenService 單例實現
+- 不再依賴全局變量 `window.tokenManager`
+- 改進了型別安全性，明確定義了所有方法參數的型別
+- 移除了向後兼容層，減少了代碼複雜度
+
+### 效果
+- 減少了約 1,400 行不必要的代碼
+- 提高了系統的穩定性和可維護性
+- 消除了由多層抽象引起的混淆
+- 完成了令牌管理系統現代化的最後一步
+- 減少了函數調用堆疊，可能略微提升效能
+
+## 2023-10-01: 完成 TokenService 遷移工作
+
+### 背景
+在之前的架構重構中，我們已經合併了 TokenManager 和 TokenService 為單一的 TokenService 單例實現。然而，系統中仍有多個組件和服務使用舊的 getTokenManager() 方法獲取 TokenManager 實例。為了完成完整的遷移，需要將所有這些引用更新為直接使用新的 tokenService 單例。
+
+### 變更內容
+1. 更新了以下文件中的 TokenManager 引用為 TokenService：
+   - `frontend/src/utils/api.ts`
+   - `frontend/src/services/chatService.ts`
+   - `frontend/src/services/chatroomService.ts`
+
+2. 移除了所有 `import { getTokenManager } from '@/services/tokenService'` 引用，替換為 `import { tokenService } from '@/services/token'`
+
+3. 移除了通過 getTokenManager() 獲取實例的代碼，直接使用 tokenService 單例
+
+### 技術說明
+- 完全移除了對 getTokenManager() 方法的依賴
+- 所有服務現在直接使用統一的 tokenService 單例
+- 保持了 API 的一致性，所有方法名稱和功能保持不變
+- 通過向後兼容層確保舊代碼仍能正常工作
+
+### 效果
+- 簡化了代碼結構，移除了不必要的抽象層
+- 提高了系統的可維護性，所有令牌相關功能都集中在一個服務中
+- 減少了模塊間的依賴，使代碼更加模塊化
+- 完成了系統架構優化的最後一步，實現了完全的令牌管理統一
+
+## 2024-07-XX: 前端頁面背景改為漸層色設計
+
+### 背景
+為了提升使用者界面的視覺效果和現代感，決定將原本單一顏色的頁面背景修改為漸層色設計。這種漸層背景能提供更加視覺化的深度和層次感，讓整個應用程式看起來更加專業和現代化。
+
+### 變更內容
+1. 修改了 `frontend/src/assets/main.css` 文件中的背景設定：
+   - 新增了 `--background-gradient` CSS 變數到根樣式中
+   - 為淺色主題設定漸層背景：`linear-gradient(135deg, #f9fafb 0%, #e6f0ff 100%)`
+   - 為深色主題設定漸層背景：`linear-gradient(135deg, #121212 0%, #1e2940 100%)`
+   - 將 `body` 和 `.page-container` 的 `background-color` 屬性更改為使用 `background: var(--background-gradient)`
+
+### 技術說明
+- 使用 CSS 漸層背景提供更有深度的視覺效果
+- 保留了深色模式與淺色模式的主題切換機制
+- 漸層角度設定為 135 度，創造右上到左下的對角線漸層效果
+- 使用與原始顏色方案相協調的顏色，確保與其他UI元素的視覺和諧
+
+### 效果
+- 提升了整體用戶界面的視覺吸引力
+- 為應用程式增添了更多視覺深度和層次
+- 保持了主題切換功能的完整性
+- 改善了用戶體驗，使界面更現代化和專業化
+
 ## 2023-11-XX: 優化 CCXT 連接預熱功能減少冗餘日誌輸出
 
 ### 背景
@@ -353,4 +497,34 @@
 ### 效果
 - 修復了 CCXT 連接預熱功能，用戶登入後能夠成功預熱連接。
 - 減少了用戶首次交易操作的延遲時間。
-- 提高了系統的錯誤處理能力和用戶體驗。 
+- 提高了系統的錯誤處理能力和用戶體驗。
+
+## 2023-10-01: Token 管理系統重構
+
+### 變更摘要
+重新設計前端的令牌（Token）管理機制，將原有的 TokenManager 和 TokenService 合併為單一的 TokenService 單例實現。
+
+### 技術細節
+- 實現了統一的 TokenService 單例類，整合所有令牌管理功能
+- 提供向後兼容層，確保現有代碼持續運作
+- 更新了應用初始化流程，使用新的 TokenService
+- 添加了遷移文檔，幫助開發者從舊系統遷移到新系統
+
+### 動機
+1. 消除「解決不了就再加一層」的情況，簡化系統架構
+2. 減少重複代碼和多餘的抽象層
+3. 提高認證機制的可維護性和可測試性
+4. 消除對全局變量的依賴，改進模塊化設計
+
+### 影響範圍
+- 所有依賴 TokenManager 和 TokenService 的組件
+- 主應用初始化流程
+- 認證相關功能
+
+### 遷移計劃
+分三階段完成遷移：
+1. 建立新架構並提供向後兼容層（當前階段）
+2. 逐步更新各組件和服務使用新的 TokenService
+3. 一旦所有代碼都更新，移除向後兼容層
+
+詳細遷移指南請參見 `frontend/src/docs/TOKEN_MIGRATION.md`。 

@@ -25,6 +25,7 @@
   
   /* 背景顏色 - 簡潔明亮 */
   --background-color: #f9fafb;
+  --background-gradient: linear-gradient(135deg, #ffffff 0%, #c9e0ff 100%);
   --surface-color: #ffffff;
   --card-background: #ffffff;
   --hover-color: #f0f4f8;
@@ -90,6 +91,7 @@ body.dark-theme {
   --text-tertiary: #768390;
   
   --background-color: #121212;
+  --background-gradient: linear-gradient(135deg, #121212 0%, #2d4b8a 100%);
   --surface-color: #1e1e1e;
   --card-background: #282828;
   --hover-color: #2c2c2c;
@@ -113,14 +115,14 @@ html, body {
 }
 
 body {
-  background-color: var(--background-color);
+  background: var(--background-gradient);
   color: var(--text-primary);
   min-height: 100vh;
 }
 
 /* 页面级容器 */
 .page-container {
-  background-color: var(--background-color);
+  background: var(--background-gradient);
   color: var(--text-primary);
   min-height: 100vh;
   transition: background-color 0.3s ease, color 0.3s ease;
