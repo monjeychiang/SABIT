@@ -1,3 +1,243 @@
+# 變更摘要
+
+## 2023-11-XX: 優化 CCXT 連接預熱功能減少冗餘日誌輸出
+
+### 背景
+在使用 CCXT 連接預熱功能時，系統會產生大量詳細的交易所 API 響應日誌，這些日誌包含所有交易對的詳細配置信息。雖然這些信息對於調試很有用，但在正常運行時可能會佔用大量日誌空間，影響系統監控的可讀性。
+
+### 變更內容
+1. 修改了 `backend/app/services/trading.py` 中的 `preheat_exchange_connection` 方法：
+   - 添加了臨時調整 CCXT 日誌級別的邏輯
+   - 在方法開始時保存原始日誌級別並將 CCXT 日誌級別提高到 WARNING
+   - 在方法結束時恢復原始日誌級別
+
+### 技術細節
+- 具體調整了 `ccxt` 和 `ccxt.base.exchange` 兩個日誌記錄器的級別
+- 使用 `finally` 區塊確保無論預熱成功與否都會恢復原始日誌級別
+- 此修改不影響預熱功能的正常運作，只減少了日誌輸出
+
+### 影響
+- 大幅減少了預熱過程中產生的冗餘日誌
+- 提高了系統日誌的可讀性
+- 減少了日誌檔案大小和存儲需求
+- 保留了必要的信息日誌，確保仍能監控預熱過程的成功與否
+
+## 2023-11-XX: 修復 CCXT 連接預熱功能中的匯入錯誤
+
+### 背景
+在 `preheat_exchange_connection` 方法中發現了一個匯入錯誤，系統嘗試使用 `from ...db.models import User` 進行匯入，但這種相對匯入路徑在當前模組結構中是不正確的，導致 Pylance 報告 "無法解析匯入 \"...db.models\"" 錯誤。
+
+### 變更內容
+1. 修改了 `backend/app/services/trading.py` 中的 `preheat_exchange_connection` 方法：
+   - 移除了重複的 `from ...db.models import User` 匯入語句
+   - 使用已經在文件頂部正確匯入的 `User` 模型
+
+### 技術細節
+- 問題原因：在方法內部使用了不正確的相對匯入路徑
+- 解決方案：移除冗餘匯入，使用文件頂部已經正確匯入的模型
+- 這種修改確保了代碼的一致性和正確性，同時解決了靜態類型檢查工具報告的錯誤
+
+### 影響
+- 修復了 IDE 中顯示的匯入錯誤
+- 提高了代碼的可讀性和一致性
+- 確保 CCXT 連接預熱功能能夠正確運行
+
+## 2024-06-15: PowerShell 命令運行方式調整
+
+### 背景
+在 Windows PowerShell 環境中，`&&` 不是有效的命令分隔符，這與 Bash 和 CMD 環境不同。在嘗試運行如 `cd backend && python main.py` 這樣的命令時會出現 `The token '&&' is not a valid statement separator in this version` 錯誤。
+
+### 變更內容
+1. 更新開發文檔，說明在 PowerShell 中運行命令的正確方式：
+   - 使用分號 `;` 作為命令分隔符：`cd backend; python main.py`
+   - 或使用單獨的命令行：先 `cd backend`，然後運行 `python main.py`
+   - 或使用 PowerShell 的 `-Command` 參數：`powershell -Command "cd backend; python main.py"`
+
+2. 更新相關腳本和文檔：
+   - 修改開發指南中的命令示例
+   - 更新自動化腳本，使其在 PowerShell 環境中正確運行
+
+### 技術說明
+- PowerShell 使用分號 `;` 作為命令分隔符，而不是 Bash 和 CMD 中常用的 `&&`
+- 如果需要有條件地執行下一個命令（即前一個命令成功後才執行），可以使用 PowerShell 的錯誤處理語法：
+  ```powershell
+  cd backend
+  if ($?) { python main.py }
+  ```
+
+### 效果
+- 開發者可以在 Windows PowerShell 環境中正確運行命令
+- 避免了因命令語法錯誤導致的開發環境問題
+- 提高了跨平台開發的一致性
+
+## 2024-06-15: 修復密鑰類型混用問題 - 明確分離 HMAC-SHA256 和 Ed25519 密鑰
+
+### 背景
+系統支持兩種類型的密鑰：HMAC-SHA256 和 Ed25519。HMAC-SHA256 密鑰主要用於 REST API 連接，而 Ed25519 密鑰專用於某些交易所（如 Binance）的 WebSocket API 連接。然而，在代碼中存在邏輯缺陷，如果找不到一種類型的密鑰，系統會自動嘗試使用另一種類型，這可能導致錯誤的認證嘗試和連接失敗。
+
+### 變更內容
+
+#### 1. 修改 `api_key_manager.py`
+- 更新 `get_real_api_key` 方法，添加強制性 `key_type` 參數
+- 明確區分 "hmac_sha256" 和 "ed25519" 密鑰類型
+- 移除自動切換密鑰類型的邏輯
+- 添加密鑰類型驗證，防止使用錯誤類型
+
+#### 2. 更新 `exchange_connection_manager.py`
+- 新增 `connection_type` 參數（"websocket" 或 "rest"）
+- 根據連接類型自動選擇相應的密鑰類型
+- 優化緩存鍵生成，加入連接類型作為區分
+- 改進錯誤處理和日誌記錄，提供更明確的錯誤信息
+
+#### 3. 修改 `account.py`
+- 在 `futures_account_websocket` 和 `get_account_data` 函數中明確指定所需的連接類型和密鑰類型
+- 移除嘗試在不同類型密鑰之間切換的邏輯
+- 添加更詳細的錯誤信息，幫助用戶理解所需的密鑰類型
+
+### 技術說明
+- 密鑰類型現在是明確指定的，而不是自動檢測或切換
+- WebSocket 連接需要指定 `connection_type="websocket"`，自動使用 Ed25519 密鑰
+- REST API 連接需要指定 `connection_type="rest"`，自動使用 HMAC-SHA256 密鑰
+- 緩存機制已更新，根據連接類型和用戶 ID 分別存儲不同類型的連接
+
+### 效果
+- 提高系統穩定性，避免因密鑰類型混用導致的認證失敗
+- 改善用戶體驗，提供更明確的錯誤信息
+- 增強代碼可維護性，明確區分不同連接類型的處理邏輯
+- 保留不同密鑰類型的優勢，同時避免相互干擾
+
+### 使用注意事項
+- 開發新功能時，應明確指定所需的連接類型和密鑰類型
+- 在使用 WebSocket API 時，確保已配置正確的 Ed25519 密鑰
+- 在使用 REST API 時，確保已配置正確的 HMAC-SHA256 密鑰
+
+# 更新摘要 (2024-06-13)
+
+## 前端 CCXT 連接預熱功能
+
+### 背景
+在用戶登入後，系統需要與交易所建立連接以執行交易操作。原先的設計中，第一次執行交易操作時才會建立連接，導致用戶體驗到明顯的延遲。為了改善這一問題，我們實現了 CCXT 連接預熱功能，在用戶登入後立即初始化交易所連接，以減少後續交易操作的延遲。
+
+### 變更內容
+
+#### 1. 新增 `tradingService.ts` 服務
+- 創建了專門的交易服務，用於管理所有交易相關功能
+- 實現了 `preheatExchangeConnection` 方法，用於預熱單個交易所的 CCXT 連接
+- 實現了 `preheatMultipleExchanges` 方法，用於同時預熱多個交易所的連接
+- 添加了基本的交易查詢方法，如 `getAccountInfo`、`getAssetBalance` 和 `getSymbolInfo`
+
+#### 2. 更新 `authService.ts` 服務
+- 添加了 `preheatCcxtConnections` 方法，在用戶登入後自動調用
+- 整合了 `tradingService` 的預熱功能，確保用戶登入後立即初始化交易所連接
+
+### 技術說明
+- 前端通過調用後端的 `/trading/preheat` API 端點來預熱 CCXT 連接
+- 預熱過程在背景執行，不會阻塞用戶界面
+- 目前默認只預熱 Binance 交易所連接，但代碼已支持擴展到多個交易所
+- 預熱失敗不會影響用戶正常使用，只是可能導致首次交易操作有延遲
+
+### 效果
+- 減少了用戶首次執行交易操作時的等待時間
+- 提高了系統的響應速度和用戶體驗
+- 為未來添加更多交易功能奠定了基礎
+- 通過模塊化設計，使交易相關功能更易於維護和擴展
+
+---
+
+# 更新摘要 (2024-06-12)
+
+## CCXT 連接邏輯優化 - 僅使用 HMAC-SHA256 密鑰
+
+### 背景
+在系統的 WebSocket 連接中，我們已經明確區分了不同交易所對不同密鑰類型的需求（如 Binance WebSocket 需要 Ed25519 密鑰）。但在 CCXT 連接邏輯中，系統原先會嘗試使用所有可用的密鑰類型，包括 Ed25519 密鑰，而 CCXT 僅支持 HMAC-SHA256 密鑰格式。這導致在某些情況下，系統可能會使用不兼容的 Ed25519 密鑰嘗試建立 CCXT 連接，進而導致連接失敗。
+
+### 變更內容
+
+#### 1. 修改 `connection_pool.py` 中的密鑰獲取邏輯
+- 更新 `get_client_with_cache` 方法，僅獲取和使用 HMAC-SHA256 密鑰
+- 修改 `refresh_client_with_cache` 方法，確保只使用 HMAC-SHA256 密鑰刷新連接
+- 更新 `check_client_health_with_cache` 方法，保持與上述變更一致
+
+#### 2. 修改 `trading.py` 中的客戶端獲取邏輯
+- 更新 `_get_exchange_client_for_user` 方法，明確指定僅使用 HMAC-SHA256 密鑰
+- 添加更明確的錯誤處理，當未找到 HMAC-SHA256 密鑰時提供清晰的錯誤信息
+
+#### 3. 更新 `exchange.py` 中的函數文檔
+- 明確標註 `get_exchange_client` 函數只支持 HMAC-SHA256 密鑰格式
+- 添加詳細說明，防止誤用 Ed25519 密鑰
+
+### 技術說明
+- 修改後的代碼僅會嘗試從 `SecureKeyCache` 或 `ApiKeyManager` 獲取 HMAC-SHA256 密鑰
+- 所有與 CCXT 相關的方法均添加了明確的註釋，標明僅支持 HMAC-SHA256 密鑰
+- 添加了更明確的錯誤信息，當用戶嘗試使用 Ed25519 密鑰進行 CCXT 連接時提供有用的診斷信息
+
+### 效果
+- 避免了 CCXT 使用不兼容的 Ed25519 密鑰導致的連接錯誤
+- 增強了系統穩定性，減少不必要的連接失敗
+- 提供了更清晰的文檔和錯誤信息，改善開發和使用體驗
+- 使密鑰類型的處理更加明確和一致，區分了 WebSocket 和 CCXT 的不同需求
+
+---
+
+# 更新摘要 (2024-06-08)
+
+## 網格交易模塊 API 密鑰管理優化
+
+### 背景
+在對系統進行全面檢查時，發現網格交易模塊（gridbot.py）仍在使用舊有的方式直接從數據庫獲取 API 密鑰，而未充分利用已實現的 `ApiKeyManager` 和 `SecureKeyCache` 系統。為提高整體系統的一致性和安全性，我們優化了 `settings.py` 中的 `get_user_api_keys` 函數，使其完全採用現代化的密鑰管理方式。
+
+### 變更內容
+1. **優化 `settings.py` 中的 `get_user_api_keys` 函數**：
+   - 加入 `SecureKeyCache` 整合，優先從緩存獲取密鑰
+   - 移除直接從數據庫解密密鑰的邏輯
+   - 統一使用 `ApiKeyManager` 的解密方法
+   - 解密後的密鑰自動存入緩存以提高性能
+
+2. **密鑰類型區分**：
+   - 明確分離 HMAC-SHA256 和 Ed25519 密鑰的處理邏輯
+   - 為不同類型的密鑰添加適當的日誌記錄
+
+### 技術優勢
+1. **系統一致性**：所有模塊統一使用 `ApiKeyManager` 和 `SecureKeyCache`
+2. **性能提升**：減少重複解密操作，充分利用緩存機制
+3. **安全加強**：統一的安全機制確保密鑰處理一致且安全
+4. **維護簡化**：代碼結構更清晰，維護更容易
+
+### 影響範圍
+- 網格交易相關功能（gridbot.py）
+- 所有使用 `get_user_api_keys` 函數的系統組件
+- API 密鑰查看和管理功能
+
+### 使用說明
+- 系統內部獲取密鑰時，應優先使用 `ApiKeyManager.get_real_api_key`
+- 需要批量獲取所有交易所密鑰時，可使用優化後的 `get_user_api_keys`
+- 任何新功能開發都應直接使用 `ApiKeyManager` 和 `SecureKeyCache`
+
+## API密鑰系統優化 - ApiKeyProxy 直接刪除
+
+### 背景
+先前計劃中，我們提出了將 `ApiKeyProxy` 轉為轉發層作為過渡方案。經過進一步評估，發現系統中已無任何地方直接依賴 `ApiKeyProxy`，所有功能均已遷移至 `ApiKeyManager`。因此，決定跳過轉發層階段，直接刪除 `ApiKeyProxy`。
+
+### 變更內容
+1. **直接刪除**：完全移除 `ApiKeyProxy` 模組
+2. **確認替代**：確認所有功能已由 `ApiKeyManager` 實現
+3. **更新文檔**：更新相關文檔，標示 `ApiKeyManager` 為官方 API 密鑰管理接口
+
+### 技術優勢
+1. **簡化架構**：消除不必要的抽象層和過渡方案
+2. **減少維護成本**：避免維護兩套相似的代碼
+3. **性能提升**：直接調用 `ApiKeyManager`，減少函數調用堆疊
+4. **清晰依賴**：明確 `ApiKeyManager` 為唯一的 API 密鑰管理方式
+
+### 使用指南
+- 所有需要操作 API 密鑰的地方，請直接使用 `ApiKeyManager`
+- 常用方法對照：
+  - `create_virtual_key`：創建虛擬密鑰
+  - `get_real_api_key`：獲取真實 API 密鑰
+  - `update_virtual_key_permissions`：更新虛擬密鑰權限
+  - `deactivate_virtual_key`：停用虛擬密鑰
+  - `log_api_usage`：記錄 API 使用情況
+
 # 更新摘要 (2024-06-04)
 
 ## 前端更新
@@ -67,4 +307,50 @@
 ## 修復的問題
 - 修正交易所 API 鑰匙存取權限問題
 - 解決賬戶設置同步延遲
-- 修復部分 API 端點的錯誤處理 
+- 修復部分 API 端點的錯誤處理
+
+# 變更摘要
+
+## 2023-11-XX: 修復 CCXT 連接預熱功能中的匯入錯誤
+
+### 背景
+在 `preheat_exchange_connection` 方法中發現了一個匯入錯誤，系統嘗試使用 `from ...db.models import User` 進行匯入，但這種相對匯入路徑在當前模組結構中是不正確的，導致 Pylance 報告 "無法解析匯入 \"...db.models\"" 錯誤。
+
+### 變更內容
+1. 修改了 `backend/app/services/trading.py` 中的 `preheat_exchange_connection` 方法：
+   - 移除了重複的 `from ...db.models import User` 匯入語句
+   - 使用已經在文件頂部正確匯入的 `User` 模型
+
+### 技術細節
+- 問題原因：在方法內部使用了不正確的相對匯入路徑
+- 解決方案：移除冗餘匯入，使用文件頂部已經正確匯入的模型
+- 這種修改確保了代碼的一致性和正確性，同時解決了靜態類型檢查工具報告的錯誤
+
+### 影響
+- 修復了 IDE 中顯示的匯入錯誤
+- 提高了代碼的可讀性和一致性
+- 確保 CCXT 連接預熱功能能夠正確運行
+
+## 2023-11-XX: 修復 CCXT 連接預熱功能
+
+### 背景
+在用戶登入後，系統會嘗試預熱 CCXT 連接以減少首次交易操作的延遲，但發現 API 端點 `/api/v1/trading/preheat` 返回 404 錯誤。
+
+### 變更內容
+1. **修復後端路由配置**：
+   - 在 `backend/app/main.py` 中取消註釋交易 API 路由的部分，啟用 `/api/v1/trading/preheat` 端點。
+   - 確保 `trading.py` 中定義的 API 路由能夠被正確註冊。
+
+2. **增強前端錯誤處理**：
+   - 在 `tradingService.ts` 中增加了路徑嘗試邏輯，當一個路徑失敗時會自動嘗試其他可能的路徑。
+   - 添加了詳細的錯誤日誌，便於診斷問題。
+
+### 技術細節
+- 問題原因：在 `main.py` 中，交易 API 路由被註釋掉，導致 `/api/v1/trading/preheat` 端點無法訪問。
+- 解決方案：取消註釋並啟用交易 API 路由，同時保留網格交易路由。
+- 前端增強：增加了多路徑嘗試邏輯，提高了系統的健壯性。
+
+### 效果
+- 修復了 CCXT 連接預熱功能，用戶登入後能夠成功預熱連接。
+- 減少了用戶首次交易操作的延遲時間。
+- 提高了系統的錯誤處理能力和用戶體驗。 

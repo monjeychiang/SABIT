@@ -626,17 +626,28 @@ onMounted(async () => {
 
   // 監聽登入事件
   window.addEventListener('login-authenticated', async () => {
-    console.log('檢測到登入事件，使用 authService 初始化所有 WebSocket');
+    console.log('檢測到登入事件，使用 authService 初始化 WebSocket 和預熱 CCXT 連接');
     
-    // 只有在用戶已認證且WebSocket未連接時才初始化
+    // 只有在用戶已認證時才初始化
     if (authStore.isAuthenticated) {
-      // 先檢查WebSocket狀態，避免重複初始化
-      if (!(await authService.checkMainWebSocketStatus()) || 
-          !(await authService.checkAccountWebSocketStatus())) {
-        console.log('App: 登入後WebSocket需要初始化');
-        await authService.initializeWebSockets();
-      } else {
-        console.log('App: 登入後WebSocket已連接，無需初始化');
+      try {
+        // 檢查 WebSocket 狀態並初始化
+        if (!(await authService.checkMainWebSocketStatus()) || 
+            !(await authService.checkAccountWebSocketStatus())) {
+          console.log('App: 登入後 WebSocket 需要初始化');
+          await authService.initializeWebSockets();
+        } else {
+          console.log('App: 登入後 WebSocket 已連接，無需初始化');
+        }
+        
+        // 直接預熱 CCXT 連接，不使用 Promise.allSettled
+        console.log('App: 登入後開始預熱 CCXT 連接');
+        const preheatResult = await authService.preheatCcxtConnections();
+        console.log('App: CCXT 預熱結果:', preheatResult);
+        
+        console.log('App: 登入後所有初始化任務完成');
+      } catch (error) {
+        console.error('App: 初始化過程中發生錯誤:', error);
       }
     }
   });
@@ -1420,11 +1431,14 @@ html, body {
 
 /* 侧边栏无过渡动画 */
 .main-container {
-  /* 移除過渡效果 */
+  width: 100%;
+  height: 100%;
+  position: relative;
 }
 
 .sidebar {
-  /* 移除過渡效果 */
+  overflow-y: auto;
+  box-shadow: var(--box-shadow-sm);
 }
 
 /* 响应式布局调整 */

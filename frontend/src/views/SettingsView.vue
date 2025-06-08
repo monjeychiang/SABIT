@@ -224,6 +224,26 @@
             </div>
           </div>
 
+          <!-- 添加API密鑰類型使用指南 -->
+          <div class="api-key-guide">
+            <el-alert
+              v-if="apiData.selectedExchange === 'binance'"
+              type="warning"
+              title="Binance WebSocket需要Ed25519密鑰"
+              description="注意：Binance的WebSocket連接僅支持Ed25519密鑰，如果您需要使用實時賬戶數據功能，請確保配置Ed25519密鑰。HMAC-SHA256密鑰僅可用於REST API請求。"
+              show-icon
+              :closable="false"
+            />
+            <el-alert
+              v-else
+              type="info"
+              title="API密鑰類型說明"
+              description="HMAC-SHA256是最常見的API密鑰類型，大多數交易所都支持。Ed25519是一種更新的密鑰類型，部分交易所的某些功能可能需要此類型。"
+              show-icon
+              :closable="false"
+            />
+          </div>
+
           <div class="api-info-box">
             <div v-if="apiData.activeApiType === 'hmac'">
               <div class="api-type-description">

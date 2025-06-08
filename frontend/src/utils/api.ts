@@ -1,6 +1,9 @@
 import axios from 'axios'
-import tokenManager from './tokenManager'
+import { getTokenManager } from '@/services/tokenService'
 import { useAuthStore } from '@/stores/auth'
+
+// 獲取 tokenManager 實例
+const tokenManager = getTokenManager()
 
 // 創建API實例
 const api = axios.create({

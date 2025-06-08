@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Body, Query, Path
 from sqlalchemy.orm import Session
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, validator
@@ -18,6 +18,7 @@ from ...schemas.trading import (
 )
 from ...services.trading import TradingService
 from ...core.api_key_manager import ApiKeyManager
+from ...schemas.common import StandardResponse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -511,4 +512,53 @@ async def place_order_with_virtual_key(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"下單失敗: {str(e)}"
+        )
+
+# 預熱 CCXT 連接的端點
+@router.post("/preheat", response_model=StandardResponse)
+async def preheat_ccxt_connection(
+    exchange_data: Dict[str, str] = Body(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    預熱 CCXT 連接
+    
+    在用戶登入後調用此端點，預先初始化 CCXT 連接，以減少首次交易操作的延遲
+    
+    - **exchange**: 交易所名稱 (binance, okx, bybit, gate, mexc)
+    """
+    try:
+        # 獲取請求中的交易所參數
+        exchange_name = exchange_data.get("exchange", "binance").lower()
+        
+        # 將字符串轉換為 ExchangeEnum
+        try:
+            exchange = ExchangeEnum(exchange_name)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"不支持的交易所: {exchange_name}"
+            )
+        
+        # 使用交易服務預熱連接
+        result = await trading_service.preheat_exchange_connection(
+            user_id=current_user.id,
+            exchange=exchange,
+            db=db
+        )
+        
+        # 返回預熱結果
+        return {
+            "status": "success",
+            "message": f"{exchange.value} 連接預熱成功",
+            "data": {
+                "exchange": exchange.value,
+                "connected": result
+            }
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"預熱 CCXT 連接失敗: {str(e)}"
         ) 

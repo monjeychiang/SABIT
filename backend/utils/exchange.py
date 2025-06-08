@@ -6,16 +6,19 @@ async def get_exchange_client(exchange: ExchangeEnum, api_key: str, api_secret: 
     """
     獲取交易所客戶端實例
     
+    注意：CCXT 庫僅支持 HMAC-SHA256 密鑰格式，不支持 Ed25519 密鑰。
+    請確保提供的 api_key 和 api_secret 是 HMAC-SHA256 格式的密鑰。
+    
     Args:
         exchange: 交易所枚舉
-        api_key: API Key
-        api_secret: API Secret
+        api_key: API Key (HMAC-SHA256 格式)
+        api_secret: API Secret (HMAC-SHA256 格式)
     
     Returns:
         ccxt.Exchange: 交易所客戶端實例
     
     Raises:
-        ValueError: 如果交易所不支持
+        ValueError: 如果交易所不支持或使用了不兼容的密鑰格式
     """
     exchange_classes: Dict[ExchangeEnum, Any] = {
         ExchangeEnum.BINANCE: ccxt.binance,

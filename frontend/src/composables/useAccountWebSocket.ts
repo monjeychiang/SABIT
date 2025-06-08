@@ -42,11 +42,27 @@ export function useAccountWebSocket(exchange: string = 'binance') {
     connectionError.value = null;
     
     try {
+      // 先檢查是否有正確類型的API密鑰
+      if (exchange === 'binance') {
+        const hasEd25519 = await accountWebSocketService.hasExchangeApiKeyType(exchange, 'ed25519');
+        if (!hasEd25519) {
+          throw new Error(`Binance WebSocket需要Ed25519密鑰，請在設置頁面配置Ed25519密鑰`);
+        }
+      }
+      
       await accountWebSocketService.connect(exchange);
       return true;
     } catch (error) {
-      connectionError.value = error instanceof Error ? error.message : '連接WebSocket時出錯';
-      console.error('[useAccountWebSocket] 連接錯誤:', error);
+      const errorMessage = error instanceof Error ? error.message : '連接WebSocket時出錯';
+      connectionError.value = errorMessage;
+      
+      // 如果是密鑰類型錯誤，提供更明確的指導
+      if (errorMessage.includes('Ed25519')) {
+        console.error(`[useAccountWebSocket] 密鑰類型錯誤: ${errorMessage}`);
+      } else {
+        console.error('[useAccountWebSocket] 連接錯誤:', error);
+      }
+      
       return false;
     } finally {
       isConnecting.value = false;

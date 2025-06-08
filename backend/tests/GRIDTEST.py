@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+網格交易測試腳本 (GRIDTEST.py)
+
+用法:
+    1. 確保已登錄系統並設置好API密鑰
+    2. 根據不同環境執行:
+       - Linux/Mac: python GRIDTEST.py
+       - Windows CMD: python GRIDTEST.py
+       - Windows PowerShell: python ./GRIDTEST.py 
+         注意: PowerShell 不支持 && 運算符作為命令分隔符，請使用分號 ; 或單獨運行命令
+               例如: cd backend; python ./tests/GRIDTEST.py
+
+選項:
+    -u, --url: 指定後端API基地址 (默認: http://127.0.0.1:8000)
+    --non-interactive: 使用默認參數執行測試
+"""
 
 import requests
 import json
@@ -15,7 +31,7 @@ class GridTradingTester:
             "Content-Type": "application/json"
         }
         self.strategy_id = None
-        self.exchange = "BINANCE"  # 預設交易所
+        self.exchange = "binance"  # 預設交易所，使用小寫
 
     def login(self, username, password, keep_logged_in=False):
         """登入系統並獲取認證token"""
@@ -66,6 +82,12 @@ class GridTradingTester:
             print("[-] 未登入，請先登入")
             return False
         
+        # 檢查API密鑰是否存在
+        if not self.check_api_keys():
+            print(f"[!] 警告: 未找到交易所 {self.exchange} 的API密鑰，創建策略可能會失敗")
+            if input("\n是否繼續嘗試創建策略? (y/n): ").lower() != 'y':
+                return False
+        
         # 修正API端點路徑
         endpoint = f"{self.base_url}/api/v1/trading/grid/create/{self.exchange}"
         
@@ -81,6 +103,28 @@ class GridTradingTester:
         else:
             print(f"[-] 創建策略失敗: {response.status_code}")
             print(f"[-] 錯誤信息: {response.text}")
+            
+            # 添加特定錯誤處理
+            if "未找到對應交易所的API密鑰" in response.text:
+                print(f"\n[!] 錯誤原因: 您尚未為交易所 {self.exchange} 設置API密鑰")
+                print(f"[!] 請先設置API密鑰，可以選擇菜單中的「添加交易所API密鑰」選項")
+                
+                # 詢問用戶是否立即設置API密鑰
+                if input("\n是否立即設置API密鑰? (y/n): ").lower() == 'y':
+                    api_key = input("請輸入API Key: ")
+                    api_secret = getpass("請輸入API Secret: ")
+                    description = input("請輸入描述 (可選): ") or "通過測試腳本添加"
+                    
+                    if self.add_api_key(self.exchange, api_key, api_secret, description):
+                        print("\n[+] API密鑰設置成功，請重新嘗試創建策略")
+                        
+                        # 檢查密鑰狀態
+                        self.check_api_keys()
+                        
+                        # 詢問用戶是否立即重試
+                        if input("\n是否立即重新嘗試創建策略? (y/n): ").lower() == 'y':
+                            return self.create_strategy(strategy_params)
+            
             return False
 
     def get_strategies(self):
@@ -240,7 +284,7 @@ class GridTradingTester:
     def select_exchange(self):
         """選擇交易所"""
         print("\n可用交易所:")
-        exchanges = ["BINANCE", "BYBIT", "OKX", "MEXC"]
+        exchanges = ["binance", "bybit", "okx", "mexc"]  # 修改為小寫
         for idx, exchange in enumerate(exchanges):
             print(f"{idx+1}. {exchange}")
         
@@ -250,6 +294,91 @@ class GridTradingTester:
             print(f"[+] 已選擇交易所: {self.exchange}")
         else:
             print(f"[*] 無效選擇，使用默認交易所: {self.exchange}")
+
+    def add_api_key(self, exchange, api_key, api_secret, description="Added via GRIDTEST"):
+        """添加交易所API密鑰"""
+        if not self.token:
+            print("[-] 未登入，請先登入")
+            return False
+        
+        endpoint = f"{self.base_url}/api/v1/api-keys"
+        
+        # 確保交易所名稱使用小寫
+        exchange_lower = exchange.lower()
+        
+        data = {
+            "exchange": exchange_lower,
+            "api_key": api_key,
+            "api_secret": api_secret,
+            "description": description
+        }
+        
+        print(f"\n[*] 正在為交易所 {exchange_lower} 添加API密鑰...")
+        response = requests.post(endpoint, headers=self.headers, json=data)
+        
+        if response.status_code in [200, 201]:
+            data = response.json()
+            print(f"[+] API密鑰添加成功! {exchange_lower}")
+            # 更新當前交易所名稱為小寫形式
+            if exchange.lower() == self.exchange.lower():
+                self.exchange = exchange_lower
+                print(f"[*] 已自動調整當前交易所名稱為: {self.exchange}")
+            return True
+        else:
+            print(f"[-] 添加API密鑰失敗: {response.status_code}")
+            print(f"[-] 錯誤信息: {response.text}")
+            return False
+
+    def check_api_keys(self):
+        """檢查用戶是否已設置交易所API密鑰"""
+        if not self.token:
+            print("[-] 未登入，請先登入")
+            return False
+        
+        endpoint = f"{self.base_url}/api/v1/api-keys"
+        
+        print(f"\n[*] 正在檢查API密鑰狀態...")
+        response = requests.get(endpoint, headers=self.headers)
+        
+        if response.status_code == 200:
+            api_keys = response.json()
+            
+            if not api_keys:
+                print(f"[-] 未找到任何API密鑰設置")
+                return False
+            
+            print(f"\n[+] API密鑰列表:")
+            for idx, key in enumerate(api_keys):
+                exchange = key.get("exchange")
+                has_hmac = key.get("has_hmac", False)
+                has_ed25519 = key.get("has_ed25519", False)
+                updated_at = key.get("updated_at", "未知")
+                
+                print(f"  {idx+1}. 交易所: {exchange}")
+                print(f"     HMAC-SHA256: {'✓' if has_hmac else '✗'}")
+                print(f"     Ed25519: {'✓' if has_ed25519 else '✗'}")
+                print(f"     更新時間: {updated_at}")
+                # 忽略大小寫比較交易所名稱
+                is_current = exchange.lower() == self.exchange.lower()
+                print(f"     {'---' if is_current else ''}")
+            
+            # 檢查當前選擇的交易所是否已設置API密鑰（忽略大小寫）
+            current_exchange_keys = [k for k in api_keys if k.get("exchange", "").lower() == self.exchange.lower()]
+            if current_exchange_keys:
+                key = current_exchange_keys[0]
+                if key.get("has_hmac") or key.get("has_ed25519"):
+                    print(f"\n[+] 當前交易所 {self.exchange} 已設置API密鑰")
+                    # 將self.exchange更新為數據庫中實際存儲的大小寫形式
+                    self.exchange = key.get("exchange")
+                    print(f"[*] 已自動調整交易所名稱為: {self.exchange}")
+                    return True
+            
+            print(f"\n[-] 當前交易所 {self.exchange} 未設置API密鑰")
+            return False
+        else:
+            print(f"[-] 檢查API密鑰失敗: {response.status_code}")
+            print(f"[-] 錯誤信息: {response.text}")
+            return False
 
     def interactive_test(self):
         """互動式測試網格交易API"""
@@ -265,9 +394,16 @@ class GridTradingTester:
         if not self.login(username, password, keep_logged_in):
             print("[-] 登入失敗，退出測試")
             return
+        
+        # 自動檢查API密鑰狀態
+        print("\n[*] 正在同步API密鑰狀態...")
+        self.check_api_keys()
             
         # 選擇交易所
         self.select_exchange()
+        
+        # 再次檢查選擇的交易所的API密鑰狀態
+        self.check_api_keys()
         
         # 互動式菜單
         while True:
@@ -281,9 +417,11 @@ class GridTradingTester:
             print("5. 獲取策略詳情")
             print("6. 刪除指定策略")
             print("7. 切換交易所")
+            print("8. 添加交易所API密鑰")
+            print("9. 檢查API密鑰狀態")
             print("0. 退出測試")
             
-            choice = input("\n請選擇操作 [0-7]: ")
+            choice = input("\n請選擇操作 [0-9]: ")
             
             if choice == '0':
                 print("\n[*] 測試結束，再見!")
@@ -306,6 +444,13 @@ class GridTradingTester:
                 self.delete_strategy(strategy_id if strategy_id else None)
             elif choice == '7':
                 self.select_exchange()
+            elif choice == '8':
+                api_key = input("請輸入API Key: ")
+                api_secret = getpass("請輸入API Secret: ")
+                description = input("請輸入描述 (可選): ") or "通過測試腳本添加"
+                self.add_api_key(self.exchange, api_key, api_secret, description)
+            elif choice == '9':
+                self.check_api_keys()
             else:
                 print("[-] 無效選擇，請重新選擇")
 

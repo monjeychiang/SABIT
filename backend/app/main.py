@@ -343,8 +343,8 @@ from app.api.endpoints import ws_main
 app.include_router(ws_main.router, tags=["WebSocket"])  # 註冊主要WebSocket路由，從根路徑訪問
 
 # 導入和註冊交易API路由
-#from app.api.endpoints import trading
-#app.include_router(trading.router, prefix="/api/v1/trading", tags=["交易"])  # 註冊交易API路由
+from app.api.endpoints import trading
+app.include_router(trading.router, prefix="/api/v1/trading", tags=["交易"])  # 註冊交易API路由
 
 # 新增: 導入並註冊網格交易路由 (從gridbot.py)
 from app.api.endpoints import gridbot

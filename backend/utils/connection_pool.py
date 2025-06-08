@@ -450,10 +450,9 @@ class ExchangeConnectionPool:
         db: Session
     ) -> ccxt.Exchange:
         """
-        使用緩存系統獲取密鑰並創建客戶端
+        使用緩存系統獲取 HMAC-SHA256 密鑰並創建 CCXT 客戶端
         
-        如果緩存中存在有效的密鑰，則直接使用
-        否則從ApiKeyManager獲取並存入緩存
+        CCXT 僅支持 HMAC-SHA256 密鑰格式，因此僅嘗試獲取和使用該類型的密鑰
         
         Args:
             user_id: 用戶ID
@@ -467,69 +466,54 @@ class ExchangeConnectionPool:
             # 獲取緩存實例
             key_cache = SecureKeyCache()
             
-            # 嘗試從緩存獲取密鑰
+            # 僅嘗試從緩存獲取 HMAC-SHA256 密鑰
             cached_keys = key_cache.get_keys(user_id, exchange.value)
             api_key = None
             api_secret = None
             
             # 檢查緩存命中情況
             if cached_keys and cached_keys[0] and cached_keys[1]:
-                logger.debug(f"從緩存獲取密鑰成功 - 用戶:{user_id}, 交易所:{exchange.value}")
+                logger.debug(f"從緩存獲取 HMAC-SHA256 密鑰成功 - 用戶:{user_id}, 交易所:{exchange.value}")
                 api_key = cached_keys[0]
                 api_secret = cached_keys[1]
             else:
-                # 緩存未命中，嘗試使用 Ed25519 密鑰
-                cached_ed25519_keys = key_cache.get_ed25519_keys(user_id, exchange.value)
+                # 緩存未命中，從 ApiKeyManager 獲取 HMAC-SHA256 密鑰
+                logger.debug(f"緩存未命中，從 ApiKeyManager 獲取 HMAC-SHA256 密鑰 - 用戶:{user_id}, 交易所:{exchange.value}")
+                api_key_manager = ApiKeyManager()
                 
-                if cached_ed25519_keys and cached_ed25519_keys[0] and cached_ed25519_keys[1]:
-                    logger.debug(f"從緩存獲取 Ed25519 密鑰成功 - 用戶:{user_id}, 交易所:{exchange.value}")
-                    api_key = cached_ed25519_keys[0]
-                    api_secret = cached_ed25519_keys[1]
+                # 獲取API密鑰記錄
+                api_key_record = await api_key_manager.get_api_key(db, user_id, exchange)
+                
+                if not api_key_record:
+                    raise ValueError(f"未找到用戶 {user_id} 的 {exchange.value} API密鑰")
+                
+                # 獲取解密後的密鑰
+                api_keys, _ = await api_key_manager.get_real_api_key(
+                    db=db,
+                    user_id=user_id,
+                    virtual_key_id=api_key_record.virtual_key_id,
+                    operation="read"
+                )
+                
+                # 僅使用 HMAC-SHA256 密鑰，忽略 Ed25519 密鑰
+                if "api_key" in api_keys and "api_secret" in api_keys:
+                    api_key = api_keys["api_key"]
+                    api_secret = api_keys["api_secret"]
+                    
+                    # 將獲取的密鑰存入緩存
+                    key_cache.set_keys(user_id, exchange.value, api_key, api_secret)
+                    logger.debug(f"HMAC-SHA256 密鑰已存入緩存 - 用戶:{user_id}, 交易所:{exchange.value}")
                 else:
-                    # 緩存中都沒有，從 ApiKeyManager 獲取
-                    logger.debug(f"緩存未命中，從 ApiKeyManager 獲取密鑰 - 用戶:{user_id}, 交易所:{exchange.value}")
-                    api_key_manager = ApiKeyManager()
-                    
-                    # 獲取API密鑰記錄
-                    api_key_record = await api_key_manager.get_api_key(db, user_id, exchange)
-                    
-                    if not api_key_record:
-                        raise ValueError(f"未找到用戶 {user_id} 的 {exchange.value} API密鑰")
-                    
-                    # 獲取解密後的密鑰
-                    api_keys, _ = await api_key_manager.get_real_api_key(
-                        db=db,
-                        user_id=user_id,
-                        virtual_key_id=api_key_record.virtual_key_id,
-                        operation="read"
-                    )
-                    
-                    # 根據獲取結果分配密鑰
-                    if "api_key" in api_keys and "api_secret" in api_keys:
-                        api_key = api_keys["api_key"]
-                        api_secret = api_keys["api_secret"]
-                        
-                        # 將獲取的密鑰存入緩存
-                        key_cache.set_keys(user_id, exchange.value, api_key, api_secret)
-                        logger.debug(f"HMAC-SHA256 密鑰已存入緩存 - 用戶:{user_id}, 交易所:{exchange.value}")
-                    elif "ed25519_key" in api_keys and "ed25519_secret" in api_keys:
-                        api_key = api_keys["ed25519_key"]
-                        api_secret = api_keys["ed25519_secret"]
-                        
-                        # 將獲取的密鑰存入緩存
-                        key_cache.set_ed25519_keys(user_id, exchange.value, api_key, api_key, api_secret)
-                        logger.debug(f"Ed25519 密鑰已存入緩存 - 用戶:{user_id}, 交易所:{exchange.value}")
-                    else:
-                        raise ValueError(f"獲取的API密鑰格式無效 - 用戶:{user_id}, 交易所:{exchange.value}")
+                    raise ValueError(f"用戶 {user_id} 的 {exchange.value} 未配置 HMAC-SHA256 API密鑰，CCXT 需要此類型密鑰")
             
-            # 使用獲取的密鑰創建客戶端
+            # 使用獲取的 HMAC-SHA256 密鑰創建客戶端
             if api_key and api_secret:
                 return await self.get_client(user_id, exchange, api_key, api_secret)
             else:
-                raise ValueError(f"無法獲取有效的API密鑰 - 用戶:{user_id}, 交易所:{exchange.value}")
+                raise ValueError(f"無法獲取有效的 HMAC-SHA256 API密鑰 - 用戶:{user_id}, 交易所:{exchange.value}")
                 
         except Exception as e:
-            logger.error(f"使用緩存獲取客戶端失敗: {str(e)}")
+            logger.error(f"使用緩存獲取 CCXT 客戶端失敗: {str(e)}")
             raise
 
     async def refresh_client_with_cache(
@@ -539,9 +523,9 @@ class ExchangeConnectionPool:
         db: Session
     ) -> ccxt.Exchange:
         """
-        使用緩存系統刷新客戶端連接
+        使用緩存系統刷新 CCXT 客戶端連接
         
-        先從緩存或ApiKeyManager獲取密鑰，然後刷新連接
+        僅使用 HMAC-SHA256 密鑰刷新連接
         
         Args:
             user_id: 用戶ID
@@ -552,57 +536,48 @@ class ExchangeConnectionPool:
             ccxt.Exchange: 新的交易所客戶端實例
         """
         try:
-            # 使用與get_client_with_cache相同的方式獲取密鑰
+            # 獲取緩存實例
             key_cache = SecureKeyCache()
             api_key = None
             api_secret = None
             
-            # 嘗試從緩存獲取密鑰
+            # 僅嘗試從緩存獲取 HMAC-SHA256 密鑰
             cached_keys = key_cache.get_keys(user_id, exchange.value)
             if cached_keys and cached_keys[0] and cached_keys[1]:
                 api_key = cached_keys[0]
                 api_secret = cached_keys[1]
             else:
-                # 嘗試獲取Ed25519密鑰
-                cached_ed25519_keys = key_cache.get_ed25519_keys(user_id, exchange.value)
-                if cached_ed25519_keys and cached_ed25519_keys[0] and cached_ed25519_keys[1]:
-                    api_key = cached_ed25519_keys[0]
-                    api_secret = cached_ed25519_keys[1]
+                # 從 ApiKeyManager 獲取 HMAC-SHA256 密鑰
+                api_key_manager = ApiKeyManager()
+                api_key_record = await api_key_manager.get_api_key(db, user_id, exchange)
+                
+                if not api_key_record:
+                    raise ValueError(f"未找到用戶 {user_id} 的 {exchange.value} API密鑰")
+                
+                api_keys, _ = await api_key_manager.get_real_api_key(
+                    db=db,
+                    user_id=user_id,
+                    virtual_key_id=api_key_record.virtual_key_id,
+                    operation="read"
+                )
+                
+                # 僅使用 HMAC-SHA256 密鑰
+                if "api_key" in api_keys and "api_secret" in api_keys:
+                    api_key = api_keys["api_key"]
+                    api_secret = api_keys["api_secret"]
+                    key_cache.set_keys(user_id, exchange.value, api_key, api_secret)
                 else:
-                    # 從ApiKeyManager獲取
-                    api_key_manager = ApiKeyManager()
-                    api_key_record = await api_key_manager.get_api_key(db, user_id, exchange)
-                    
-                    if not api_key_record:
-                        raise ValueError(f"未找到用戶 {user_id} 的 {exchange.value} API密鑰")
-                    
-                    api_keys, _ = await api_key_manager.get_real_api_key(
-                        db=db,
-                        user_id=user_id,
-                        virtual_key_id=api_key_record.virtual_key_id,
-                        operation="read"
-                    )
-                    
-                    if "api_key" in api_keys and "api_secret" in api_keys:
-                        api_key = api_keys["api_key"]
-                        api_secret = api_keys["api_secret"]
-                        key_cache.set_keys(user_id, exchange.value, api_key, api_secret)
-                    elif "ed25519_key" in api_keys and "ed25519_secret" in api_keys:
-                        api_key = api_keys["ed25519_key"]
-                        api_secret = api_keys["ed25519_secret"]
-                        key_cache.set_ed25519_keys(user_id, exchange.value, api_key, api_key, api_secret)
-                    else:
-                        raise ValueError(f"獲取的API密鑰格式無效")
+                    raise ValueError(f"用戶 {user_id} 的 {exchange.value} 未配置 HMAC-SHA256 API密鑰，CCXT 需要此類型密鑰")
             
-            # 使用獲取的密鑰刷新客戶端
+            # 使用獲取的 HMAC-SHA256 密鑰刷新客戶端
             if api_key and api_secret:
                 return await self.refresh_client(user_id, exchange, api_key, api_secret)
             else:
-                raise ValueError(f"無法獲取有效的API密鑰")
+                raise ValueError(f"無法獲取有效的 HMAC-SHA256 API密鑰")
                 
         except Exception as e:
-            logger.error(f"使用緩存刷新客戶端失敗: {str(e)}")
-            raise 
+            logger.error(f"使用緩存刷新 CCXT 客戶端失敗: {str(e)}")
+            raise
 
     async def check_client_health_with_cache(
         self, 
@@ -611,10 +586,9 @@ class ExchangeConnectionPool:
         db: Session
     ) -> bool:
         """
-        使用緩存系統檢查客戶端連接是否健康
+        使用緩存系統檢查 CCXT 客戶端連接是否健康
         
-        如果池中沒有連接，則使用緩存獲取密鑰並創建連接
-        然後檢查連接健康狀態
+        僅使用 HMAC-SHA256 密鑰創建和檢查連接
         
         Args:
             user_id: 用戶ID
@@ -636,10 +610,10 @@ class ExchangeConnectionPool:
         # 檢查是否已有連接
         if pool_key not in self.pools:
             try:
-                # 使用緩存獲取客戶端
+                # 使用緩存獲取客戶端（只獲取 HMAC-SHA256 密鑰）
                 await self.get_client_with_cache(user_id, exchange, db)
             except Exception as e:
-                logger.warning(f"使用緩存創建連接失敗: {str(e)}")
+                logger.warning(f"使用緩存創建 CCXT 連接失敗: {str(e)}")
                 self.health_status[pool_key] = (current_time, False)
                 return False
         

@@ -416,7 +416,8 @@ class ApiKeyManager:
     
     async def get_real_api_key(self, db: Session, user_id: int, 
                              virtual_key_id: str, 
-                             operation: str = None) -> Tuple[Dict[str, str], ExchangeAPI]:
+                             operation: str = None,
+                             key_type: str = None) -> Tuple[Dict[str, str], ExchangeAPI]:
         """
         根據虛擬密鑰獲取真實 API 密鑰
         
@@ -425,11 +426,19 @@ class ApiKeyManager:
             user_id: 用戶 ID
             virtual_key_id: 虛擬密鑰 ID
             operation: 要執行的操作，用於權限檢查
+            key_type: 密鑰類型，"hmac_sha256" 或 "ed25519"，必須指定
             
         Returns:
             Tuple[Dict[str, str], ExchangeAPI]: 包含解密後 API 密鑰的字典和 API 密鑰記錄
         """
         try:
+            # 檢查密鑰類型是否已指定
+            if not key_type:
+                raise ValueError("必須指定密鑰類型: hmac_sha256 或 ed25519")
+                
+            if key_type not in ["hmac_sha256", "ed25519"]:
+                raise ValueError(f"不支持的密鑰類型: {key_type}，必須是 hmac_sha256 或 ed25519")
+            
             # 獲取 API 密鑰記錄
             api_key = db.query(ExchangeAPI).filter(
                 ExchangeAPI.virtual_key_id == virtual_key_id,
@@ -450,81 +459,93 @@ class ApiKeyManager:
             # 先從緩存中獲取密鑰
             key_cache = SecureKeyCache()
             exchange_name = api_key.exchange.value
-            
-            # 嘗試從緩存獲取 HMAC-SHA256 密鑰
-            cached_keys = key_cache.get_keys(user_id, exchange_name)
-            if cached_keys:
-                self.logger.info(f"從緩存獲取用戶 {user_id} 的 {exchange_name} HMAC-SHA256 密鑰")
-                real_keys = {
-                    "api_key": cached_keys[0],
-                    "api_secret": cached_keys[1]
-                }
-                return real_keys, api_key
-            
-            # 嘗試從緩存獲取 Ed25519 密鑰
-            cached_ed25519_keys = key_cache.get_ed25519_keys(user_id, exchange_name)
-            if cached_ed25519_keys:
-                self.logger.info(f"從緩存獲取用戶 {user_id} 的 {exchange_name} Ed25519 密鑰")
-                real_keys = {
-                    "api_key": cached_ed25519_keys[0],
-                    "api_secret": cached_ed25519_keys[2],  # Ed25519私鑰作為API密碼
-                    "ed25519_key": cached_ed25519_keys[1]
-                }
-                return real_keys, api_key
-                
-            # 緩存中沒有，需要解密
             real_keys = {}
-            decrypt_method = None
             
-            # 優先使用 HMAC-SHA256 密鑰
-            if api_key.api_key and api_key.api_secret:
-                try:
-                    from ..core.security import decrypt_api_key
-                    hmac_key = decrypt_api_key(api_key.api_key, key_type="API Key (HMAC-SHA256)")
-                    hmac_secret = decrypt_api_key(api_key.api_secret, key_type="API Secret (HMAC-SHA256)")
-                    
-                    if hmac_key and hmac_secret:
-                        real_keys["api_key"] = hmac_key
-                        real_keys["api_secret"] = hmac_secret
-                        decrypt_method = "HMAC-SHA256"
-                        # 同時解密兩個密鑰成功後記錄
-                        self.logger.debug(f"HMAC-SHA256密鑰對解密成功，Key長度: {len(hmac_key)}, Secret長度: {len(hmac_secret)}")
+            # 根據指定的密鑰類型選擇獲取方式
+            if key_type == "hmac_sha256":
+                # 僅嘗試從緩存獲取 HMAC-SHA256 密鑰
+                cached_keys = key_cache.get_keys(user_id, exchange_name)
+                if cached_keys:
+                    self.logger.info(f"從緩存獲取用戶 {user_id} 的 {exchange_name} HMAC-SHA256 密鑰")
+                    real_keys = {
+                        "api_key": cached_keys[0],
+                        "api_secret": cached_keys[1],
+                        "key_type": "hmac_sha256"
+                    }
+                    return real_keys, api_key
+                
+                # 緩存中沒有，嘗試解密 HMAC-SHA256 密鑰
+                if api_key.api_key and api_key.api_secret:
+                    try:
+                        from ..core.security import decrypt_api_key
+                        hmac_key = decrypt_api_key(api_key.api_key, key_type="API Key (HMAC-SHA256)")
+                        hmac_secret = decrypt_api_key(api_key.api_secret, key_type="API Secret (HMAC-SHA256)")
                         
-                        # 解密成功後存入緩存
-                        key_cache.set_keys(user_id, exchange_name, hmac_key, hmac_secret)
-                        self.logger.debug(f"已將 HMAC-SHA256 密鑰存入緩存")
-                except Exception as e:
-                    if self.logger.isEnabledFor(logging.DEBUG):
-                        self.logger.debug(f"HMAC-SHA256 密鑰解密失敗: {str(e)[:50]}")
+                        if hmac_key and hmac_secret:
+                            real_keys = {
+                                "api_key": hmac_key,
+                                "api_secret": hmac_secret,
+                                "key_type": "hmac_sha256"
+                            }
+                            # 同時解密兩個密鑰成功後記錄
+                            self.logger.debug(f"HMAC-SHA256密鑰對解密成功，Key長度: {len(hmac_key)}, Secret長度: {len(hmac_secret)}")
+                            
+                            # 解密成功後存入緩存
+                            key_cache.set_keys(user_id, exchange_name, hmac_key, hmac_secret)
+                            self.logger.debug(f"已將 HMAC-SHA256 密鑰存入緩存")
+                        else:
+                            raise ValueError("HMAC-SHA256 密鑰解密失敗")
+                    except Exception as e:
+                        self.logger.error(f"HMAC-SHA256 密鑰解密失敗: {str(e)}")
+                        raise ValueError(f"HMAC-SHA256 密鑰解密失敗: {str(e)}")
+                else:
+                    raise ValueError("未設置 HMAC-SHA256 密鑰，請在交易所設置頁面配置")
             
-            # 如果 HMAC-SHA256 解密失敗，嘗試 Ed25519 密鑰
-            if not real_keys.get("api_key") and api_key.ed25519_key and api_key.ed25519_secret:
-                try:
-                    from ..core.security import decrypt_api_key
-                    ed25519_key = decrypt_api_key(api_key.ed25519_key, key_type="API Key (Ed25519)")
-                    ed25519_secret = decrypt_api_key(api_key.ed25519_secret, key_type="API Secret (Ed25519)")
-                    
-                    if ed25519_key and ed25519_secret:
-                        real_keys["api_key"] = ed25519_key
-                        real_keys["api_secret"] = ed25519_secret
-                        real_keys["ed25519_key"] = ed25519_key  # 公鑰
-                        decrypt_method = "Ed25519"
-                        # 同時解密兩個密鑰成功後記錄
-                        self.logger.debug(f"Ed25519密鑰對解密成功，Key長度: {len(ed25519_key)}, Secret長度: {len(ed25519_secret)}")
+            elif key_type == "ed25519":
+                # 僅嘗試從緩存獲取 Ed25519 密鑰
+                cached_ed25519_keys = key_cache.get_ed25519_keys(user_id, exchange_name)
+                if cached_ed25519_keys:
+                    self.logger.info(f"從緩存獲取用戶 {user_id} 的 {exchange_name} Ed25519 密鑰")
+                    real_keys = {
+                        "api_key": cached_ed25519_keys[0],
+                        "api_secret": cached_ed25519_keys[2],  # Ed25519私鑰作為API密碼
+                        "ed25519_key": cached_ed25519_keys[1],
+                        "key_type": "ed25519"
+                    }
+                    return real_keys, api_key
+                
+                # 緩存中沒有，嘗試解密 Ed25519 密鑰
+                if api_key.ed25519_key and api_key.ed25519_secret:
+                    try:
+                        from ..core.security import decrypt_api_key
+                        ed25519_key = decrypt_api_key(api_key.ed25519_key, key_type="API Key (Ed25519)")
+                        ed25519_secret = decrypt_api_key(api_key.ed25519_secret, key_type="API Secret (Ed25519)")
                         
-                        # 解密成功後存入緩存
-                        key_cache.set_ed25519_keys(user_id, exchange_name, ed25519_key, ed25519_key, ed25519_secret)
-                        self.logger.debug(f"已將 Ed25519 密鑰存入緩存")
-                except Exception as e:
-                    if self.logger.isEnabledFor(logging.DEBUG):
-                        self.logger.debug(f"Ed25519 密鑰解密失敗: {str(e)[:50]}")
+                        if ed25519_key and ed25519_secret:
+                            real_keys = {
+                                "api_key": ed25519_key,
+                                "api_secret": ed25519_secret,
+                                "ed25519_key": ed25519_key,  # 公鑰
+                                "key_type": "ed25519"
+                            }
+                            # 同時解密兩個密鑰成功後記錄
+                            self.logger.debug(f"Ed25519密鑰對解密成功，Key長度: {len(ed25519_key)}, Secret長度: {len(ed25519_secret)}")
+                            
+                            # 解密成功後存入緩存
+                            key_cache.set_ed25519_keys(user_id, exchange_name, ed25519_key, ed25519_key, ed25519_secret)
+                            self.logger.debug(f"已將 Ed25519 密鑰存入緩存")
+                        else:
+                            raise ValueError("Ed25519 密鑰解密失敗")
+                    except Exception as e:
+                        self.logger.error(f"Ed25519 密鑰解密失敗: {str(e)}")
+                        raise ValueError(f"Ed25519 密鑰解密失敗: {str(e)}")
+                else:
+                    raise ValueError("未設置 Ed25519 密鑰，請在交易所設置頁面配置")
             
-            # 記錄解密結果
-            if real_keys.get("api_key") and real_keys.get("api_secret"):
-                self.logger.info(f"成功解密用戶 {user_id} 的 API 密鑰 ({decrypt_method})")
-            else:
-                self.logger.error(f"用戶 {user_id} 的 API 密鑰解密失敗 (所有方法均失敗)")
-                raise ValueError(f"API密鑰解密失敗，所有解密方法均已嘗試")
+            # 檢查是否成功獲取密鑰
+            if not real_keys.get("api_key") or not real_keys.get("api_secret"):
+                self.logger.error(f"用戶 {user_id} 的 {key_type} 密鑰獲取失敗")
+                raise ValueError(f"獲取 {key_type} 密鑰失敗，請確保已正確配置")
             
             # 更新最後使用時間
             api_key.last_used_at = datetime.utcnow()
@@ -892,7 +913,8 @@ async def example_usage():
                 db=db,
                 user_id=user_id,
                 virtual_key_id=virtual_key_id,
-                operation="read"  # 嘗試讀取操作
+                operation="read",  # 嘗試讀取操作
+                key_type="hmac_sha256"  # 指定密鑰類型
             )
             
             print(f"獲取真實 API 密鑰成功: {real_keys.keys()}")
@@ -903,7 +925,8 @@ async def example_usage():
                     db=db,
                     user_id=user_id,
                     virtual_key_id=virtual_key_id,
-                    operation="trade"
+                    operation="trade",
+                    key_type="ed25519"  # 指定密鑰類型
                 )
             except ApiKeyPermissionError as e:
                 print(f"預期的權限錯誤: {str(e)}")

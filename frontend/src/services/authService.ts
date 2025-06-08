@@ -5,6 +5,7 @@ import { useNotificationStore } from '@/stores/notification';
 import { useOnlineStatusStore } from '@/stores/online-status';
 import mainWebSocketManager from '@/services/webSocketService';
 import { accountWebSocketService } from '@/services/accountWebSocketService';
+import { tradingService } from '@/services/tradingService';
 import type { User } from '@/stores/user';
 
 // 定義登入憑證介面
@@ -299,6 +300,47 @@ export const authService = {
     const userStore = useUserStore();
     
     return authStore.isAuthenticated || userStore.isLoggedIn;
+  },
+
+  /**
+   * 預熱 CCXT 連接
+   * 在用戶登入後調用此方法，預先初始化 CCXT 連接，以減少首次交易操作的延遲
+   * @returns {Promise<{success: boolean, message: string, exchanges: string[]}>} 預熱結果
+   */
+  async preheatCcxtConnections() {
+    console.log('[AuthService] 開始預熱 CCXT 連接');
+    
+    try {
+      // 檢查用戶是否已登入
+      if (!this.isAuthenticated()) {
+        console.log('[AuthService] 用户未登录，跳过 CCXT 預熱');
+        return {
+          success: false,
+          message: '用戶未登入，無法預熱連接',
+          exchanges: []
+        };
+      }
+      
+      // 使用交易服務預熱 Binance 交易所連接
+      const result = await tradingService.preheatExchangeConnection('binance');
+      
+      // 可以根據需求添加更多交易所的預熱
+      // const exchanges = ['binance', 'okx', 'bybit', 'gate', 'mexc'];
+      // const result = await tradingService.preheatMultipleExchanges(exchanges);
+      
+      return {
+        success: result.success,
+        message: result.message,
+        exchanges: result.success ? ['binance'] : []
+      };
+    } catch (error) {
+      console.error('[AuthService] 預熱 CCXT 連接失敗:', error);
+      return {
+        success: false,
+        message: `預熱連接失敗: ${error instanceof Error ? error.message : '未知錯誤'}`,
+        exchanges: []
+      };
+    }
   }
 };
 

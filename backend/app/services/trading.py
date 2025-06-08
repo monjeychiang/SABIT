@@ -8,6 +8,7 @@ from decimal import Decimal
 import asyncio
 import random
 import time
+import traceback
 
 # 導入Cython優化模組
 try:
@@ -25,12 +26,18 @@ from ..db.models.exchange_api import ExchangeAPI
 from ..schemas.trading import (
     ExchangeEnum, OrderRequest, OrderType, OrderSide, 
     OrderInfo, Position, AccountInfo, Balance,
-    StopOrder, BatchOrderRequest, BatchCancelRequest
+    StopOrder, BatchOrderRequest, BatchCancelRequest,
+    OrderResponse, OrderStatus, PositionResponse, BalanceResponse,
+    AccountInfoResponse, OrderBookResponse, MarketTradesResponse,
+    TickerResponse
 )
 from backend.utils.exchange import get_exchange_client
 from backend.utils.connection_pool import ExchangeConnectionPool
 
 logger = logging.getLogger(__name__)
+
+# 創建連接池實例
+exchange_pool = ExchangeConnectionPool()
 
 class TradingService:
     """
@@ -48,7 +55,6 @@ class TradingService:
             cleanup_interval=120  # 2分鐘清理一次
         )
         
-        
     async def _get_exchange_client_for_user(
         self, 
         user: User, 
@@ -60,6 +66,7 @@ class TradingService:
         獲取用戶特定交易所的客戶端實例
         
         從連接池獲取連接，如果不存在則創建新連接
+        CCXT 僅支持 HMAC-SHA256 密鑰格式，不支持 Ed25519 密鑰
         
         Args:
             user: 用戶模型實例
@@ -71,7 +78,7 @@ class TradingService:
             ccxt.Exchange: 交易所客戶端實例
             
         Raises:
-            HTTPException: 如果無法獲取客戶端
+            HTTPException: 如果無法獲取客戶端或密鑰類型不匹配
         """
         try:
             # 獲取 API 密鑰管理器
@@ -95,14 +102,14 @@ class TradingService:
                         detail=f"虛擬密鑰 {virtual_key_id} 不屬於交易所 {exchange}"
                     )
                 
-                # 獲取 HMAC-SHA256 密鑰
+                # 僅獲取 HMAC-SHA256 密鑰，CCXT 不支持 Ed25519 密鑰
                 api_key = real_keys.get("api_key")
                 api_secret = real_keys.get("api_secret")
                 
                 if not api_key or not api_secret:
                     raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="HMAC-SHA256 API 密鑰解密失敗或未設置"
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="CCXT 需要 HMAC-SHA256 API 密鑰，但用戶未配置此類型密鑰或解密失敗"
                     )
             else:
                 # 原有邏輯：直接查詢 API 密鑰記錄
@@ -120,8 +127,8 @@ class TradingService:
                 
                 if not api_key or not api_secret:
                     raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="HMAC-SHA256 API密鑰解密失敗或未設置"
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="CCXT 需要 HMAC-SHA256 API 密鑰，但用戶未配置此類型密鑰或解密失敗"
                     )
             
             # 從連接池獲取客戶端
@@ -1489,3 +1496,81 @@ class TradingService:
         
         # 確保清算價格為正數
         return max(0.0, liquidation_price)
+
+    async def preheat_exchange_connection(
+        self,
+        user_id: int,
+        exchange: ExchangeEnum,
+        db: Session
+    ) -> bool:
+        """
+        預熱交易所連接
+        
+        在用戶登入後調用此方法，預先初始化 CCXT 連接，以減少首次交易操作的延遲
+        
+        Args:
+            user_id: 用戶ID
+            exchange: 交易所枚舉
+            db: 數據庫會話
+            
+        Returns:
+            bool: 預熱是否成功
+        """
+        # 保存原始日誌級別
+        ccxt_logger = logging.getLogger("ccxt")
+        ccxt_base_logger = logging.getLogger("ccxt.base.exchange")
+        original_ccxt_level = ccxt_logger.level
+        original_ccxt_base_level = ccxt_base_logger.level
+        
+        try:
+            # 臨時提高 CCXT 日誌級別，減少詳細日誌
+            ccxt_logger.setLevel(logging.WARNING)
+            ccxt_base_logger.setLevel(logging.WARNING)
+            
+            logger.info(f"開始預熱用戶 {user_id} 的 {exchange.value} 連接")
+            
+            # 檢查連接池中是否已有此用戶的連接
+            pool_key = f"{user_id}:{exchange.value}"
+            has_connection = False
+            
+            # 使用連接池的方法檢查是否已有連接
+            async with exchange_pool.lock:
+                has_connection = pool_key in exchange_pool.pools
+            
+            if has_connection:
+                logger.info(f"用戶 {user_id} 的 {exchange.value} 連接已存在於連接池中")
+                
+                # 檢查連接健康狀態
+                is_healthy = await exchange_pool.check_client_health_with_cache(user_id, exchange, db)
+                if not is_healthy:
+                    logger.warning(f"用戶 {user_id} 的 {exchange.value} 連接不健康，嘗試刷新")
+                    await exchange_pool.refresh_client_with_cache(user_id, exchange, db)
+                    logger.info(f"用戶 {user_id} 的 {exchange.value} 連接已刷新")
+                
+                return True
+            
+            # 如果沒有連接，創建新連接
+            logger.info(f"用戶 {user_id} 的 {exchange.value} 連接不存在，嘗試創建")
+            
+            # 從數據庫獲取 User 對象
+            user = db.query(User).filter(User.id == user_id).first()
+            
+            if not user:
+                logger.error(f"找不到用戶 ID {user_id}")
+                return False
+            
+            # 使用 User 對象調用 _get_exchange_client_for_user 方法
+            client = await self._get_exchange_client_for_user(user, db, exchange)
+            
+            # 執行一個輕量級的操作來驗證連接
+            await client.fetch_time()
+            
+            logger.info(f"用戶 {user_id} 的 {exchange.value} 連接預熱成功")
+            return True
+        except Exception as e:
+            logger.error(f"預熱 {exchange.value} 連接失敗: {str(e)}")
+            return False
+        finally:
+            # 恢復原始日誌級別
+            ccxt_logger.setLevel(original_ccxt_level)
+            ccxt_base_logger.setLevel(original_ccxt_base_level)

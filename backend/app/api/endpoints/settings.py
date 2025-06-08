@@ -11,7 +11,6 @@ from PIL import Image
 import io
 import json
 import asyncio
-
 from ...db.database import get_db
 from ...db.models import User, ExchangeAPI
 from ...schemas.notification import NotificationSettingsUpdate, NotificationSettingsResponse
@@ -42,73 +41,106 @@ class ApiKeyUpdate(BaseModel):
     api_secret: str
 
 # 獲取用戶 API 密鑰（解密後）
-def get_user_api_keys(user: User, db: Session) -> dict:
+async def get_user_api_keys(user: User, db: Session) -> dict:
     """
     獲取用戶的所有交易所API密鑰
     
     將資料庫中的加密API密鑰解密後返回，供內部使用。
-    此函數僅用於系統內部操作，不直接暴露給API。
+    此函數已更新為使用 ApiKeyManager 和 SecureKeyCache，提高性能和安全性。
     
-    注意：推薦使用 ApiKeyManager.get_real_api_key 方法獲取實際 API 密鑰，
-    本函數保留是為了向後兼容。
+    Returns:
+        dict: 包含各交易所解密後的API密鑰
     """
     api_keys = {}
     
     # 使用 ApiKeyManager 獲取 API 密鑰
     api_key_manager = ApiKeyManager()
+    key_cache = SecureKeyCache()
     
-    # 獲取用戶的所有 API 密鑰
-    db_api_keys = asyncio.run(api_key_manager.get_api_keys(db, user.id))
+    # 獲取用戶的所有 API 密鑰記錄
+    db_api_keys = await api_key_manager.get_api_keys(db, user.id)
     
     for api_key in db_api_keys:
-        api_keys[api_key.exchange] = {}
+        exchange_name = api_key.exchange
+        api_keys[exchange_name] = {}
         
-        # 嘗試通過 ApiKeyManager 獲取解密後的密鑰
-        if api_key.virtual_key_id:
-            try:
-                # 使用虛擬密鑰 ID 獲取真實密鑰
-                real_keys, permissions = asyncio.run(api_key_manager.get_real_api_key(
-                    db=db,
-                    user_id=user.id,
-                    virtual_key_id=api_key.virtual_key_id,
-                    operation="read"  # 讀取操作
-                ))
-                
-                if real_keys and real_keys.get("api_key") and real_keys.get("api_secret"):
-                    api_keys[api_key.exchange]["hmac"] = {
-                        "api_key": real_keys.get("api_key"),
-                        "api_secret": real_keys.get("api_secret")
-                    }
-                    # 記錄使用了虛擬密鑰
-                    api_keys[api_key.exchange]["uses_virtual_key"] = True
-                    api_keys[api_key.exchange]["permissions"] = permissions
-                    continue  # 跳過直接解密的方式
-            except Exception as e:
-                logger.warning(f"通過 ApiKeyManager 獲取真實密鑰失敗: {str(e)}")
-                # 繼續使用直接解密的方式作為後備
+        # 檢查安全緩存中是否有密鑰
+        hmac_keys = key_cache.get_keys(user.id, exchange_name)
+        ed25519_keys = key_cache.get_ed25519_keys(user.id, exchange_name)
         
-        # 如果 ApiKeyManager 方法失敗或沒有虛擬密鑰，使用直接解密的方式（舊方法）
-        # 添加 HMAC-SHA256 密鑰（如果存在）
+        # 處理 HMAC-SHA256 密鑰
         if api_key.api_key:
-            try:
-                api_keys[api_key.exchange]["hmac"] = {
-                    "api_key": decrypt_api_key(api_key.api_key),
-                    "api_secret": decrypt_api_key(api_key.api_secret)
+            # 嘗試從緩存獲取
+            if hmac_keys and all(hmac_keys):
+                api_keys[exchange_name]["hmac"] = {
+                    "api_key": hmac_keys[0],
+                    "api_secret": hmac_keys[1]
                 }
-                # 記錄使用了直接解密
-                api_keys[api_key.exchange]["uses_virtual_key"] = False
-            except Exception as e:
-                logger.error(f"解密 HMAC-SHA256 密鑰失敗: {str(e)}")
+                logger.info(f"從緩存獲取 {exchange_name} 的 HMAC-SHA256 密鑰")
+            else:
+                # 從 ApiKeyManager 獲取
+                try:
+                    # 如果有虛擬密鑰，使用虛擬密鑰
+                    if api_key.virtual_key_id:
+                        real_keys, permissions = await api_key_manager.get_real_api_key(
+                            db=db,
+                            user_id=user.id,
+                            virtual_key_id=api_key.virtual_key_id,
+                            operation="read"
+                        )
+                        
+                        if real_keys and real_keys.get("api_key") and real_keys.get("api_secret"):
+                            api_keys[exchange_name]["hmac"] = {
+                                "api_key": real_keys.get("api_key"),
+                                "api_secret": real_keys.get("api_secret")
+                            }
+                            api_keys[exchange_name]["uses_virtual_key"] = True
+                            api_keys[exchange_name]["permissions"] = permissions
+                    else:
+                        # 使用 ApiKeyManager 的 get_api_key_by_id 獲取並解密
+                        api_key_record = await api_key_manager.get_api_key_by_id(db, api_key.id)
+                        decrypted_key = api_key_manager.decrypt_key(api_key_record.api_key, "API Key (HMAC-SHA256)")
+                        decrypted_secret = api_key_manager.decrypt_key(api_key_record.api_secret, "API Secret (HMAC-SHA256)")
+                        
+                        api_keys[exchange_name]["hmac"] = {
+                            "api_key": decrypted_key,
+                            "api_secret": decrypted_secret
+                        }
+                        api_keys[exchange_name]["uses_virtual_key"] = False
+                        
+                        # 將解密後的密鑰存入緩存
+                        key_cache.set_keys(user.id, exchange_name, decrypted_key, decrypted_secret)
+                        
+                except Exception as e:
+                    logger.error(f"獲取 {exchange_name} 的 HMAC-SHA256 密鑰失敗: {str(e)}")
         
-        # 添加 Ed25519 密鑰（如果存在）
+        # 處理 Ed25519 密鑰
         if api_key.ed25519_key:
-            try:
-                api_keys[api_key.exchange]["ed25519"] = {
-                    "public_key": decrypt_api_key(api_key.ed25519_key),
-                    "private_key": decrypt_api_key(api_key.ed25519_secret)
+            # 嘗試從緩存獲取
+            if ed25519_keys and all(ed25519_keys):
+                api_keys[exchange_name]["ed25519"] = {
+                    "public_key": ed25519_keys[0],
+                    "private_key": ed25519_keys[1]
                 }
-            except Exception as e:
-                logger.error(f"解密 Ed25519 密鑰失敗: {str(e)}")
+                logger.info(f"從緩存獲取 {exchange_name} 的 Ed25519 密鑰")
+            else:
+                # 從 ApiKeyManager 獲取
+                try:
+                    # 使用 ApiKeyManager 的方法獲取並解密
+                    api_key_record = await api_key_manager.get_api_key_by_id(db, api_key.id)
+                    decrypted_key = api_key_manager.decrypt_key(api_key_record.ed25519_key, "API Key (Ed25519)")
+                    decrypted_secret = api_key_manager.decrypt_key(api_key_record.ed25519_secret, "API Secret (Ed25519)")
+                    
+                    api_keys[exchange_name]["ed25519"] = {
+                        "public_key": decrypted_key,
+                        "private_key": decrypted_secret
+                    }
+                    
+                    # 將解密後的密鑰存入緩存
+                    key_cache.set_ed25519_keys(user.id, exchange_name, decrypted_key, decrypted_secret)
+                    
+                except Exception as e:
+                    logger.error(f"獲取 {exchange_name} 的 Ed25519 密鑰失敗: {str(e)}")
     
     return api_keys
 

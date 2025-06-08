@@ -108,6 +108,51 @@ class AccountWebSocketService {
     }
   }
   
+  // 新增：檢查用戶是否有特定交易所的特定類型API密鑰
+  public async hasExchangeApiKeyType(exchange: string, keyType: 'hmac' | 'ed25519'): Promise<boolean> {
+    try {
+      const authStore = useAuthStore();
+      
+      // 檢查用戶是否已認證
+      if (!authStore.isAuthenticated || !authStore.token) {
+        return false;
+      }
+      
+      // 從API獲取用戶配置的API密鑰詳情
+      const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+      const response = await axios.get(`${baseUrl}/api/v1/api-keys`, {
+        headers: {
+          Authorization: `Bearer ${authStore.token}`
+        }
+      });
+      
+      if (!response.data || !Array.isArray(response.data)) {
+        return false;
+      }
+      
+      // 尋找匹配的交易所記錄
+      const exchangeApiKey = response.data.find(
+        (key: any) => key.exchange.toLowerCase() === exchange.toLowerCase()
+      );
+      
+      if (!exchangeApiKey) {
+        return false;
+      }
+      
+      // 根據請求的密鑰類型檢查是否存在
+      if (keyType === 'hmac') {
+        return !!exchangeApiKey.has_hmac;
+      } else if (keyType === 'ed25519') {
+        return !!exchangeApiKey.has_ed25519;
+      }
+      
+      return false;
+    } catch (error) {
+      console.error(`[AccountWS] 檢查交易所 ${exchange} 的 ${keyType} 密鑰時出錯:`, error);
+      return false;
+    }
+  }
+  
   // 獲取用戶配置的所有交易所列表
   public async getUserExchanges(): Promise<string[]> {
     await this.hasExchangeApiKey('dummy'); // 這將更新userExchanges緩存
@@ -145,6 +190,16 @@ class AccountWebSocketService {
         console.warn(`[AccountWS] 用戶沒有 ${exchange} 的API密鑰，取消連接`);
         this._status.value.error = `沒有配置 ${exchange} 的API密鑰`;
         return false;
+      }
+      
+      // 針對 Binance WebSocket，檢查是否有必要的 Ed25519 密鑰
+      if (exchange.toLowerCase() === 'binance') {
+        const hasEd25519 = await this.hasExchangeApiKeyType(exchange, 'ed25519');
+        if (!hasEd25519) {
+          console.warn(`[AccountWS] 用戶沒有 ${exchange} 的 Ed25519 密鑰，Binance WebSocket 需要 Ed25519 密鑰才能成功連接`);
+          this._status.value.error = `Binance WebSocket 需要 Ed25519 密鑰，請在設置中配置`;
+          return false;
+        }
       }
       
       // 如果已連接，先斷開
@@ -197,7 +252,16 @@ class AccountWebSocketService {
             clearTimeout(timeout);
 
             // 發送認證token
-            this.socket?.send(this.token);
+            if (this.token) {
+              this.socket?.send(this.token);
+            } else {
+              console.error('[AccountWS] 認證token為空，無法完成認證');
+              this.socket?.close(1000, '認證token為空');
+              this._status.value.error = '認證token為空，無法完成認證';
+              clearTimeout(timeout);
+              reject(new Error('認證token為空'));
+              return;
+            }
 
             // 開始定期發送ping來保持連接
             this.startPingInterval();
@@ -688,6 +752,14 @@ class AccountWebSocketService {
       const hasApiKey = await this.hasExchangeApiKey('binance');
       if (!hasApiKey) {
         console.log('[AccountWS] 用戶沒有 binance 的 API 密鑰，無法初始化連接');
+        return false;
+      }
+      
+      // 針對 Binance 檢查是否有 Ed25519 密鑰
+      const hasEd25519 = await this.hasExchangeApiKeyType('binance', 'ed25519');
+      if (!hasEd25519) {
+        console.log('[AccountWS] 用戶沒有 binance 的 Ed25519 密鑰，無法初始化連接');
+        this._status.value.error = `Binance WebSocket 需要 Ed25519 密鑰，請在設置中配置`;
         return false;
       }
       

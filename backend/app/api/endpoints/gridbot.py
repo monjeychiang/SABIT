@@ -45,7 +45,7 @@ async def create_grid_strategy(
     user_id = current_user.id
     
     # 檢查API密鑰
-    api_key_data = get_user_api_keys(current_user, db)
+    api_key_data = await get_user_api_keys(current_user, db)
     if exchange not in api_key_data:
         logger.warning(f"未找到交易所API密鑰 - user:{user_id}, exchange:{exchange}")
         raise HTTPException(status_code=400, detail="未找到對應交易所的API密鑰")

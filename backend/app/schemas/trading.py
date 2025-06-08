@@ -250,4 +250,51 @@ class SymbolInfo(BaseModel):
 
 class SymbolInfoResponse(BaseResponse):
     """交易對信息響應"""
-    data: Optional[Union[SymbolInfo, List[SymbolInfo]]] = None 
+    data: Optional[Union[SymbolInfo, List[SymbolInfo]]] = None
+
+# 添加缺少的響應類型
+class OrderBookItem(BaseModel):
+    """訂單簿項目"""
+    price: Decimal
+    amount: Decimal
+
+class OrderBook(BaseModel):
+    """訂單簿數據"""
+    symbol: str
+    bids: List[OrderBookItem]
+    asks: List[OrderBookItem]
+    timestamp: int
+
+class OrderBookResponse(BaseResponse):
+    """訂單簿響應"""
+    data: Optional[OrderBook] = None
+
+class MarketTrade(BaseModel):
+    """市場成交數據"""
+    id: str
+    price: Decimal
+    amount: Decimal
+    cost: Decimal
+    side: str
+    timestamp: int
+
+class MarketTradesResponse(BaseResponse):
+    """市場成交響應"""
+    data: Optional[List[MarketTrade]] = None
+
+class Ticker(BaseModel):
+    """行情數據"""
+    symbol: str
+    last: Decimal
+    bid: Optional[Decimal] = None
+    ask: Optional[Decimal] = None
+    high: Optional[Decimal] = None
+    low: Optional[Decimal] = None
+    volume: Optional[Decimal] = None
+    change: Optional[Decimal] = None
+    percentage: Optional[Decimal] = None
+    timestamp: int
+
+class TickerResponse(BaseResponse):
+    """行情響應"""
+    data: Optional[Ticker] = None 

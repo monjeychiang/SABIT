@@ -106,43 +106,36 @@ async def futures_account_websocket(
             
             # 如果沒有直接API模式，從數據庫獲取API密鑰
             if not direct_api_mode:
-                # 從緩存中獲取密鑰
-                cached_keys = key_cache.get_keys(user_id, exchange)
+                # 由於 WebSocket 連接需要 Ed25519 密鑰，僅嘗試獲取此類型的密鑰
+                logger.info(f"獲取 WebSocket 連接所需的 Ed25519 密鑰 - 用戶:{user_id}, 交易所:{exchange}")
                 
-                if cached_keys:
-                    logger.info(f"從安全緩存獲取用戶 {user_id} 的 {exchange} HMAC-SHA256 密鑰")
-                    api_key, api_secret = cached_keys
+                # 僅嘗試從緩存獲取 Ed25519 密鑰
+                cached_ed25519_keys = key_cache.get_ed25519_keys(user_id, exchange)
+                if cached_ed25519_keys:
+                    logger.info(f"從安全緩存獲取用戶 {user_id} 的 {exchange} Ed25519 密鑰")
+                    api_key, ed25519_key, ed25519_secret = cached_ed25519_keys
                     api_key_data = {
                         "api_key": api_key,
-                        "api_secret": api_secret
+                        "api_secret": ed25519_secret  # 使用Ed25519私鑰作為API密碼
                     }
                 else:
-                    # 嘗試從緩存獲取 Ed25519 密鑰
-                    cached_ed25519_keys = key_cache.get_ed25519_keys(user_id, exchange)
-                    if cached_ed25519_keys:
-                        logger.info(f"從安全緩存獲取用戶 {user_id} 的 {exchange} Ed25519 密鑰")
-                        api_key, ed25519_key, ed25519_secret = cached_ed25519_keys
-                        api_key_data = {
-                            "api_key": api_key,
-                            "api_secret": ed25519_secret  # 使用Ed25519私鑰作為API密碼
-                        }
-                    else:
-                        # 緩存中沒有，需要從數據庫獲取
-                        api_key_record = await api_key_manager.get_api_key(db, user_id, exchange)
-                        
-                        if not api_key_record:
-                            logger.warning(f"未找到用戶 {user_id} 的 {exchange} API密鑰")
-                            await websocket.send_json({"success": False, "message": "未找到API密鑰，請先設置"})
-                            await websocket.close()
-                            return
-                        
-                        # 獲取真實API密鑰
-                        api_key_data, _ = await api_key_manager.get_real_api_key(
-                            db=db,
-                            user_id=user_id,
-                            virtual_key_id=api_key_record.virtual_key_id,
-                            operation="read"
-                        )
+                    # 緩存中沒有，需要從數據庫獲取
+                    api_key_record = await api_key_manager.get_api_key(db, user_id, exchange)
+                    
+                    if not api_key_record:
+                        logger.warning(f"未找到用戶 {user_id} 的 {exchange} API密鑰")
+                        await websocket.send_json({"success": False, "message": "未找到API密鑰，請先設置"})
+                        await websocket.close()
+                        return
+                    
+                    # 獲取真實API密鑰
+                    api_key_data, _ = await api_key_manager.get_real_api_key(
+                        db=db,
+                        user_id=user_id,
+                        virtual_key_id=api_key_record.virtual_key_id,
+                        operation="read",  # 讀取操作
+                        key_type="ed25519"  # 指定使用 Ed25519 密鑰，WebSocket 連接需要
+                    )
             
             # 清理 API 密鑰中可能存在的引號和空白字符
             if api_key_data:
@@ -173,8 +166,13 @@ async def futures_account_websocket(
                 # 使用交易所連接管理器獲取客戶端
                 if not direct_api_mode:
                     # 使用用戶ID從連接管理器獲取連接
-                    binance_client, is_new = await exchange_connection_manager.get_connection(user_id, exchange, db)
-                    logger.info(f"獲取連接 - 用戶:{user_id}, 新連接:{is_new}")
+                    binance_client, is_new = await exchange_connection_manager.get_connection(
+                        user_id, 
+                        exchange, 
+                        db,
+                        connection_type="websocket"  # 明確指定需要 WebSocket 連接，使用 Ed25519 密鑰
+                    )
+                    logger.info(f"獲取 WebSocket 連接 - 用戶:{user_id}, 新連接:{is_new}")
                 else:
                     # 直接API模式下，創建新連接
                     binance_client, is_new = await exchange_connection_manager.get_or_create_connection(
@@ -183,7 +181,7 @@ async def futures_account_websocket(
                         exchange, 
                         user_id=user_id
                     )
-                    logger.info(f"直接API模式創建連接 - 用戶:{user_id}")
+                    logger.info(f"直接API模式創建 WebSocket 連接 - 用戶:{user_id}")
                 
                 # 確認連接有效
                 if not binance_client.is_connected():
@@ -542,84 +540,71 @@ async def get_account_data(
                 from ...core.secure_key_cache import SecureKeyCache
                 key_cache = SecureKeyCache()
                 
-                # 嘗試從緩存獲取 HMAC-SHA256 密鑰
-                cached_keys = key_cache.get_keys(user_id, exchange)
-                if cached_keys:
-                    logger.info(f"從安全緩存獲取用戶 {user_id} 的 {exchange} HMAC-SHA256 密鑰")
-                    api_key, api_secret = cached_keys
+                # 由於函數用於 WebSocket 連接，僅嘗試獲取 Ed25519 密鑰
+                logger.info(f"獲取 WebSocket 連接所需的 Ed25519 密鑰")
+                
+                # 僅嘗試從緩存獲取 Ed25519 密鑰
+                cached_ed25519_keys = key_cache.get_ed25519_keys(user_id, exchange)
+                if cached_ed25519_keys:
+                    logger.info(f"從安全緩存獲取用戶 {user_id} 的 {exchange} Ed25519 密鑰")
+                    api_key = cached_ed25519_keys[0]
+                    api_secret = cached_ed25519_keys[2]  # 使用Ed25519私鑰作為API密碼
                 else:
-                    # 嘗試從緩存獲取 Ed25519 密鑰
-                    cached_ed25519_keys = key_cache.get_ed25519_keys(user_id, exchange)
-                    if cached_ed25519_keys:
-                        logger.info(f"從安全緩存獲取用戶 {user_id} 的 {exchange} Ed25519 密鑰")
-                        api_key = cached_ed25519_keys[0]
-                        api_secret = cached_ed25519_keys[2]  # 使用Ed25519私鑰作為API密碼
+                    # 緩存中沒有，使用 ApiKeyManager 從數據庫獲取
+                    logger.info(f"使用 ApiKeyManager 獲取 Ed25519 密鑰")
+                    
+                    # 如果提供了虛擬密鑰ID，直接使用它
+                    if virtual_key_id:
+                        logger.info(f"使用提供的虛擬密鑰ID: {virtual_key_id}")
                     else:
-                        # 緩存中沒有，使用原來的方法從數據庫獲取
-                        logger.info(f"使用 ApiKeyManager 獲取 API 密鑰")
+                        # 獲取API密鑰記錄
+                        api_key_record = await api_key_manager.get_api_key(db, user_id, exchange)
                         
-                        # 如果提供了虛擬密鑰ID，直接使用它
-                        if virtual_key_id:
-                            logger.info(f"使用提供的虛擬密鑰ID: {virtual_key_id}")
-                        else:
-                            # 獲取API密鑰記錄
-                            api_key_record = await api_key_manager.get_api_key(db, user_id, exchange)
-                            
-                            if not api_key_record:
-                                error_msg = f"未找到{exchange}的API密鑰"
-                                logger.error(error_msg)
-                                raise ValueError(error_msg)
-                            
-                            virtual_key_id = api_key_record.virtual_key_id
-                            
-                            # 確保有虛擬密鑰ID
-                            if not virtual_key_id:
-                                logger.warning(f"API密鑰記錄沒有虛擬密鑰ID，將創建一個")
-                                try:
-                                    # 生成虛擬密鑰ID
-                                    api_key_record.virtual_key_id = str(uuid.uuid4())
-                                    # 設置默認權限
-                                    api_key_record.permissions = {"read": True, "trade": True}
-                                    # 保存到數據庫
-                                    db.commit()
-                                    db.refresh(api_key_record)
-                                    virtual_key_id = api_key_record.virtual_key_id
-                                    logger.info(f"成功為API密鑰創建虛擬密鑰ID: {virtual_key_id}")
-                                except Exception as e:
-                                    logger.error(f"創建虛擬密鑰ID失敗: {str(e)}")
-                                    # 繼續處理，使用備用方法
+                        if not api_key_record:
+                            error_msg = f"未找到{exchange}的API密鑰"
+                            logger.error(error_msg)
+                            raise ValueError(error_msg)
                         
-                        # 優先使用 ApiKeyManager 獲取解密後的密鑰
-                        if virtual_key_id:
+                        virtual_key_id = api_key_record.virtual_key_id
+                        
+                        # 確保有虛擬密鑰ID
+                        if not virtual_key_id:
+                            logger.warning(f"API密鑰記錄沒有虛擬密鑰ID，將創建一個")
                             try:
-                                # 使用 ApiKeyManager 獲取解密後的 API 密鑰
-                                real_keys, _ = await api_key_manager.get_real_api_key(
-                                    db=db,
-                                    user_id=user_id,
-                                    virtual_key_id=virtual_key_id,
-                                    operation="read"  # 讀取操作
-                                )
-                                
-                                if real_keys.get("api_key") and real_keys.get("api_secret"):
-                                    logger.info(f"成功使用 ApiKeyManager 解密 API 密鑰")
-                                    api_key = real_keys.get("api_key")
-                                    api_secret = real_keys.get("api_secret")
-                                else:
-                                    # ApiKeyManager 解密失敗，嘗試備用方法
-                                    logger.warning(f"ApiKeyManager 解密失敗，嘗試使用備用方法")
-                                    
-                                    # 如果虛擬密鑰ID可用但解密失敗，需要獲取API密鑰記錄進行備用解密
-                                    if not api_key_record:
-                                        api_key_record = await api_key_manager.get_api_key(db, user_id, exchange)
-                                        
-                                        if not api_key_record:
-                                            error_msg = f"未找到{exchange}的API密鑰"
-                                            logger.error(error_msg)
-                                            raise ValueError(error_msg)
+                                # 生成虛擬密鑰ID
+                                api_key_record.virtual_key_id = str(uuid.uuid4())
+                                # 設置默認權限
+                                api_key_record.permissions = {"read": True, "trade": True}
+                                # 保存到數據庫
+                                db.commit()
+                                db.refresh(api_key_record)
+                                virtual_key_id = api_key_record.virtual_key_id
+                                logger.info(f"成功為API密鑰創建虛擬密鑰ID: {virtual_key_id}")
                             except Exception as e:
-                                logger.warning(f"使用 ApiKeyManager 解密失敗: {str(e)}")
+                                logger.error(f"創建虛擬密鑰ID失敗: {str(e)}")
+                                # 繼續處理，使用備用方法
+                    
+                    # 優先使用 ApiKeyManager 獲取解密後的密鑰
+                    if virtual_key_id:
+                        try:
+                            # 使用 ApiKeyManager 獲取解密後的 API 密鑰
+                            real_keys, _ = await api_key_manager.get_real_api_key(
+                                db=db,
+                                user_id=user_id,
+                                virtual_key_id=virtual_key_id,
+                                operation="read",  # 讀取操作
+                                key_type="ed25519"  # 指定使用 Ed25519 密鑰，因為在 get_account_data 中使用 WebSocket
+                            )
+                            
+                            if real_keys.get("api_key") and real_keys.get("api_secret"):
+                                logger.info(f"成功使用 ApiKeyManager 解密 API 密鑰")
+                                api_key = real_keys.get("api_key")
+                                api_secret = real_keys.get("api_secret")
+                            else:
+                                # ApiKeyManager 解密失敗，嘗試備用方法
+                                logger.warning(f"ApiKeyManager 解密失敗，嘗試使用備用方法")
                                 
-                                # 獲取API密鑰記錄以進行備用解密
+                                # 如果虛擬密鑰ID可用但解密失敗，需要獲取API密鑰記錄進行備用解密
                                 if not api_key_record:
                                     api_key_record = await api_key_manager.get_api_key(db, user_id, exchange)
                                     
@@ -627,43 +612,43 @@ async def get_account_data(
                                         error_msg = f"未找到{exchange}的API密鑰"
                                         logger.error(error_msg)
                                         raise ValueError(error_msg)
-                        
-                        # 如果 ApiKeyManager 解密失敗，嘗試直接解密
-                        if (not api_key or not api_secret) and api_key_record:
-                            logger.info(f"嘗試使用備用解密方法")
+                        except Exception as e:
+                            logger.warning(f"使用 ApiKeyManager 解密失敗: {str(e)}")
                             
-                            # 直接使用安全模塊解密
-                            from ...core.security import decrypt_api_key
-                            
-                            # 優先嘗試 HMAC-SHA256 密鑰
-                            api_key = decrypt_api_key(api_key_record.api_key, key_type="API Key (HMAC-SHA256)")
-                            api_secret = decrypt_api_key(api_key_record.api_secret, key_type="API Secret (HMAC-SHA256)")
-                            
-                            # 在解密兩個密鑰後統一記錄結果
-                            if api_key and api_secret:
-                                logger.debug(f"HMAC-SHA256密鑰對解密成功，Key長度: {len(api_key)}, Secret長度: {len(api_secret)}")
-                                # 存入緩存
-                                key_cache.set_keys(user_id, exchange, api_key, api_secret)
-                            else:
-                                logger.warning(f"HMAC-SHA256密鑰解密失敗，嘗試 Ed25519 密鑰")
-                            
-                            # 如果 HMAC-SHA256 密鑰解密失敗，嘗試 Ed25519 密鑰
-                            if not api_key or not api_secret:
-                                api_key = decrypt_api_key(api_key_record.ed25519_key, key_type="API Key (Ed25519)")
-                                api_secret = decrypt_api_key(api_key_record.ed25519_secret, key_type="API Secret (Ed25519)")
+                            # 獲取API密鑰記錄以進行備用解密
+                            if not api_key_record:
+                                api_key_record = await api_key_manager.get_api_key(db, user_id, exchange)
                                 
-                                # 統一記錄 Ed25519 密鑰解密結果
-                                if api_key and api_secret:
-                                    logger.debug(f"Ed25519密鑰對解密成功，Key長度: {len(api_key)}, Secret長度: {len(api_secret)}")
-                                    # 存入緩存
-                                    key_cache.set_ed25519_keys(user_id, exchange, api_key, api_key, api_secret)
-                                else:
-                                    logger.error(f"API密鑰解密全部失敗，無法繼續連接")
-                            
-                            if not api_key or not api_secret:
-                                error_msg = "API密鑰解密失敗（所有方法均失敗）"
-                                logger.error(error_msg)
-                                raise ValueError(error_msg)
+                                if not api_key_record:
+                                    error_msg = f"未找到{exchange}的API密鑰"
+                                    logger.error(error_msg)
+                                    raise ValueError(error_msg)
+                    
+                    # 如果 ApiKeyManager 解密失敗，嘗試直接解密
+                    if (not api_key or not api_secret) and api_key_record:
+                        logger.info(f"嘗試使用備用解密方法（僅解密 Ed25519 密鑰）")
+                        
+                        # 直接使用安全模塊解密
+                        from ...core.security import decrypt_api_key
+                        
+                        # 僅嘗試解密 Ed25519 密鑰
+                        api_key = decrypt_api_key(api_key_record.ed25519_key, key_type="API Key (Ed25519)")
+                        api_secret = decrypt_api_key(api_key_record.ed25519_secret, key_type="API Secret (Ed25519)")
+                        
+                        # 統一記錄 Ed25519 密鑰解密結果
+                        if api_key and api_secret:
+                            logger.debug(f"Ed25519 密鑰對解密成功，Key長度: {len(api_key)}, Secret長度: {len(api_secret)}")
+                            # 存入緩存
+                            key_cache.set_ed25519_keys(user_id, exchange, api_key, api_key, api_secret)
+                        else:
+                            error_msg = "WebSocket 連接需要 Ed25519 密鑰，但解密失敗"
+                            logger.error(error_msg)
+                            raise ValueError(error_msg)
+                        
+                        if not api_key or not api_secret:
+                            error_msg = "Ed25519 密鑰解密失敗，WebSocket 連接無法繼續"
+                            logger.error(error_msg)
+                            raise ValueError(error_msg)
             else:
                 error_msg = "API密鑰或密鑰密碼為空，且未提供足夠信息從 ApiKeyManager 獲取"
                 logger.error(error_msg)
@@ -692,7 +677,12 @@ async def get_account_data(
             try:
                 # 從連接管理器獲取客戶端
                 if user_id:
-                    client, is_new = await exchange_connection_manager.get_connection(user_id, exchange, db)
+                    client, is_new = await exchange_connection_manager.get_connection(
+                        user_id, 
+                        exchange, 
+                        db, 
+                        connection_type="websocket"  # 明確指定使用 WebSocket 連接，需要 Ed25519 密鑰
+                    )
                 else:
                     # 使用直接提供的API密鑰
                     client, is_new = await exchange_connection_manager.get_or_create_connection(api_key, api_secret, exchange)
