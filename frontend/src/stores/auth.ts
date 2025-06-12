@@ -24,21 +24,32 @@ interface RegisterData {
   referral_code?: string
 }
 
+// 令牌刷新的防抖和冷卻控制
+const REFRESH_DEBOUNCE_TIME = 2000;  // 2秒內的重複刷新請求會被合併
+const REFRESH_COOLDOWN_TIME = 10000; // 10秒冷卻時間，防止頻繁刷新
+let refreshPromise: Promise<boolean> | null = null;
+let lastRefreshTime = 0;
+let refreshInProgress = false;
+
 export const useAuthStore = defineStore('auth', () => {
   // 不再獲取 TokenManager 單例
   // const tokenManager = getTokenManager();
   // 直接使用 tokenService
 
-  const token = ref<string | null>(null)
-  const refreshToken = ref<string | null>(null)
-  const loading = ref<boolean>(false)
-  const error = ref<string | null>(null)
+  // 引入userStore
+  const userStore = useUserStore();
+  
+  // 初始化token，嘗試從userStore獲取
+  const token = ref<string | null>(userStore.token);
+  const refreshToken = ref<string | null>(null);
+  const loading = ref<boolean>(false);
+  const error = ref<string | null>(null);
   
   // 令牌傳播延遲參數 - 令牌獲取後多久可以安全地用於獲取用戶數據
-  const tokenPropagationDelay = ref<number>(1500) // 增加到1500毫秒，確保令牌在後端完成傳播
+  const tokenPropagationDelay = ref<number>(1500); // 增加到1500毫秒，確保令牌在後端完成傳播
   
-  // 認證狀態計算屬性
-  const isAuthenticated = computed(() => !!token.value)
+  // 認證狀態計算屬性 - 同時考慮userStore的登入狀態
+  const isAuthenticated = computed(() => !!token.value || userStore.isLoggedIn);
 
   // 設置axios授權頭的統一方法
   const setAxiosAuthHeader = (authToken: string) => {
@@ -76,28 +87,36 @@ export const useAuthStore = defineStore('auth', () => {
         formData.append('keep_logged_in', credentials.keepLoggedIn.toString())
       }
       
-      const response = await axios.post('/api/v1/auth/login', formData)
+      const response = await axios.post('/api/v1/auth/login', formData, {
+        withCredentials: true  // 確保能接收 HTTP-only cookie
+      })
       
       // 從響應中獲取token
       const authToken = response.data.access_token
-      const newRefreshToken = response.data.refresh_token
       const expiresIn = response.data.expires_in
       
-      if (!authToken || !newRefreshToken) {
+      if (!authToken) {
         throw new Error('登錄響應中沒有找到token')
       }
+      
+      // 安全地顯示 token 部分內容
+      const maskToken = (token: string): string => {
+        if (token.length <= 8) return '***' + token.substring(token.length - 3);
+        return token.substring(0, 4) + '...' + token.substring(token.length - 4);
+      };
+      
+      console.log(`【AUTH】登入成功獲取的 access token: ${maskToken(authToken)}`);
       
       // 儲存keepLoggedIn狀態
       localStorage.setItem('keepLoggedIn', credentials.keepLoggedIn ? 'true' : 'false')
       
       // 保存token到store
       token.value = authToken
-      refreshToken.value = newRefreshToken
       
       // 使用 tokenService 統一管理令牌
       tokenService.setTokens(
         authToken, 
-        newRefreshToken, 
+        '',        // 不再使用 refreshToken (由 HTTP-only cookie 管理)
         'bearer', 
         expiresIn
       )
@@ -109,7 +128,6 @@ export const useAuthStore = defineStore('auth', () => {
       await waitForTokenPropagation()
       
       // 同步用戶資料 - 新增代碼
-      const userStore = useUserStore()
       userStore.setToken(authToken)
       
       // 觸發登錄成功事件，初始化聊天和通知系統
@@ -136,7 +154,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   // 使用Google登錄
-  const loginWithGoogle = async (keepLoggedIn: boolean = false) => {
+  const loginWithGoogle = async (keepLoggedIn: boolean = true) => {
     try {
       loading.value = true
       const response = await axios.get('/api/v1/auth/google/login', {
@@ -156,7 +174,7 @@ export const useAuthStore = defineStore('auth', () => {
   const handleGoogleCallback = async (
     accessTokenParam: string, 
     refreshTokenParam: string, 
-    keepLoggedIn: boolean = false, 
+    keepLoggedIn: boolean = true, 
     expiresIn?: number,
     refreshTokenExpiresIn?: number
   ) => {
@@ -170,11 +188,6 @@ export const useAuthStore = defineStore('auth', () => {
       token.value = accessTokenParam
       refreshToken.value = refreshTokenParam
       
-      // 確保刷新令牌正確保存到localStorage
-      localStorage.setItem('token', accessTokenParam);
-      localStorage.setItem('refreshToken', refreshTokenParam);
-      localStorage.setItem('tokenType', 'bearer');
-      
       // 先手動設置axios授權頭，確保後續API請求帶有token
       setAxiosAuthHeader(accessTokenParam)
       
@@ -186,15 +199,15 @@ export const useAuthStore = defineStore('auth', () => {
       try {
         const tokensSetResult = await tokenService.setTokens(
           accessTokenParam, 
-          refreshTokenParam, 
+          '', // 不再使用 refreshToken，由 HTTP-only cookie 管理
           'bearer', 
           expiresIn,
           refreshTokenExpiresIn
         )
         
-        // 如果 tokenService 中沒有設置刷新令牌或與localStorage中不一致，則嘗試強制同步
-        if (!tokenService.getRefreshToken() || tokenService.getRefreshToken() !== refreshTokenParam) {
-          tokenService.forceUpdateTokens(accessTokenParam, refreshTokenParam, 'bearer');
+        // 檢查是否成功設置令牌
+        if (!tokensSetResult) {
+          console.error('設置令牌失敗');
         }
       } catch (tokenError) {
         console.error('設置 tokenService 時出錯:', tokenError);
@@ -205,7 +218,6 @@ export const useAuthStore = defineStore('auth', () => {
       
       try {
         console.log('嘗試獲取用戶資料');
-        const userStore = useUserStore()
         userStore.setToken(accessTokenParam)
         await userStore.getUserData(true)
         console.log('成功獲取用戶資料')
@@ -251,28 +263,75 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // 刷新訪問令牌
-  const refreshAccessToken = async (keepLoggedIn = false) => {
+  // 刷新訪問令牌 - 帶有防抖和冷卻機制
+  const refreshAccessToken = async (keepLoggedIn = true) => {
     try {
-      // 檢查是否有刷新令牌
-      if (!refreshToken.value) {
-        console.error('沒有刷新令牌可用')
-        return false
+      // 檢查是否有刷新正在進行
+      if (refreshPromise) {
+        console.log('[AuthStore] 已有刷新請求進行中，使用現有請求');
+        return refreshPromise;
       }
       
-      // 使用 tokenService 刷新令牌
-      const result = await tokenService.refreshTokenIfNeeded()
-      if (result) {
-        // 更新本地 token 變量
-        token.value = tokenService.getAccessToken()
-        refreshToken.value = tokenService.getRefreshToken()
-        return true
+      // 檢查冷卻時間
+      const now = Date.now();
+      if (refreshInProgress || (now - lastRefreshTime < REFRESH_COOLDOWN_TIME && lastRefreshTime > 0)) {
+        console.log(`[AuthStore] 刷新操作在冷卻中，剩餘時間: ${(REFRESH_COOLDOWN_TIME - (now - lastRefreshTime)) / 1000}秒`);
+        // 返回上次刷新的結果
+        return !!token.value;
       }
       
-      return false
+      console.log('[AuthStore] 開始刷新訪問令牌');
+      refreshInProgress = true;
+      
+      // 創建一個新的刷新請求
+      refreshPromise = (async () => {
+        try {
+          // 使用統一的tokenService刷新機制，避免重複刷新
+          localStorage.setItem('keepLoggedIn', keepLoggedIn.toString());
+          const refreshed = await tokenService.refreshTokenIfNeeded();
+          
+          if (refreshed) {
+            // 獲取刷新後的token
+            const newAccessToken = tokenService.getAccessToken();
+            
+            if (newAccessToken) {
+              // 更新本地token
+              token.value = newAccessToken;
+              
+              // 更新 axios 授權頭
+              setAxiosAuthHeader(newAccessToken);
+              
+              // 更新用戶store的token
+              userStore.setToken(newAccessToken);
+              
+              console.log('[AuthStore] 訪問令牌刷新成功');
+              lastRefreshTime = Date.now();
+              return true;
+            }
+          }
+          
+          console.log('[AuthStore] 令牌刷新失敗');
+          return false;
+        } catch (error) {
+          console.error('[AuthStore] 刷新令牌錯誤:', error);
+          return false;
+        } finally {
+          // 重置刷新狀態
+          refreshInProgress = false;
+          
+          // 延遲重置 refreshPromise，以便在防抖時間內的請求可以復用
+          setTimeout(() => {
+            refreshPromise = null;
+          }, REFRESH_DEBOUNCE_TIME);
+        }
+      })();
+      
+      return refreshPromise;
     } catch (error) {
-      console.error('刷新令牌錯誤:', error)
-      return false
+      console.error('[AuthStore] 刷新令牌過程中發生意外錯誤:', error);
+      refreshInProgress = false;
+      refreshPromise = null;
+      return false;
     }
   }
 
@@ -281,14 +340,32 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       loading.value = true
       
+      // 檢查是否由 authService.logout() 調用
+      const isCalledFromAuthService = new Error().stack?.includes('authService');
+      
+      // 如果是從 authService 調用的，則不再呼叫後端 API
+      if (!isCalledFromAuthService) {
+        // 呼叫登出 API，清除 HTTP-only cookie
+        try {
+          await axios.post('/api/v1/auth/logout', {}, {
+            withCredentials: true  // 確保發送 cookie
+          });
+          console.log('[AuthStore] 登出 API 調用成功');
+        } catch (logoutError) {
+          console.warn('[AuthStore] 登出 API 調用失敗，繼續本地登出流程', logoutError);
+        }
+      } else {
+        console.log('[AuthStore] 從 authService 調用，跳過 API 請求');
+      }
+      
       // 清除 tokenService 中的令牌
-      tokenService.clearTokens()
+      tokenService.clearTokens();
       
       // 清除本地存儲的令牌
-      clearAuth()
+      clearAuth();
       
       // 分發登出事件
-      window.dispatchEvent(new Event('auth:logout'))
+      window.dispatchEvent(new Event('auth:logout'));
       
       // 將用戶重定向到首頁，而非直接使用特定的路由名稱
       try {
@@ -298,16 +375,16 @@ export const useAuthStore = defineStore('auth', () => {
           await router.push('/');
         }
       } catch (routerError) {
-        console.warn('登出後導航失敗，但不影響登出流程', routerError)
+        console.warn('登出後導航失敗，但不影響登出流程', routerError);
       }
       
       return {
         success: true,
         message: '登出成功'
-      }
+      };
     } catch (error: any) {
-      console.error('登出錯誤:', error)
-      error.value = '登出發生錯誤'
+      console.error('登出錯誤:', error);
+      error.value = '登出發生錯誤';
       
       // 即使出錯也嘗試清除令牌
       try {
@@ -318,9 +395,9 @@ export const useAuthStore = defineStore('auth', () => {
       return {
         success: false,
         message: '登出發生錯誤'
-      }
+      };
     } finally {
-      loading.value = false
+      loading.value = false;
     }
   }
 
@@ -338,7 +415,6 @@ export const useAuthStore = defineStore('auth', () => {
           
           try {
             // 同步用戶資料
-            const userStore = useUserStore()
             userStore.setToken(token.value)
             await userStore.getUserData(true)
             
@@ -349,14 +425,14 @@ export const useAuthStore = defineStore('auth', () => {
             // 檢查是否可以刷新令牌
             if (tokenService.isTokenExpired() && refreshToken.value) {
               // 嘗試刷新令牌並重新獲取用戶資料
-              const refreshed = await refreshAccessToken(localStorage.getItem('keepLoggedIn') === 'true')
+              const keepLoggedIn = localStorage.getItem('keepLoggedIn') !== 'false'; // 默認為 true
+              const refreshed = await refreshAccessToken(keepLoggedIn)
               if (refreshed) {
                 // 再次嘗試獲取用戶資料
-                const userStore = useUserStore()
                 userStore.setToken(token.value!)
                 await userStore.getUserData(true)
                 return { authenticated: true }
-            } else {
+              } else {
                 // 刷新失敗，清除認證狀態
                 await logout()
                 return { authenticated: false, reason: 'refresh_failed' }
@@ -390,7 +466,8 @@ export const useAuthStore = defineStore('auth', () => {
       if (!tokenStatus.isAuthenticated) {
         // 嘗試刷新令牌
         if (tokenStatus.refreshToken && (tokenStatus.isExpired || tokenStatus.isExpiringSoon)) {
-          const refreshed = await refreshAccessToken(localStorage.getItem('keepLoggedIn') === 'true')
+          const keepLoggedIn = localStorage.getItem('keepLoggedIn') !== 'false'; // 默認為 true
+          const refreshed = await refreshAccessToken(keepLoggedIn)
           return refreshed
         }
         return false

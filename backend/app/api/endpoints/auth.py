@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request, Form, Body, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Form, Body, Response, Cookie
 from sqlalchemy.orm import Session
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Optional
 from datetime import timedelta, datetime
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError
@@ -14,6 +14,11 @@ import os
 import httpx
 import re
 import asyncio
+import time
+import uuid
+import threading
+import random
+import hashlib
 
 from ...db.database import get_db
 from ...db.models import User, get_china_time
@@ -51,6 +56,148 @@ EXTENDED_TOKEN_EXPIRE_MINUTES = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
 
 # 設定登入事件延遲處理時間(秒)，使用配置值
 LOGIN_EVENT_DELAY_SECONDS = settings.LOGIN_EVENT_DELAY_SECONDS
+
+# 安全的 Cookie 設置
+COOKIE_SECURE = os.getenv("USE_SECURE_COOKIES", "True").lower() == "true"
+COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)
+COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "lax").lower()
+COOKIE_PATH = "/api/v1/auth"  # 限制 Cookie 僅用於認證 API
+
+def set_refresh_token_cookie(response: Response, token: str, expires_delta: Optional[timedelta] = None):
+    """
+    設置包含刷新令牌的 HTTP-only cookie
+    
+    參數:
+        response: FastAPI 響應對象
+        token: 刷新令牌
+        expires_delta: 可選的過期時間增量
+    """
+    # 如果未提供過期時間，默認使用90天
+    if expires_delta is None:
+        expires_delta = timedelta(days=int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "90")))
+    
+    max_age = int(expires_delta.total_seconds())
+    
+    response.set_cookie(
+        key="refresh_token",
+        value=token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        domain=COOKIE_DOMAIN,
+        path=COOKIE_PATH,
+        max_age=max_age
+    )
+    
+    # 計算過期日期用於日誌顯示
+    expire_date = get_china_time() + expires_delta
+    logger.info(f"已設置 HTTP-only refresh token cookie，有效期: {max_age/86400:.1f} 天 (到期時間: {expire_date.strftime('%Y-%m-%d %H:%M:%S')})")
+    
+def clear_refresh_token_cookie(response: Response):
+    """清除刷新令牌 cookie"""
+    response.delete_cookie(
+        key="refresh_token",
+        path=COOKIE_PATH,
+        domain=COOKIE_DOMAIN,
+        secure=COOKIE_SECURE,
+        httponly=True
+    )
+
+# 定期清理緩存結果的函數
+def _clean_refresh_token_cache(request_id=None):
+    """清理過期的刷新令牌緩存結果"""
+    if not hasattr(refresh_access_token, "result_cache"):
+        return
+        
+    try:
+        current_time = time.time()
+        
+        # 優化 1: 減少鎖的粒度
+        # 先無鎖方式獲取要清理的鍵
+        # 預先分配足夠的字典空間，減少重新分配
+        to_check = {}
+        
+        try:
+            # 快速獲取鍵的副本，最小化鎖定時間
+            with refresh_access_token.lock_dict_lock:
+                # 估計所需大小，只複製鍵而不是值，大幅減少內存使用
+                to_check = dict.fromkeys(refresh_access_token.result_cache.keys())
+        except Exception as copy_error:
+            logger.debug(f"獲取緩存鍵時出錯: {str(copy_error)}")
+            return
+            
+        # 如果沒有鍵需要檢查，提前返回
+        if not to_check:
+            return
+            
+        # 優化 2: 分批處理，減少一次性工作量
+        # 計算每個項目的過期時間，分類為過期和仍然有效
+        expired_keys = []
+        for k in to_check:
+            try:
+                # 使用無鎖讀取，在多線程環境中可能不精確但足夠高效
+                if k in refresh_access_token.result_cache:
+                    item = refresh_access_token.result_cache.get(k)
+                    if item and current_time - item.get("timestamp", 0) > 180:  # 3分鐘超時
+                        expired_keys.append(k)
+            except Exception:
+                # 忽略單個項目的讀取錯誤，繼續處理其他項目
+                continue
+                
+        # 優化 3: 批量刪除，減少加鎖次數
+        if expired_keys:
+            # 獲取鎖並批量刪除
+            deleted_count = 0
+            try:
+                with refresh_access_token.lock_dict_lock:
+                    for k in expired_keys:
+                        if k in refresh_access_token.result_cache:
+                            del refresh_access_token.result_cache[k]
+                            deleted_count += 1
+            except Exception as del_error:
+                logger.debug(f"刪除過期緩存時出錯: {str(del_error)}")
+                
+            # 只記錄實際有刪除時的日誌，減少日誌噪音
+            if deleted_count > 0 and (settings.DEBUG or deleted_count > 10):
+                logger.debug(f"清理了 {deleted_count} 個過期的令牌緩存 [請求ID: {request_id or 'system'}]")
+                
+        # 優化 4: 智能緩存大小控制
+        # 當緩存大小超過閾值，清理更積極
+        try:
+            cache_size = len(refresh_access_token.result_cache)
+            if cache_size > 1000:
+                # 大緩存時採用更積極的策略
+                # 創建一個排序函數來找出最舊的項目
+                def get_oldest_keys(cache, max_keys=500):
+                    """獲取緩存中最舊的一批鍵"""
+                    items = []
+                    try:
+                        with refresh_access_token.lock_dict_lock:
+                            # 獲取(鍵,時間戳)對，最小化鎖定時間
+                            items = [(k, cache[k].get("timestamp", 0)) for k in cache if k in cache]
+                    except:
+                        return []
+                        
+                    # 在無鎖狀態下排序，找出最舊的項目
+                    items.sort(key=lambda x: x[1])
+                    return [k for k, _ in items[:max_keys]]
+                
+                # 找出最舊的項目並刪除
+                oldest_keys = get_oldest_keys(refresh_access_token.result_cache, 500)
+                if oldest_keys:
+                    deleted = 0
+                    with refresh_access_token.lock_dict_lock:
+                        for k in oldest_keys:
+                            if k in refresh_access_token.result_cache:
+                                del refresh_access_token.result_cache[k]
+                                deleted += 1
+                                
+                    if deleted > 0:
+                        logger.info(f"緩存大小超過閾值，已清理 {deleted} 個最舊項目，當前大小約: {len(refresh_access_token.result_cache)} [請求ID: {request_id or 'system'}]")
+        except Exception as size_error:
+            logger.debug(f"緩存大小控制時出錯: {str(size_error)}")
+    except Exception as cache_error:
+        logger.error(f"清理過期緩存失敗: {str(cache_error)} [請求ID: {request_id or 'system'}]")
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def register_user(*, db: Session = Depends(get_db), user_in: UserCreate) -> Any:
@@ -123,6 +270,7 @@ def register_user(*, db: Session = Depends(get_db), user_in: UserCreate) -> Any:
 @router.post("/login", response_model=Token)
 async def login(
     request: Request,
+    response: Response,  # 新增 Response 參數
     db: Session = Depends(get_db),
     form_data: OAuth2PasswordRequestForm = Depends(),
     keep_logged_in: bool = Form(False)
@@ -132,6 +280,7 @@ async def login(
     
     處理用戶的登入請求，驗證憑據並返回訪問令牌和刷新令牌。
     支援七天保持登入功能，若啟用則延長令牌有效期。
+    刷新令牌通過 HTTP-only cookie 傳輸，提高安全性。
     
     參數:
     - form_data: OAuth2表單數據，包含用戶名和密碼
@@ -140,7 +289,6 @@ async def login(
     返回:
     - access_token: 訪問令牌
     - token_type: 令牌類型（bearer）
-    - refresh_token: 刷新令牌
     - expires_in: 令牌過期時間（秒）
     """
     try:
@@ -184,23 +332,28 @@ async def login(
             data={"sub": user.username}, expires_delta=access_token_expires
         )
         
-        # 創建刷新令牌（如果選擇了保持登入，刷新令牌也使用延長的過期時間）
+        # 獲取用戶代理和裝置資訊
+        user_agent = request.headers.get("user-agent", "")
+        client_ip = request.client.host
+        device_info = parse_user_agent(user_agent)
+        
+        # 創建刷新令牌
         refresh_token, _ = create_refresh_token(
             db, 
             user.id,
-            expires_delta=access_token_expires if keep_logged_in else None
+            expires_delta=access_token_expires if keep_logged_in else None,
+            device_info=str(device_info)  # 儲存裝置資訊
         )
         
+        # 設置 HTTP-only cookie 存儲 refresh_token
+        set_refresh_token_cookie(response, refresh_token, expires_delta=access_token_expires if keep_logged_in else None)
+        
         # 記錄用戶登入IP和時間
-        client_ip = request.client.host
         user.last_login_ip = client_ip
         user.last_login_at = get_china_time()
         db.commit()
         
         logger.info(f"Login successful: {form_data.username}, IP: {client_ip}, Extended session: {keep_logged_in}")
-        
-        # 獲取用戶代理信息
-        user_agent = request.headers.get("user-agent", "")
         
         # 創建登入成功事件
         try:
@@ -247,10 +400,10 @@ async def login(
             # 記錄錯誤但不中斷登入流程
             logger.error(f"設置延遲登入事件失敗: {str(event_error)}")
         
+        # 返回訪問令牌（不再包含刷新令牌，因為它已經在 cookie 中）
         return {
             "access_token": access_token, 
             "token_type": "bearer",
-            "refresh_token": refresh_token,
             "expires_in": access_token_expires.total_seconds()
         }
     except HTTPException:
@@ -477,7 +630,8 @@ def get_user_referrals(
 @router.post("/refresh", response_model=RefreshTokenResponse)
 def refresh_access_token(
     request: Request,
-    refresh_token: str = Form(...),
+    response: Response,
+    refresh_token: str = Cookie(None, alias="refresh_token"),  # 從 cookie 獲取刷新令牌
     keep_logged_in: bool = Form(False),
     db: Session = Depends(get_db)
 ) -> Any:
@@ -487,134 +641,424 @@ def refresh_access_token(
     當訪問令牌過期時，客戶端可以使用此端點通過刷新令牌獲取新的訪問令牌，
     避免用戶需要重新登入。支援延長登入期間的選項。
     
+    刷新令牌從 HTTP-only cookie 中獲取，並在每次刷新時更新有效期，
+    提高了安全性，降低令牌被盜用的風險。
+    
     參數:
-    - refresh_token: 刷新令牌
     - keep_logged_in: 是否保持登入狀態（若為true，則延長令牌有效期）
     
     返回:
     - access_token: 新的訪問令牌
     - token_type: 令牌類型（bearer）
-    - refresh_token: 新的刷新令牌（僅當保持登入時）
     - expires_in: 令牌有效期（秒）
     """
+    # 生成一個唯一的請求 ID 用於日誌追蹤，使用更高效的UUID生成方式
+    request_id = str(uuid.uuid4())[:8]
+    
     try:
-        logger.debug(f"處理刷新令牌請求，請求頭: {request.headers}")
-        # 檢查客戶端請求模式 (JSON或重定向)
+        # 減少日誌開銷 - 只在調試模式下記錄詳細資訊
+        if settings.DEBUG:
+            logger.debug(f"處理刷新令牌請求 [請求ID: {request_id}]")
+        
+        # 檢查是否提供了 refresh_token - 快速失敗機制
+        if not refresh_token:
+            if settings.DEBUG:
+                logger.debug(f"刷新令牌不存在於 cookie 中 [請求ID: {request_id}]")
+            clear_refresh_token_cookie(response)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="缺少刷新令牌",
+            )
+        
+        # 檢查客戶端請求模式 (JSON或重定向) - 延遲至需要時評估
         accept_header = request.headers.get("accept", "")
         is_ajax = "application/json" in accept_header or request.headers.get("X-Requested-With") == "XMLHttpRequest"
-        response_mode = "JSON" if is_ajax else "重定向"
-        logger.info(f"刷新令牌請求 - 客戶端期望回應模式: {response_mode}")
         
-        # 驗證刷新令牌並獲取相關用戶
+        # 獲取用戶專用的鎖定鍵和緩存鍵 - 先進行高效的緩存檢查
+        
+        # 初始化鎖機制和結果緩存（如果尚未初始化）
+        if not hasattr(refresh_access_token, "locks"):
+            refresh_access_token.locks = {}
+            refresh_access_token.lock_dict_lock = threading.RLock()
+            refresh_access_token.result_cache = {}
+            if settings.DEBUG:
+                logger.debug("初始化令牌刷新鎖和緩存機制")
+        
+        # 使用令牌的安全指紋作為緩存鍵，避免在驗證前暴露完整用戶信息
+        token_fingerprint = hashlib.md5(refresh_token.encode()).hexdigest()[:10]
+        cache_key = f"refresh_result_{token_fingerprint}"
+        
+        # 先檢查緩存是否有有效結果 - 無需獲取鎖
+        cached_result = None
+        current_time = time.time()
+        
+        # 高效率緩存檢查 - 直接使用字典訪問
+        if cache_key in refresh_access_token.result_cache:
+            cached_item = refresh_access_token.result_cache[cache_key]
+            # 檢查緩存是否過期 - 擴展到45秒有效期提高命中率
+            if current_time - cached_item["timestamp"] < 45:  # 45秒內有效
+                cached_result = cached_item
+                if settings.DEBUG:
+                    logger.debug(f"直接使用緩存的刷新結果 [請求ID: {request_id}]")
+        
+        if cached_result:
+            # 添加緩存標記到響應頭
+            response.headers["X-Used-Cache"] = "true"
+            
+            # 設置 HTTP-only cookie 存儲 refresh_token
+            set_refresh_token_cookie(
+                response, 
+                cached_result["refresh_token"], 
+                expires_delta=timedelta(seconds=cached_result["refresh_token_expires_in"])
+            )
+            
+            # 構建返回結果，不包含refresh_token
+            result = {
+                "access_token": cached_result["access_token"],
+                "token_type": "bearer",
+                "expires_in": cached_result["expires_in"],
+                "refresh_token_expires_in": cached_result["refresh_token_expires_in"]
+            }
+            
+            # 觸發非同步緩存清理（更低頻率，減少系統負擔）
+            if random.random() < 0.05:  # 降低到5%的請求觸發清理
+                threading.Thread(
+                    target=_clean_refresh_token_cache,
+                    args=(request_id,),
+                    daemon=True
+                ).start()
+            
+            # 根據請求類型返回結果
+            if is_ajax:
+                return result
+            else:
+                # 構建重定向 URL
+                redirect_params = {
+                    "access_token": result["access_token"],
+                    "token_type": "bearer",
+                    "expires_in": result["expires_in"],
+                    "refresh_token_expires_in": result["refresh_token_expires_in"],
+                    "keep_logged_in": str(keep_logged_in).lower()
+                }
+                redirect_url = f"{os.getenv('FRONTEND_CALLBACK_URL', 'http://localhost:5175/auth/callback')}?{urlencode(redirect_params)}"
+                
+                # 重定向到前端
+                redir_response = RedirectResponse(url=redirect_url)
+                redir_response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+                redir_response.headers["Pragma"] = "no-cache"
+                redir_response.headers["Expires"] = "0"
+                return redir_response
+        
+        # 驗證刷新令牌並獲取相關用戶 - 移至此處，減少不必要的驗證
+        start_time = time.time()
         user = verify_refresh_token(db, refresh_token)
+        verify_time = time.time() - start_time
+        
+        # 如果驗證時間超過閾值，記錄警告 - 使用更高的閾值減少日誌噪音
+        if verify_time > 1.5 and settings.DEBUG:
+            logger.warning(f"令牌驗證耗時過長: {verify_time:.2f}秒 [請求ID: {request_id}]")
         
         if not user:
-            logger.warning(f"刷新令牌驗證失敗: 無效的刷新令牌")
+            if settings.DEBUG:
+                logger.debug(f"刷新令牌驗證失敗 [請求ID: {request_id}]")
+            # 清除無效的刷新令牌 cookie
+            clear_refresh_token_cookie(response)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="無效的刷新令牌",
             )
         
-        # 創建訪問令牌和刷新令牌
-        # 設置access token始終使用標準過期時間（15分鐘）
-        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        # 獲取用戶鎖定鍵 - 使用用戶ID作為鍵更準確
+        lock_key = f"refresh_token_lock_{user.id}"
+        cache_key = f"refresh_result_{user.id}"  # 更新為使用用戶ID的緩存鍵
         
-        # 創建訪問令牌
-        access_token = create_access_token(
-            data={"sub": user.username},
-            expires_delta=access_token_expires
-        )
+        # 記錄是否是通過寬限期機制驗證的令牌
+        if hasattr(user, "_from_grace_period") and user._from_grace_period:
+            if settings.DEBUG:
+                logger.debug(f"使用寬限期內的令牌成功驗證用戶 {user.username} [請求ID: {request_id}]")
+            response.headers["X-Token-Grace-Period"] = "true"
         
-        # 設置refresh token過期時間
-        refresh_token_expires = None  # 默認與access token相同
-        if keep_logged_in:
-            # 如果保持登入，刷新令牌使用更長的過期時間(REFRESH_TOKEN_EXPIRE_DAYS天)
-            refresh_token_expires = timedelta(days=int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7")))
+        # 獲取用戶的鎖 - 使用高效率的鎖管理
+        with refresh_access_token.lock_dict_lock:
+            if lock_key not in refresh_access_token.locks:
+                refresh_access_token.locks[lock_key] = threading.RLock()
         
-        # 創建刷新令牌，並只提取令牌字符串
-        try:
-            refresh_token_tuple = create_refresh_token(
-                user_id=user.id, 
-                db=db,
-                expires_delta=refresh_token_expires
-            )
-            # 獲取刷新令牌字符串（而不是整個元組）
-            new_refresh_token = refresh_token_tuple[0]
+        # 嘗試獲取鎖，使用非阻塞模式立即檢查
+        user_lock = refresh_access_token.locks[lock_key]
+        lock_acquired = user_lock.acquire(blocking=False)
+        
+        if not lock_acquired:
+            # 已有另一個請求正在處理，等待結果
+            if settings.DEBUG:
+                logger.debug(f"用戶 {user.username} 的令牌刷新請求正在處理中 [請求ID: {request_id}]，等待結果")
             
-            # 嘗試撤銷舊的刷新令牌
-            # 即使撤銷失敗，也繼續提供新的令牌
-            try:
-                revoke_success = revoke_refresh_token(db, refresh_token)
-                if revoke_success:
-                    logger.info(f"已撤銷舊的刷新令牌 (用戶: {user.username})")
+            # 等待結果可用，使用更短的等待間隔提高響應性
+            wait_start = time.time()
+            max_wait_time = 5  # 最多等待5秒
+            check_interval = 0.05  # 每0.05秒檢查一次，提高響應速度
+            
+            # 在等待過程中檢查緩存
+            while time.time() - wait_start < max_wait_time:
+                # 檢查是否有緩存結果
+                if cache_key in refresh_access_token.result_cache:
+                    # 獲取緩存結果
+                    cached_result = refresh_access_token.result_cache[cache_key]
+                    current_time = time.time()
+                    
+                    # 檢查緩存是否過期
+                    if current_time - cached_result["timestamp"] < 45:  # 45秒內有效
+                        if settings.DEBUG:
+                            logger.debug(f"用戶 {user.username} 等待後使用緩存的刷新結果 [請求ID: {request_id}]")
+                        
+                        # 添加緩存標記到響應頭
+                        response.headers["X-Used-Cache"] = "true"
+                        
+                        # 設置 HTTP-only cookie 存儲 refresh_token
+                        set_refresh_token_cookie(
+                            response, 
+                            cached_result["refresh_token"], 
+                            expires_delta=timedelta(seconds=cached_result["refresh_token_expires_in"])
+                        )
+                        
+                        # 構建返回結果，不包含refresh_token
+                        result = {
+                            "access_token": cached_result["access_token"],
+                            "token_type": "bearer",
+                            "expires_in": cached_result["expires_in"],
+                            "refresh_token_expires_in": cached_result["refresh_token_expires_in"]
+                        }
+                        
+                        # 根據請求類型返回結果
+                        if is_ajax:
+                            return result
+                        else:
+                            # 構建重定向 URL
+                            redirect_params = {
+                                "access_token": result["access_token"],
+                                "token_type": "bearer",
+                                "expires_in": result["expires_in"],
+                                "refresh_token_expires_in": result["refresh_token_expires_in"],
+                                "keep_logged_in": str(keep_logged_in).lower()
+                            }
+                            redirect_url = f"{os.getenv('FRONTEND_CALLBACK_URL', 'http://localhost:5175/auth/callback')}?{urlencode(redirect_params)}"
+                            
+                            # 重定向到前端
+                            redir_response = RedirectResponse(url=redirect_url)
+                            redir_response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+                            redir_response.headers["Pragma"] = "no-cache"
+                            redir_response.headers["Expires"] = "0"
+                            return redir_response
+                
+                # 等待一段時間後再次檢查
+                time.sleep(check_interval)
+            
+            # 等待超時，嘗試獲取鎖並處理請求
+            if settings.DEBUG:
+                logger.debug(f"用戶 {user.username} 的令牌刷新請求等待超時 [請求ID: {request_id}]，嘗試自行處理")
+            lock_acquired = refresh_access_token.locks[lock_key].acquire(blocking=True, timeout=0.5)
+            if not lock_acquired:
+                logger.warning(f"用戶 {user.username} 獲取鎖失敗 [請求ID: {request_id}]，返回429錯誤")
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="刷新請求過於頻繁，請稍後再試"
+                )
+        
+        # 成功獲取鎖，開始處理請求
+        try:
+            # 記錄處理開始時間
+            process_start = time.time()
+            
+            # 再次檢查緩存，以防在獲取鎖的過程中其他請求已完成處理
+            if cache_key in refresh_access_token.result_cache:
+                cached_result = refresh_access_token.result_cache[cache_key]
+                current_time = time.time()
+                
+                if current_time - cached_result["timestamp"] < 45:  # 45秒內有效
+                    if settings.DEBUG:
+                        logger.debug(f"用戶 {user.username} 獲取鎖後發現已有緩存結果 [請求ID: {request_id}]")
+                    
+                    # 添加緩存標記到響應頭
+                    response.headers["X-Used-Cache"] = "true"
+                    
+                    # 設置 HTTP-only cookie 存儲 refresh_token
+                    set_refresh_token_cookie(
+                        response, 
+                        cached_result["refresh_token"], 
+                        expires_delta=timedelta(seconds=cached_result["refresh_token_expires_in"])
+                    )
+                    
+                    # 構建返回結果，不包含refresh_token
+                    result = {
+                        "access_token": cached_result["access_token"],
+                        "token_type": "bearer",
+                        "expires_in": cached_result["expires_in"],
+                        "refresh_token_expires_in": cached_result["refresh_token_expires_in"]
+                    }
+                    
+                    # 根據請求類型返回結果
+                    if is_ajax:
+                        return result
+                    else:
+                        # 構建重定向 URL
+                        redirect_params = {
+                            "access_token": result["access_token"],
+                            "token_type": "bearer",
+                            "expires_in": result["expires_in"],
+                            "refresh_token_expires_in": result["refresh_token_expires_in"],
+                            "keep_logged_in": str(keep_logged_in).lower()
+                        }
+                        redirect_url = f"{os.getenv('FRONTEND_CALLBACK_URL', 'http://localhost:5175/auth/callback')}?{urlencode(redirect_params)}"
+                        
+                        # 重定向到前端
+                        redir_response = RedirectResponse(url=redirect_url)
+                        redir_response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+                        redir_response.headers["Pragma"] = "no-cache"
+                        redir_response.headers["Expires"] = "0"
+                        return redir_response
+        
+            # 創建訪問令牌 - 直接使用標準過期時間（15分鐘）
+            access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+            
+            # 創建訪問令牌 - 使用高效的令牌生成
+            token_start = time.time()
+            access_token = create_access_token(
+                data={"sub": user.username},
+                expires_delta=access_token_expires
+            )
+            token_create_time = time.time() - token_start
+            
+            if token_create_time > 0.1 and settings.DEBUG:
+                logger.debug(f"創建訪問令牌耗時較長: {token_create_time:.2f}秒 [請求ID: {request_id}]")
+            
+            # 設置refresh token過期時間
+            refresh_token_expires = None  # 默認標準過期時間
+            if keep_logged_in:
+                # 如果保持登入，刷新令牌使用更長的過期時間(REFRESH_TOKEN_EXPIRE_DAYS天)
+                refresh_token_expires = timedelta(days=int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "90")))
+            
+            # 獲取裝置資訊 - 使用緩存提高效率
+            device_info = None
+            user_agent = request.headers.get("user-agent", "")
+            if user_agent:
+                # 使用緩存的設備信息或解析新的設備信息
+                if not hasattr(refresh_access_token, "device_cache"):
+                    refresh_access_token.device_cache = {}
+                
+                ua_hash = hash(user_agent)
+                if ua_hash in refresh_access_token.device_cache:
+                    device_info = refresh_access_token.device_cache[ua_hash]
                 else:
-                    logger.warning(f"撤銷舊的刷新令牌失敗: 令牌不存在或已撤銷 (用戶: {user.username})")
-            except Exception as revoke_error:
-                logger.warning(f"撤銷舊的刷新令牌過程中出現錯誤: {str(revoke_error)}")
-                # 不中斷流程，繼續提供新的令牌
-        except Exception as token_error:
-            logger.error(f"創建新的刷新令牌失敗: {str(token_error)}")
-            # 如果創建新令牌失敗但我們已經有了有效的訪問令牌，可以繼續使用原刷新令牌
-            new_refresh_token = refresh_token
-        
-        # 計算並明確區分不同令牌的過期時間（秒）
-        access_token_expires_in = int(access_token_expires.total_seconds())
-        
-        # 刷新令牌過期時間
-        refresh_token_expires_in = access_token_expires_in
-        if keep_logged_in:
-            # 如果保持登入，刷新令牌使用7天有效期
-            refresh_token_expires_in = int(timedelta(days=int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))).total_seconds())
-        
-        # 準備返回數據
-        token_data = {
-            "access_token": access_token,
-            "refresh_token": new_refresh_token,
-            "token_type": "bearer",
-            "expires_in": access_token_expires_in,
-            "refresh_token_expires_in": refresh_token_expires_in
-        }
-        
-        # 根據請求模式返回相應格式的響應
-        if is_ajax:
-            # 返回JSON響應
-            logger.info(f"以JSON格式返回刷新令牌響應 (用戶: {user.username})")
-            return token_data
-        else:
-            # 構建重定向 URL
-            redirect_params = {
+                    device_info = parse_user_agent(user_agent)
+                    refresh_access_token.device_cache[ua_hash] = device_info
+            
+            # 創建或更新刷新令牌
+            refresh_token_start = time.time()
+            try:
+                # create_refresh_token 會自動檢測並更新現有令牌
+                new_refresh_token, _ = create_refresh_token(
+                    user_id=user.id, 
+                    db=db,
+                    expires_delta=refresh_token_expires,
+                    device_info=str(device_info) if device_info else None
+                )
+                
+                refresh_token_create_time = time.time() - refresh_token_start
+                if refresh_token_create_time > 0.5 and settings.DEBUG:
+                    logger.debug(f"創建/更新刷新令牌耗時較長: {refresh_token_create_time:.2f}秒 [請求ID: {request_id}]")
+            except Exception as token_error:
+                logger.error(f"更新刷新令牌失敗: {str(token_error)} [請求ID: {request_id}]")
+                # 如果無法創建或更新令牌，無法繼續處理
+                raise token_error
+            
+            # 計算令牌過期時間（秒）
+            access_token_expires_in = int(access_token_expires.total_seconds())
+            
+            # 刷新令牌過期時間
+            refresh_token_expires_in = access_token_expires_in  # 默認與access token相同
+            if keep_logged_in:
+                # 如果保持登入，使用配置的天數
+                refresh_token_expires_in = int(timedelta(days=int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "90"))).total_seconds())
+            
+            # 準備返回數據和緩存數據
+            result = {
                 "access_token": access_token,
-                "refresh_token": new_refresh_token,
-                "token_type": "bearer",
+                "token_type": "bearer", 
                 "expires_in": access_token_expires_in,
-                "refresh_token_expires_in": refresh_token_expires_in,
-                "keep_logged_in": str(keep_logged_in).lower()
+                "refresh_token_expires_in": refresh_token_expires_in
             }
-            logger.debug(f"準備重定向，參數為: {redirect_params}")
+            
+            # 緩存結果，包含refresh_token以供後續請求使用
+            cache_result = result.copy()
+            cache_result["refresh_token"] = new_refresh_token
+            cache_result["timestamp"] = time.time()
+            
+            # 存儲到緩存 - 使用寫時拷貝策略，更新緩存的同時也使用token_fingerprint作為鍵
+            refresh_access_token.result_cache[cache_key] = cache_result
+            # 同時用token指紋存儲一份，提高緩存命中率
+            refresh_access_token.result_cache[f"refresh_result_{token_fingerprint}"] = cache_result
+            
+            # 記錄總處理時間 - 只在需要時記錄
+            total_process_time = time.time() - process_start
+            if total_process_time > 1.0 and settings.DEBUG:
+                logger.debug(f"用戶 {user.username} 的令牌刷新處理總耗時較長: {total_process_time:.2f}秒 [請求ID: {request_id}]")
+            
+            # 設置 HTTP-only cookie 存儲 refresh_token
+            set_refresh_token_cookie(response, new_refresh_token, expires_delta=refresh_token_expires)
+            
+            # 根據請求類型返回結果
+            if is_ajax:
+                # 返回JSON響應
+                return result
+            else:
+                # 構建重定向 URL
+                redirect_params = {
+                    "access_token": access_token,
+                    "token_type": "bearer",
+                    "expires_in": access_token_expires_in,
+                    "refresh_token_expires_in": refresh_token_expires_in,
+                    "keep_logged_in": str(keep_logged_in).lower()
+                }
 
-            # 使用 urlencode 構建查詢字符串
-            redirect_url = f"{os.getenv('FRONTEND_CALLBACK_URL', 'http://localhost:5175/auth/callback')}?{urlencode(redirect_params)}"
-            logger.info(f"重定向到前端: {redirect_url}")
+                redirect_url = f"{os.getenv('FRONTEND_CALLBACK_URL', 'http://localhost:5175/auth/callback')}?{urlencode(redirect_params)}"
 
-            # 重定向到前端
-            response = RedirectResponse(url=redirect_url)
-            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-            response.headers["Pragma"] = "no-cache"
-            response.headers["Expires"] = "0"
-            return response
+                # 重定向到前端
+                redirect_response = RedirectResponse(url=redirect_url)
+                redirect_response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+                redirect_response.headers["Pragma"] = "no-cache"
+                redirect_response.headers["Expires"] = "0"
+                return redirect_response
+                
+        finally:
+            # 釋放鎖，無論成功失敗
+            try:
+                user_lock.release()
+                if settings.DEBUG:
+                    logger.debug(f"用戶 {user.username} 的令牌刷新鎖已釋放 [請求ID: {request_id}]")
+            except Exception as lock_error:
+                logger.warning(f"釋放令牌刷新鎖失敗: {str(lock_error)} [請求ID: {request_id}]")
+                
+            # 定期清理過期的緩存結果 - 低頻率觸發清理
+            if random.random() < 0.05:  # 只有5%的請求會觸發清理
+                threading.Thread(
+                    target=_clean_refresh_token_cache,
+                    args=(request_id,),
+                    daemon=True
+                ).start()
     except HTTPException:
-        # 直接向上拋出HTTP異常
+        # 直接重新拋出 HTTP 異常
         raise
     except Exception as e:
-        logger.error(f"刷新令牌過程中發生錯誤: {str(e)}")
+        # 捕獲所有其他異常
+        logger.error(f"處理刷新令牌請求時發生錯誤: {str(e)} [請求ID: {request_id}]")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"刷新令牌失敗: {str(e)}"
+            detail="處理刷新令牌請求時發生錯誤"
         )
 
 @router.post("/logout", status_code=status.HTTP_200_OK)
 def logout(
-    refresh_token: str = Form(...),
+    response: Response,
+    refresh_token: str = Cookie(None, alias="refresh_token"),
     db: Session = Depends(get_db)
 ) -> Any:
     """
@@ -623,18 +1067,23 @@ def logout(
     處理用戶登出請求，撤銷提供的刷新令牌，使其無法再用於獲取新的訪問令牌。
     這是安全登出流程的關鍵步驟，可防止刷新令牌被濫用。
     
-    參數:
-    - refresh_token: 要撤銷的刷新令牌
-    
     返回:
     - 成功登出的確認訊息
     """
-    success = revoke_refresh_token(db, refresh_token)
+    # 嘗試撤銷令牌
+    if refresh_token:
+        success = revoke_refresh_token(db, refresh_token)
+        if success:
+            logger.info("成功撤銷並刪除刷新令牌")
+        else:
+            logger.warning("撤銷刷新令牌失敗：令牌可能已過期或不存在")
+    else:
+        logger.info("未提供刷新令牌，無需撤銷")
     
-    if not success:
-        logger.warning(f"Failed to revoke token: {refresh_token[:10]}...")
+    # 清除刷新令牌 cookie，無論撤銷是否成功
+    clear_refresh_token_cookie(response)
+    logger.info("已清除瀏覽器中的 refresh token cookie")
     
-    # 即使找不到令牌也返回成功，因為這可能表示令牌已經被撤銷
     return {"message": "成功登出"}
 
 @router.get("/google/login")
@@ -915,16 +1364,28 @@ async def google_callback(
             refresh_token_expires = None  # 默認與access token相同
             if keep_logged_in:
                 # 如果保持登入，刷新令牌使用更長的過期時間(REFRESH_TOKEN_EXPIRE_DAYS天)
-                refresh_token_expires = timedelta(days=int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7")))
+                refresh_token_expires = timedelta(days=int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "90")))
             
-            # 創建刷新令牌，並只提取令牌字符串
-            refresh_token_tuple = create_refresh_token(
-                user_id=user.id, 
-                db=db,
-                expires_delta=refresh_token_expires
-            )
-            # 獲取刷新令牌字符串（而不是整個元組）
-            refresh_token = refresh_token_tuple[0]
+            # 獲取裝置資訊
+            user_agent = request.headers.get("user-agent", "")
+            device_info = parse_user_agent(user_agent)
+            
+            # 創建或更新刷新令牌
+            try:
+                # 注意：create_refresh_token 會自動檢測並更新現有令牌
+                new_refresh_token, _ = create_refresh_token(
+                    user_id=user.id, 
+                    db=db,
+                    expires_delta=refresh_token_expires,
+                    device_info=str(device_info)
+                )
+                
+                # 成功建立刷新令牌
+                logger.info(f"成功為Google登入用戶 {user.username} 創建刷新令牌")
+            except Exception as token_error:
+                logger.error(f"更新刷新令牌失敗: {str(token_error)}")
+                # 如果無法創建或更新令牌，無法繼續處理
+                raise token_error
             
             # 計算並明確區分不同令牌的過期時間（秒）
             access_token_expires_in = int(access_token_expires.total_seconds())
@@ -932,11 +1393,10 @@ async def google_callback(
             # 刷新令牌過期時間
             refresh_token_expires_in = access_token_expires_in
             if keep_logged_in:
-                # 如果保持登入，刷新令牌使用7天有效期
-                refresh_token_expires_in = int(timedelta(days=int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))).total_seconds())
+                # 如果保持登入，刷新令牌使用90天有效期
+                refresh_token_expires_in = int(timedelta(days=int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "90"))).total_seconds())
             
             # 獲取用戶代理和IP
-            user_agent = request.headers.get("user-agent", "")
             client_ip = request.client.host
             
             # 創建登入成功事件（Google登入）
@@ -988,7 +1448,6 @@ async def google_callback(
             # 構建重定向 URL
             redirect_params = {
                 "access_token": access_token,
-                "refresh_token": refresh_token,
                 "token_type": "bearer",
                 "expires_in": access_token_expires_in,  # access token 過期時間
                 "refresh_token_expires_in": refresh_token_expires_in,  # 新增: refresh token 過期時間
@@ -1001,11 +1460,16 @@ async def google_callback(
             logger.info(f"重定向到前端: {redirect_url}")
 
             # 重定向到前端
-            response = RedirectResponse(url=redirect_url)
-            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-            response.headers["Pragma"] = "no-cache"
-            response.headers["Expires"] = "0"
-            return response
+            redirect_response = RedirectResponse(url=redirect_url)
+            
+            # 設置 HTTP-only cookie 存儲 refresh_token
+            set_refresh_token_cookie(redirect_response, new_refresh_token, expires_delta=refresh_token_expires)
+            logger.info(f"已重新設置 refresh token cookie (用戶: {user.username})")
+            
+            redirect_response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            redirect_response.headers["Pragma"] = "no-cache"
+            redirect_response.headers["Expires"] = "0"
+            return redirect_response
             
         except Exception as e:
             logger.error(f"Google OAuth callback error: {str(e)}", exc_info=True)

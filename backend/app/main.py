@@ -18,6 +18,11 @@ from contextlib import asynccontextmanager
 import json
 import asyncio
 from starlette.middleware.base import BaseHTTPMiddleware
+# 添加 orjson 支援
+import orjson
+from fastapi.responses import ORJSONResponse
+# 導入我們的優化 JSON 響應類
+from app.core.json_utils import OptimizedORJSONResponse
 
 # 設置標準時間
 os.environ['TZ'] = 'Asia/Taipei'
@@ -73,6 +78,9 @@ from app.api.endpoints import system
 
 # 在合適的位置添加以下導入和配置
 from .api.endpoints import users as users_router
+
+# 引入認證優化系統
+from app.core.auth_optimizations import initialize_auth_optimizations
 
 # 簡單的記憶體速率限制器
 class RateLimiter:
@@ -192,6 +200,14 @@ async def lifespan(app: FastAPI):
         logger.error(f"初始化Redis WebSocket管理器時出錯: {str(e)}")
         logger.info("將使用本地WebSocket管理器")
     
+    # 初始化認證優化系統
+    try:
+        logger.info("正在初始化認證優化系統...")
+        await initialize_auth_optimizations(app)
+        logger.info("認證優化系統已成功初始化")
+    except Exception as e:
+        logger.error(f"初始化認證優化系統時出錯: {str(e)}")
+    
     # 在这里可以进行数据库初始化等操作
     yield
     
@@ -225,7 +241,8 @@ app = FastAPI(
     title="Trading Platform API",
     description="加密貨幣交易平台API",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    default_response_class=OptimizedORJSONResponse  # 使用優化的 orjson 響應類
 )
 
 # 添加靜態文件服務

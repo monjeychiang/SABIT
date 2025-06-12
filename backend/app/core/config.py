@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     TWO_FACTOR_EXPIRE_MINUTES: int = 10  # 兩因素認證碼有效期
     REFRESH_THRESHOLD_SECONDS: int = int(os.getenv("REFRESH_THRESHOLD_SECONDS", "300"))  # 令牌刷新閾值（秒）
     
+    # 令牌寬限期設定：允許過期令牌短暫有效期
+    TOKEN_GRACE_PERIOD_SECONDS: int = int(os.getenv("TOKEN_GRACE_PERIOD_SECONDS", "30"))  # 刷新令牌寬限期（秒）
+    TOKEN_GRACE_CLEANUP_INTERVAL: int = int(os.getenv("TOKEN_GRACE_CLEANUP_INTERVAL", "10"))  # 清理間隔（秒）
+    TOKEN_GRACE_DEBUG_LOG: bool = os.getenv("TOKEN_GRACE_DEBUG_LOG", "False").lower() == "true"  # 是否記錄詳細日誌
+    
     # 加密設定：用於敏感資料加密的密鑰
     ENCRYPTION_KEY: str = os.getenv("ENCRYPTION_KEY", "your-encryption-key")
     

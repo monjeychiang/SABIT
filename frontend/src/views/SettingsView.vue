@@ -558,8 +558,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useThemeStore } from '@/stores/theme';
 import { useUserStore } from '@/stores/user';
 import { useNotificationStore } from '@/stores/notification';
-import { ElMessage } from 'element-plus';
-import { NTabs, NTabPane, NForm, NFormItem, NInput, NButton, NSwitch, NCard, NSelect, NDivider } from 'naive-ui';
+import { ElMessage, ElTabs, ElTabPane, ElForm, ElFormItem, ElInput, ElButton, ElSwitch, ElCard, ElSelect, ElDivider } from 'element-plus';
 
 const authStore = useAuthStore();
 const userStore = useUserStore();

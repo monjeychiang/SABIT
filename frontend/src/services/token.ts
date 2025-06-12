@@ -39,7 +39,7 @@ export class TokenService {
   // 原 TokenManager 的所有私有屬性
   private config: Required<TokenConfig>;
   private accessToken: string | null;
-  private refreshToken: string | null;
+  private refreshToken: string | null = null; // 不再使用，保留為兼容性
   private tokenType: string;
   private refreshTimerId: number | null;
   private refreshPromise: Promise<boolean> | null;
@@ -65,6 +65,7 @@ export class TokenService {
   private _isClearing: boolean = false;
   private _isSetting: boolean = false;
   private _isLoggingOut: boolean = false;
+  private _useMemoryOnly: boolean = true; // 新增：是否只使用記憶體存儲
   
   /**
    * 私有構造函數，防止直接實例化
@@ -84,14 +85,12 @@ export class TokenService {
     
     console.log('TokenService 初始化');
     
-    // 從存儲中恢復令牌
-    this.accessToken = this.config.storage.getItem(this.config.accessTokenKey);
-    this.refreshToken = this.config.storage.getItem(this.config.refreshTokenKey);
+    // 僅從存儲中恢復 access token 和 token type
+    this.accessToken = this._useMemoryOnly ? null : this.config.storage.getItem(this.config.accessTokenKey);
     this.tokenType = this.config.storage.getItem(this.config.tokenTypeKey) || this.config.defaultTokenType;
     
     console.log('從 localStorage 恢復令牌:', {
       hasAccessToken: !!this.accessToken,
-      hasRefreshToken: !!this.refreshToken,
       tokenType: this.tokenType
     });
     
@@ -117,7 +116,7 @@ export class TokenService {
     this.configLoadPromise = this.loadBackendConfig();
     
     // 如果存在令牌，設置自動刷新
-    if (this.accessToken && this.refreshToken && this.expiresAt) {
+    if (this.accessToken && this.expiresAt) {
       this.setupTokenRefresh();
     }
     
@@ -209,7 +208,7 @@ export class TokenService {
    */
   public async setTokens(
     accessToken: string,
-    refreshToken: string,
+    refreshToken: string = '', // 不再使用，保留為兼容性
     tokenType: string = this.config.defaultTokenType,
     expiresIn?: number,
     refreshTokenExpiresIn?: number
@@ -224,95 +223,70 @@ export class TokenService {
     
     this._isSetting = true;
     
+    // 安全地顯示 token 部分內容的函數
+    const maskToken = (token: string | null): string => {
+      if (!token) return 'null';
+      if (token.length <= 8) return '***' + token.substring(token.length - 3);
+      return token.substring(0, 4) + '...' + token.substring(token.length - 4);
+    };
+    
+    console.log(`【TOKEN】開始設置新的 access token: ${maskToken(accessToken)}`);
+    
     try {
       // 確保配置已加載
       await this.ensureConfigLoaded();
       
+      // 只設置 Access Token
       this.accessToken = accessToken;
-      this.refreshToken = refreshToken;
       this.tokenType = tokenType;
       
-      // 從 localStorage 檢查是否有 keepLoggedIn
-      const keepLoggedIn = this.config.storage.getItem('keepLoggedIn') === 'true';
-      
-      // 確保 access token 始終使用標準過期時間
+      // 設置 access token 過期時間
       const standardExpiryMinutes = this.backendConfig.accessTokenExpireMinutes;
       const standardExpirySeconds = standardExpiryMinutes * 60;
       
-      // 設置 access token 過期時間 - 統一使用標準設置
       this.expiresAt = new Date();
       this.expiresAt.setMinutes(this.expiresAt.getMinutes() + standardExpiryMinutes);
       
-      console.log(`【TOKEN】設置標準 Access Token 有效期（${standardExpiryMinutes}分鐘）`, {
+      console.log(`【TOKEN】設置 Access Token 有效期（${standardExpiryMinutes}分鐘）`, {
         過期時間: this.expiresAt.toLocaleString(), 
-        後端提供expiresIn: expiresIn ? `${expiresIn}秒 (${Math.round(expiresIn/60)}分鐘)` : '無',
-        保持登入: keepLoggedIn ? '是' : '否'
+        後端提供expiresIn: expiresIn ? `${expiresIn}秒 (${Math.round(expiresIn/60)}分鐘)` : '無'
       });
       
+      // 如果不使用記憶體模式，保存令牌到存儲中
+      if (!this._useMemoryOnly) {
       // 保存令牌過期時間到 localStorage
       this.config.storage.setItem('tokenExpiry', this.expiresAt.toISOString());
       
-      // 設置 refresh token 過期時間
-      const refreshExpiryDays = this.backendConfig.refreshTokenExpireDays;
-      this.refreshTokenExpiresAt = new Date();
-      
-      // 優先使用後端提供的refresh_token_expires_in（秒）
-      if (this.backendConfig.refresh_token_expires_in) {
-        this.refreshTokenExpiresAt.setSeconds(
-          this.refreshTokenExpiresAt.getSeconds() + this.backendConfig.refresh_token_expires_in
-        );
-        console.log(`【TOKEN】設置 Refresh Token 有效期（${Math.round(this.backendConfig.refresh_token_expires_in / 86400)}天，來自後端配置）`, {
-          過期時間: this.refreshTokenExpiresAt.toLocaleString()
-        });
-      } 
-      // 其次使用傳入的refreshTokenExpiresIn參數
-      else if (refreshTokenExpiresIn) {
-        this.refreshTokenExpiresAt.setSeconds(
-          this.refreshTokenExpiresAt.getSeconds() + refreshTokenExpiresIn
-        );
-        console.log(`【TOKEN】設置 Refresh Token 有效期（${Math.round(refreshTokenExpiresIn / 86400)}天，來自參數）`, {
-          過期時間: this.refreshTokenExpiresAt.toLocaleString()
-        });
+        // 根據使用者是否選擇保持登入來決定是否儲存到 localStorage
+        const keepLoggedIn = localStorage.getItem('keepLoggedIn') !== 'false'; // 默認為 true
+        if (keepLoggedIn) {
+          this.config.storage.setItem(this.config.accessTokenKey, accessToken);
+          this.config.storage.setItem(this.config.tokenTypeKey, tokenType);
+        } else {
+          // 不保持登入，清除 localStorage 中的令牌
+          this.config.storage.removeItem(this.config.accessTokenKey);
+          this.config.storage.removeItem(this.config.tokenTypeKey);
+        }
+      } else {
+        // 記憶體模式：不保存到本地存儲
+        this.config.storage.removeItem(this.config.accessTokenKey);
+        this.config.storage.removeItem(this.config.tokenTypeKey);
+        this.config.storage.removeItem('tokenExpiry');
       }
-      // 最後使用默認的refreshExpiryDays
-      else {
-        this.refreshTokenExpiresAt.setDate(
-          this.refreshTokenExpiresAt.getDate() + refreshExpiryDays
-        );
-        console.log(`【TOKEN】設置 Refresh Token 有效期（${refreshExpiryDays}天，來自默認配置）`, {
-          過期時間: this.refreshTokenExpiresAt.toLocaleString()
-        });
-      }
-      
-      // 保存 refresh token 過期時間到 localStorage
-      this.config.storage.setItem('refreshTokenExpiry', this.refreshTokenExpiresAt.toISOString());
       
       // 重置刷新次數
       this.refreshCount = 0;
       this.config.storage.setItem('tokenRefreshCount', '0');
-      
-      // 僅在 keepLoggedIn 為 true 時，將令牌保存到 localStorage
-      if (keepLoggedIn) {
-        console.log('【TOKEN】保持登入，將令牌保存到 localStorage');
-        this.config.storage.setItem(this.config.accessTokenKey, accessToken);
-        this.config.storage.setItem(this.config.refreshTokenKey, refreshToken);
-        this.config.storage.setItem(this.config.tokenTypeKey, tokenType);
-      } else {
-        // 不保持登入，但保留當前會話的令牌
-        console.log('【TOKEN】不保持登入，僅在內存中保存令牌');
-        this.config.storage.removeItem(this.config.accessTokenKey);
-        this.config.storage.removeItem(this.config.refreshTokenKey);
-        this.config.storage.removeItem(this.config.tokenTypeKey);
-      }
       
       // 設置令牌刷新
       this.setupTokenRefresh();
       
       // 分發 token:set 事件
       window.dispatchEvent(new CustomEvent('token:set', { 
-        detail: { hasAccessToken: true, hasRefreshToken: true }
+        detail: { hasAccessToken: true }
       }));
       
+      console.log('【TOKEN】成功完成 token 設置');
       return true;
     } catch (error) {
       console.error('設置令牌失敗:', error);
@@ -392,7 +366,7 @@ export class TokenService {
   }
   
   /**
-   * 刷新令牌的內部實現
+   * 刷新令牌
    */
   private async refreshToken_(): Promise<boolean> {
     // 避免重複刷新
@@ -401,21 +375,42 @@ export class TokenService {
       return this.refreshPromise;
     }
     
-    // 確保有刷新令牌
-    if (!this.refreshToken) {
-      console.error('【TOKEN】沒有刷新令牌，無法刷新');
-      return false;
-    }
+    // 添加全局節流機制
+    const MIN_REFRESH_INTERVAL_MS = 2000; // 最小刷新間隔為2秒
     
-    // 檢查刷新令牌是否過期
-    if (this.refreshTokenExpiresAt && new Date() > this.refreshTokenExpiresAt) {
-      console.error('【TOKEN】刷新令牌已過期，需要重新登入');
-      this.clearTokens();
-      window.dispatchEvent(new Event('auth:logout'));
-      return false;
+    // 檢查上次刷新時間
+    const lastRefreshTime = parseInt(this.config.storage.getItem('lastTokenRefreshTime') || '0');
+    const now = Date.now();
+    
+    if (now - lastRefreshTime < MIN_REFRESH_INTERVAL_MS) {
+      console.log(`【TOKEN】刷新請求被節流，距離上次刷新不足${MIN_REFRESH_INTERVAL_MS/1000}秒`);
+      
+      // 如果上次刷新成功且距離現在很近，直接返回成功
+      const lastRefreshSuccess = this.config.storage.getItem('lastTokenRefreshSuccess') === 'true';
+      if (lastRefreshSuccess) {
+        console.log('【TOKEN】使用上次刷新的結果（成功）');
+        return true;
+      }
+      
+      // 如果上次刷新失敗但時間很近，則等待一段時間後再嘗試
+      await new Promise(resolve => setTimeout(resolve, MIN_REFRESH_INTERVAL_MS - (now - lastRefreshTime)));
     }
     
     console.log('【TOKEN】開始刷新令牌');
+    
+    // 更新最後刷新時間
+    this.config.storage.setItem('lastTokenRefreshTime', now.toString());
+    this.config.storage.setItem('lastTokenRefreshSuccess', 'false'); // 先標記為失敗，成功後再更新
+    
+    // 安全地顯示 token 部分內容的函數
+    const maskToken = (token: string | null): string => {
+      if (!token) return 'null';
+      if (token.length <= 8) return '***' + token.substring(token.length - 3);
+      return token.substring(0, 4) + '...' + token.substring(token.length - 4);
+    };
+    
+    // 記錄原始 token
+    console.log(`【TOKEN】刷新前的 access token: ${maskToken(this.accessToken)}`);
     
     this.refreshPromise = (async () => {
       try {
@@ -423,21 +418,19 @@ export class TokenService {
         this.refreshCount++;
         this.config.storage.setItem('tokenRefreshCount', this.refreshCount.toString());
         
-        // 發送刷新請求
+        // HTTP-only cookie 會自動發送，不需要明確傳遞 refresh_token
         const response = await axios.post(this.config.refreshEndpoint, {
-          refresh_token: this.refreshToken
+          keep_logged_in: localStorage.getItem('keepLoggedIn') !== 'false' // 默認為 true
         });
         
         if (response.status === 200 && response.data) {
-          const { access_token, refresh_token, token_type, expires_in } = response.data;
+          const { access_token, token_type, expires_in } = response.data;
+          
+          // 記錄新的 token
+          console.log(`【TOKEN】刷新後獲得的新 access token: ${maskToken(access_token)}`);
           
           // 更新令牌
           this.accessToken = access_token;
-          
-          // 如果後端返回新的刷新令牌，則更新
-          if (refresh_token) {
-            this.refreshToken = refresh_token;
-          }
           
           // 更新令牌類型
           if (token_type) {
@@ -450,21 +443,28 @@ export class TokenService {
           this.expiresAt.setMinutes(this.expiresAt.getMinutes() + expiryMinutes);
           
           // 更新 localStorage
-          const keepLoggedIn = this.config.storage.getItem('keepLoggedIn') === 'true';
+          if (!this._useMemoryOnly) {
+          const keepLoggedIn = localStorage.getItem('keepLoggedIn') !== 'false'; // 默認為 true
           if (keepLoggedIn) {
             this.config.storage.setItem(this.config.accessTokenKey, access_token);
-            if (refresh_token) {
-              this.config.storage.setItem(this.config.refreshTokenKey, refresh_token);
-            }
             if (token_type) {
               this.config.storage.setItem(this.config.tokenTypeKey, token_type);
-            }
           }
           
           // 保存過期時間
           this.config.storage.setItem('tokenExpiry', this.expiresAt.toISOString());
+            }
+          } else {
+            // 記憶體模式：確保不保存到本地存儲
+            this.config.storage.removeItem(this.config.accessTokenKey);
+            this.config.storage.removeItem(this.config.tokenTypeKey);
+            this.config.storage.removeItem('tokenExpiry');
+          }
           
           console.log('【TOKEN】令牌刷新成功，設置下次刷新時間');
+          
+          // 標記本次刷新成功
+          this.config.storage.setItem('lastTokenRefreshSuccess', 'true');
           
           // 設置下次刷新
           this.setupTokenRefresh();
@@ -510,7 +510,8 @@ export class TokenService {
    * 如果需要，刷新令牌
    */
   public async refreshTokenIfNeeded(): Promise<boolean> {
-    if (this.isTokenExpiringSoon() && this.refreshToken) {
+    if (this.isTokenExpiringSoon()) {
+      // 移除對 this.refreshToken 的檢查，因為刷新令牌現在存儲在 HTTP-only cookie 中
       return await this.refreshToken_();
     }
     return true;
@@ -527,15 +528,24 @@ export class TokenService {
     this._isClearing = true;
     
     try {
+      // 安全地顯示 token 部分內容的函數
+      const maskToken = (token: string | null): string => {
+        if (!token) return 'null';
+        if (token.length <= 8) return '***' + token.substring(token.length - 3);
+        return token.substring(0, 4) + '...' + token.substring(token.length - 4);
+      };
+      
+      // 記錄正在清除的 token
+      console.log(`【TOKEN】開始清除 token，當前 access token: ${maskToken(this.accessToken)}`);
+      
       // 清除內存中的令牌
       this.accessToken = null;
-      this.refreshToken = null;
+      this.refreshToken = null; // 不再使用，但保持兼容性
       this.expiresAt = null;
       this.refreshTokenExpiresAt = null;
       
       // 清除存儲中的令牌
       this.config.storage.removeItem(this.config.accessTokenKey);
-      this.config.storage.removeItem(this.config.refreshTokenKey);
       this.config.storage.removeItem(this.config.tokenTypeKey);
       this.config.storage.removeItem('tokenExpiry');
       this.config.storage.removeItem('refreshTokenExpiry');
@@ -547,10 +557,12 @@ export class TokenService {
         this.refreshTimerId = null;
       }
       
-      console.log('【TOKEN】令牌已清除');
+      console.log('【TOKEN】所有令牌已清除完成');
       
-      // 分發事件
-      window.dispatchEvent(new Event('token:cleared'));
+      // 分發事件，但不使用 token:cleared，避免觸發其他可能導致 API 調用的事件處理程序
+      window.dispatchEvent(new CustomEvent('token:state:cleared', { 
+        detail: { source: 'clearTokens' }
+      }));
     } finally {
       this._isClearing = false;
     }
@@ -564,10 +576,12 @@ export class TokenService {
   }
   
   /**
-   * 獲取刷新令牌
+   * 獲取刷新令牌 (已棄用，刷新令牌現在存儲在HTTP-only cookie中)
    */
   public getRefreshToken(): string | null {
-    return this.refreshToken;
+    // 返回 null，因為刷新令牌現在存儲在HTTP-only cookie中
+    console.warn('試圖獲取刷新令牌，但它現在存儲在HTTP-only cookie中，前端無法存取');
+    return null;
   }
   
   /**
@@ -623,7 +637,7 @@ export class TokenService {
       (response) => response,
       async (error) => {
         // 如果是 401 錯誤，嘗試刷新令牌並重試
-        if (error.response?.status === 401 && this.refreshToken) {
+        if (error.response?.status === 401) {
           const originalRequest = error.config;
           
           // 避免循環重試
@@ -710,7 +724,10 @@ export class TokenService {
     window.addEventListener('auth:logout', () => {
       if (!this._isLoggingOut) {
         this._isLoggingOut = true;
+        // 避免循環調用
+        if (!this._isClearing) {
         this.clearTokens();
+        }
         this._isLoggingOut = false;
       }
     });
@@ -732,7 +749,6 @@ export class TokenService {
       
       // 保存到 localStorage
       this.config.storage.setItem(this.config.accessTokenKey, accessToken);
-      this.config.storage.setItem(this.config.refreshTokenKey, refreshToken);
       this.config.storage.setItem(this.config.tokenTypeKey, tokenType);
       
       console.log('成功強制更新令牌狀態');

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import axios from 'axios'
+import { tokenService } from '@/services/token'
 
 export interface User {
   id: number
@@ -28,11 +29,26 @@ export const useUserStore = defineStore('user', () => {
   const userError = ref<string | null>(null)
   const lastFetchTime = ref<number>(0)
   const cacheDuration = ref<number>(60000) // 1分鐘快取
+  const persistentCacheDuration = ref<number>(24 * 60 * 60 * 1000) // 24小時持久化緩存
   const maxRetries = ref<number>(3) // 最大重試次數
+  
+  // 緩存版本控制，用於緩存失效
+  const CACHE_VERSION = '1.0.1'
+  const USER_CACHE_VERSION_KEY = 'user_cache_version'
   
   // 從localStorage載入用戶資料緩存
   function loadUserFromCache() {
     try {
+      // 檢查緩存版本，如果版本不一致則不使用緩存
+      const cacheVersion = localStorage.getItem(USER_CACHE_VERSION_KEY)
+      if (cacheVersion !== CACHE_VERSION) {
+        console.log('用戶緩存版本已更新，清除舊緩存')
+        localStorage.removeItem(USER_DATA_CACHE_KEY)
+        localStorage.removeItem(USER_CACHE_TIMESTAMP_KEY)
+        localStorage.setItem(USER_CACHE_VERSION_KEY, CACHE_VERSION)
+        return false
+      }
+      
       const cachedUserJson = localStorage.getItem(USER_DATA_CACHE_KEY);
       const cachedTimestamp = localStorage.getItem(USER_CACHE_TIMESTAMP_KEY);
       
@@ -42,13 +58,27 @@ export const useUserStore = defineStore('user', () => {
         
         // 如果緩存未過期，使用緩存數據
         const now = Date.now();
-        if (now - timestamp < cacheDuration.value * 5) { // 使用5倍的緩存時間作為持久化緩存期限
+        if (now - timestamp < persistentCacheDuration.value) { // 使用持久化緩存期限
           user.value = cachedUser;
           lastFetchTime.value = timestamp;
-          console.log('從持久化緩存載入用戶資料:', cachedUser.username);
+          // 加載緩存用戶數據時也更新令牌狀態，確保立即顯示已登錄
+          isTokenValid.value = true;
+          
+          // 優先級提示
+          const freshness = now - timestamp < cacheDuration.value ? '新鮮' : '過期但可用';
+          console.log(`從持久化緩存載入用戶資料(${freshness}):`, cachedUser.username);
+          
+          // 在後台自動刷新過期但仍可用的緩存
+          if (now - timestamp > cacheDuration.value) {
+            setTimeout(() => {
+              console.log('緩存資料已過期，在後台自動更新...');
+              getUserData(true).catch(err => console.warn('後台更新緩存失敗:', err));
+            }, 0);
+          }
+          
           return true;
         } else {
-          console.log('持久化緩存已過期，需要重新獲取用戶資料');
+          console.log('持久化緩存已完全過期，需要重新獲取用戶資料');
         }
       }
     } catch (error) {
@@ -62,6 +92,7 @@ export const useUserStore = defineStore('user', () => {
     try {
       localStorage.setItem(USER_DATA_CACHE_KEY, JSON.stringify(userData));
       localStorage.setItem(USER_CACHE_TIMESTAMP_KEY, lastFetchTime.value.toString());
+      localStorage.setItem(USER_CACHE_VERSION_KEY, CACHE_VERSION);
       console.log('用戶資料已保存到持久化緩存');
     } catch (error) {
       console.error('保存用戶緩存失敗:', error);
@@ -77,19 +108,23 @@ export const useUserStore = defineStore('user', () => {
   
   // 從多個來源嘗試獲取有效令牌
   function getEffectiveToken() {
-    // 優先使用 store 中的令牌
+    // 首先嘗試使用組件內的 token
     if (token.value) {
       return token.value;
     }
     
-    // 其次嘗試從 localStorage 獲取，先嘗試 auth_token
-    const authToken = localStorage.getItem('auth_token');
-    if (authToken) {
-      return authToken;
+    // 使用導入的 tokenService 獲取令牌 (如果可用)
+    try {
+      const accessToken = tokenService.getAccessToken();
+      if (accessToken) {
+        return accessToken;
+      }
+    } catch (e) {
+      console.warn('嘗試從 tokenService 獲取令牌失敗', e);
     }
     
-    // 最後嘗試從 localStorage 獲取 token
-    return localStorage.getItem('token');
+    // 最後才考慮使用 localStorage (向後兼容)
+    return null;
   }
   
   // 直接從API獲取用戶資料
@@ -181,9 +216,7 @@ export const useUserStore = defineStore('user', () => {
   // 设置认证令牌
   function setToken(authToken: string) {
     token.value = authToken
-    // 同時更新兩個令牌存儲位置，確保一致性
-    localStorage.setItem('auth_token', authToken)
-    localStorage.setItem('token', authToken)
+    // 不再保存令牌到 localStorage
     isTokenValid.value = true
   }
   
@@ -193,9 +226,7 @@ export const useUserStore = defineStore('user', () => {
     token.value = null
     isTokenValid.value = false
     lastFetchTime.value = 0
-    localStorage.removeItem('auth_token')
-    localStorage.removeItem('token')
-    // 清除持久化緩存
+    // 不再從 localStorage 中移除令牌，僅清除用戶資料緩存
     localStorage.removeItem(USER_DATA_CACHE_KEY)
     localStorage.removeItem(USER_CACHE_TIMESTAMP_KEY)
     console.log('用户已登出，所有用户数据和令牌已清除')
@@ -209,11 +240,11 @@ export const useUserStore = defineStore('user', () => {
     // 獲取有效令牌
     const storedToken = getEffectiveToken();
     if (storedToken) {
-      console.log('从本地存储找到令牌，验证其有效性')
+      console.log('找到有效令牌，正在驗證...')
       token.value = storedToken
       await validateToken()
     } else {
-      console.log('本地存储中没有找到令牌')
+      console.log('無法獲取有效令牌')
       isTokenValid.value = false
       
       // 如果沒有令牌但有緩存用戶，清除緩存
@@ -272,9 +303,6 @@ export const useUserStore = defineStore('user', () => {
   function syncWithAuthStore(authToken: string, userData: User | null) {
     if (authToken) {
       token.value = authToken
-      // 確保localStorage也更新
-      localStorage.setItem('auth_token', authToken)
-      localStorage.setItem('token', authToken)
       isTokenValid.value = true
     }
     
@@ -295,6 +323,7 @@ export const useUserStore = defineStore('user', () => {
     isUserLoading,
     userError,
     cacheDuration,
+    persistentCacheDuration,
     maxRetries,
     setUser, 
     setToken, 

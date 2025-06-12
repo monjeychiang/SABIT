@@ -76,6 +76,15 @@
   --transition-fast: 150ms;
   --transition-normal: 250ms;
   --transition-slow: 350ms;
+
+  /* Z-index 層級系統 */
+  --z-index-dropdown: 1000;
+  --z-index-sticky: 1020;
+  --z-index-fixed: 1030;
+  --z-index-modal-backdrop: 1040;
+  --z-index-modal: 1050;
+  --z-index-popover: 1060;
+  --z-index-tooltip: 1070;
 }
 
 /* 深色模式變數 - 專業深色主題 */
@@ -572,4 +581,784 @@ input:focus, select:focus, textarea:focus {
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.3s ease;
+}
+
+/* ========================================
+   功能性 CSS 類別系統
+   這些類別可在任何元件中使用，提供一致的樣式
+   ======================================== */
+
+/* 佈局 - Flex 相關功能類別 */
+.flex {
+  display: flex;
+}
+
+.flex-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.flex-row {
+  display: flex;
+  flex-direction: row;
+}
+
+.flex-wrap {
+  flex-wrap: wrap;
+}
+
+.flex-nowrap {
+  flex-wrap: nowrap;
+}
+
+.flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.items-center {
+  align-items: center;
+}
+
+.items-start {
+  align-items: flex-start;
+}
+
+.items-end {
+  align-items: flex-end;
+}
+
+.justify-center {
+  justify-content: center;
+}
+
+.justify-between {
+  justify-content: space-between;
+}
+
+.justify-around {
+  justify-content: space-around;
+}
+
+.justify-start {
+  justify-content: flex-start;
+}
+
+.justify-end {
+  justify-content: flex-end;
+}
+
+.flex-1 {
+  flex: 1;
+}
+
+.flex-auto {
+  flex: auto;
+}
+
+.flex-none {
+  flex: none;
+}
+
+/* 文字樣式 */
+.text-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-break {
+  word-break: break-word;
+}
+
+.text-xs {
+  font-size: var(--font-size-xs);
+}
+
+.text-sm {
+  font-size: var(--font-size-sm);
+}
+
+.text-md {
+  font-size: var(--font-size-md);
+}
+
+.text-lg {
+  font-size: var(--font-size-lg);
+}
+
+.text-xl {
+  font-size: var(--font-size-xl);
+}
+
+.text-xxl {
+  font-size: var(--font-size-xxl);
+}
+
+.text-primary {
+  color: var(--text-primary);
+}
+
+.text-secondary {
+  color: var(--text-secondary);
+}
+
+.text-tertiary {
+  color: var(--text-tertiary);
+}
+
+.text-light {
+  color: var(--text-light);
+}
+
+.text-danger {
+  color: var(--danger-color);
+}
+
+.text-success {
+  color: var(--success-color);
+}
+
+.text-warning {
+  color: var(--warning-color);
+}
+
+.text-info {
+  color: var(--info-color);
+}
+
+/* 文字對齊 - 使用邏輯屬性 */
+.text-start {
+  text-align: start;
+}
+
+.text-end {
+  text-align: end;
+}
+
+.text-center {
+  text-align: center;
+}
+
+/* 邊距系統 - 使用邏輯屬性 */
+.m-0 {
+  margin: 0;
+}
+
+.m-1 {
+  margin: var(--spacing-xs);
+}
+
+.m-2 {
+  margin: var(--spacing-sm);
+}
+
+.m-3 {
+  margin: var(--spacing-md);
+}
+
+.m-4 {
+  margin: var(--spacing-lg);
+}
+
+.m-5 {
+  margin: var(--spacing-xl);
+}
+
+/* 水平邊距 - 使用邏輯屬性 */
+.mx-auto {
+  margin-inline: auto;
+}
+
+.mx-1 {
+  margin-inline: var(--spacing-xs);
+}
+
+.mx-2 {
+  margin-inline: var(--spacing-sm);
+}
+
+.mx-3 {
+  margin-inline: var(--spacing-md);
+}
+
+.mx-4 {
+  margin-inline: var(--spacing-lg);
+}
+
+.mx-5 {
+  margin-inline: var(--spacing-xl);
+}
+
+/* 垂直邊距 */
+.my-1 {
+  margin-block: var(--spacing-xs);
+}
+
+.my-2 {
+  margin-block: var(--spacing-sm);
+}
+
+.my-3 {
+  margin-block: var(--spacing-md);
+}
+
+.my-4 {
+  margin-block: var(--spacing-lg);
+}
+
+.my-5 {
+  margin-block: var(--spacing-xl);
+}
+
+/* 內聯起始邊距 (LTR 模式下為左邊距) */
+.ms-1 {
+  margin-inline-start: var(--spacing-xs);
+}
+
+.ms-2 {
+  margin-inline-start: var(--spacing-sm);
+}
+
+.ms-3 {
+  margin-inline-start: var(--spacing-md);
+}
+
+.ms-4 {
+  margin-inline-start: var(--spacing-lg);
+}
+
+.ms-5 {
+  margin-inline-start: var(--spacing-xl);
+}
+
+/* 內聯結束邊距 (LTR 模式下為右邊距) */
+.me-1 {
+  margin-inline-end: var(--spacing-xs);
+}
+
+.me-2 {
+  margin-inline-end: var(--spacing-sm);
+}
+
+.me-3 {
+  margin-inline-end: var(--spacing-md);
+}
+
+.me-4 {
+  margin-inline-end: var(--spacing-lg);
+}
+
+.me-5 {
+  margin-inline-end: var(--spacing-xl);
+}
+
+/* 區塊起始邊距 (頂部) */
+.mt-1 {
+  margin-block-start: var(--spacing-xs);
+}
+
+.mt-2 {
+  margin-block-start: var(--spacing-sm);
+}
+
+.mt-3 {
+  margin-block-start: var(--spacing-md);
+}
+
+.mt-4 {
+  margin-block-start: var(--spacing-lg);
+}
+
+.mt-5 {
+  margin-block-start: var(--spacing-xl);
+}
+
+/* 區塊結束邊距 (底部) */
+.mb-1 {
+  margin-block-end: var(--spacing-xs);
+}
+
+.mb-2 {
+  margin-block-end: var(--spacing-sm);
+}
+
+.mb-3 {
+  margin-block-end: var(--spacing-md);
+}
+
+.mb-4 {
+  margin-block-end: var(--spacing-lg);
+}
+
+.mb-5 {
+  margin-block-end: var(--spacing-xl);
+}
+
+/* 內距系統 - 使用邏輯屬性 */
+.p-0 {
+  padding: 0;
+}
+
+.p-1 {
+  padding: var(--spacing-xs);
+}
+
+.p-2 {
+  padding: var(--spacing-sm);
+}
+
+.p-3 {
+  padding: var(--spacing-md);
+}
+
+.p-4 {
+  padding: var(--spacing-lg);
+}
+
+.p-5 {
+  padding: var(--spacing-xl);
+}
+
+/* 水平內距 */
+.px-1 {
+  padding-inline: var(--spacing-xs);
+}
+
+.px-2 {
+  padding-inline: var(--spacing-sm);
+}
+
+.px-3 {
+  padding-inline: var(--spacing-md);
+}
+
+.px-4 {
+  padding-inline: var(--spacing-lg);
+}
+
+.px-5 {
+  padding-inline: var(--spacing-xl);
+}
+
+/* 垂直內距 */
+.py-1 {
+  padding-block: var(--spacing-xs);
+}
+
+.py-2 {
+  padding-block: var(--spacing-sm);
+}
+
+.py-3 {
+  padding-block: var(--spacing-md);
+}
+
+.py-4 {
+  padding-block: var(--spacing-lg);
+}
+
+.py-5 {
+  padding-block: var(--spacing-xl);
+}
+
+/* 內聯起始內距 (LTR 模式下為左內距) */
+.ps-1 {
+  padding-inline-start: var(--spacing-xs);
+}
+
+.ps-2 {
+  padding-inline-start: var(--spacing-sm);
+}
+
+.ps-3 {
+  padding-inline-start: var(--spacing-md);
+}
+
+.ps-4 {
+  padding-inline-start: var(--spacing-lg);
+}
+
+.ps-5 {
+  padding-inline-start: var(--spacing-xl);
+}
+
+/* 內聯結束內距 (LTR 模式下為右內距) */
+.pe-1 {
+  padding-inline-end: var(--spacing-xs);
+}
+
+.pe-2 {
+  padding-inline-end: var(--spacing-sm);
+}
+
+.pe-3 {
+  padding-inline-end: var(--spacing-md);
+}
+
+.pe-4 {
+  padding-inline-end: var(--spacing-lg);
+}
+
+.pe-5 {
+  padding-inline-end: var(--spacing-xl);
+}
+
+/* 區塊起始內距 (頂部) */
+.pt-1 {
+  padding-block-start: var(--spacing-xs);
+}
+
+.pt-2 {
+  padding-block-start: var(--spacing-sm);
+}
+
+.pt-3 {
+  padding-block-start: var(--spacing-md);
+}
+
+.pt-4 {
+  padding-block-start: var(--spacing-lg);
+}
+
+.pt-5 {
+  padding-block-start: var(--spacing-xl);
+}
+
+/* 區塊結束內距 (底部) */
+.pb-1 {
+  padding-block-end: var(--spacing-xs);
+}
+
+.pb-2 {
+  padding-block-end: var(--spacing-sm);
+}
+
+.pb-3 {
+  padding-block-end: var(--spacing-md);
+}
+
+.pb-4 {
+  padding-block-end: var(--spacing-lg);
+}
+
+.pb-5 {
+  padding-block-end: var(--spacing-xl);
+}
+
+/* 邊框與圓角 */
+.rounded-sm {
+  border-radius: var(--border-radius-sm);
+}
+
+.rounded-md {
+  border-radius: var(--border-radius-md);
+}
+
+.rounded-lg {
+  border-radius: var(--border-radius-lg);
+}
+
+.rounded-full {
+  border-radius: 9999px;
+}
+
+.border {
+  border: 1px solid var(--border-color);
+}
+
+.border-light {
+  border: 1px solid var(--border-light);
+}
+
+/* 邏輯方向邊框 */
+.border-s {
+  border-inline-start: 1px solid var(--border-color);
+}
+
+.border-e {
+  border-inline-end: 1px solid var(--border-color);
+}
+
+.border-t {
+  border-block-start: 1px solid var(--border-color);
+}
+
+.border-b {
+  border-block-end: 1px solid var(--border-color);
+}
+
+/* 陰影效果 */
+.shadow-sm {
+  box-shadow: var(--box-shadow-sm);
+}
+
+.shadow-md {
+  box-shadow: var(--box-shadow-md);
+}
+
+.shadow-lg {
+  box-shadow: var(--box-shadow-lg);
+}
+
+/* 定位與顯示 */
+.relative {
+  position: relative;
+}
+
+.absolute {
+  position: absolute;
+}
+
+.fixed {
+  position: fixed;
+}
+
+.sticky {
+  position: sticky;
+}
+
+.hidden {
+  display: none;
+}
+
+.block {
+  display: block;
+}
+
+.inline-block {
+  display: inline-block;
+}
+
+/* 尺寸 - 使用邏輯屬性 */
+.w-full {
+  width: 100%;
+  inline-size: 100%;
+}
+
+.h-full {
+  height: 100%;
+  block-size: 100%;
+}
+
+/* 邏輯尺寸類別 */
+.inline-full {
+  inline-size: 100%;
+}
+
+.block-full {
+  block-size: 100%;
+}
+
+.inline-auto {
+  inline-size: auto;
+}
+
+.block-auto {
+  block-size: auto;
+}
+
+/* 溢出處理 */
+.overflow-hidden {
+  overflow: hidden;
+}
+
+.overflow-auto {
+  overflow: auto;
+}
+
+.overflow-y-auto {
+  overflow-y: auto;
+}
+
+.overflow-x-auto {
+  overflow-x: auto;
+}
+
+.overflow-y-hidden {
+  overflow-y: hidden;
+}
+
+.overflow-x-hidden {
+  overflow-x: hidden;
+}
+
+/* 卡片樣式 */
+.card-style {
+  background-color: var(--card-background);
+  border-radius: var(--border-radius-md);
+  box-shadow: var(--box-shadow-md);
+  padding: var(--spacing-md);
+  transition: box-shadow 0.3s ease, transform 0.3s ease;
+}
+
+.card-style:hover {
+  box-shadow: var(--box-shadow-lg);
+  transform: translateY(-2px);
+}
+
+/* 動畫過渡 */
+.transition-fast {
+  transition: all var(--transition-fast) ease;
+}
+
+.transition-normal {
+  transition: all var(--transition-normal) ease;
+}
+
+.transition-slow {
+  transition: all var(--transition-slow) ease;
+}
+
+/* 響應式網格系統 */
+.grid {
+  display: grid;
+}
+
+.grid-cols-1 {
+  grid-template-columns: repeat(1, 1fr);
+}
+
+.grid-cols-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.grid-cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.grid-cols-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.grid-cols-12 {
+  grid-template-columns: repeat(12, 1fr);
+}
+
+.gap-1 {
+  gap: var(--spacing-xs);
+}
+
+.gap-2 {
+  gap: var(--spacing-sm);
+}
+
+.gap-3 {
+  gap: var(--spacing-md);
+}
+
+.gap-4 {
+  gap: var(--spacing-lg);
+}
+
+.gap-5 {
+  gap: var(--spacing-xl);
+}
+
+/* 響應式斷點類別 */
+@media (min-width: 640px) {
+  .sm-grid-cols-2 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .sm-flex-row {
+    flex-direction: row;
+  }
+}
+
+@media (min-width: 768px) {
+  .md-grid-cols-3 {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  
+  .md-flex-row {
+    flex-direction: row;
+  }
+}
+
+@media (min-width: 1024px) {
+  .lg-grid-cols-4 {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* 無障礙友好的隱藏元素 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* 內容容器 */
+.container-fluid {
+  width: 100%;
+  padding-inline: var(--spacing-md);
+  margin-inline: auto;
+}
+
+.container {
+  width: 100%;
+  max-width: 1400px;
+  padding-inline: var(--spacing-md);
+  margin-inline: auto;
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding-inline: var(--spacing-sm);
+  }
+}
+
+/* 用於實現頁面平滑滾動效果 */
+.smooth-scroll {
+  scroll-behavior: smooth;
+}
+
+/* RTL 支援類別 */
+.rtl {
+  direction: rtl;
+}
+
+.ltr {
+  direction: ltr;
+}
+
+/* 浮動方向 - 使用邏輯屬性 */
+.float-start {
+  float: inline-start;
+}
+
+.float-end {
+  float: inline-end;
+}
+
+/* 清除浮動 */
+.clearfix::after {
+  content: "";
+  display: table;
+  clear: both;
+}
+
+/* 邏輯位置類別 */
+.top-0 {
+  inset-block-start: 0;
+}
+
+.bottom-0 {
+  inset-block-end: 0;
+}
+
+.start-0 {
+  inset-inline-start: 0;
+}
+
+.end-0 {
+  inset-inline-end: 0;
 }

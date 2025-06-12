@@ -43,6 +43,9 @@ const initApp = async () => {
   // 設置axios基礎URL（在開發環境中，Vite處理代理）
   axios.defaults.baseURL = import.meta.env.VITE_API_BASE_URL || '';
   
+  // 設定 axios 默認的 withCredentials 值為 true
+  axios.defaults.withCredentials = true;
+  
   // 初始化 TokenService 並設置 axios 攔截器
   console.log('初始化 Token 服務');
   tokenService.setupAxiosInterceptors(axios);

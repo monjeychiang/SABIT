@@ -530,7 +530,7 @@ const loginForm = ref({
   email: '',
   password: '',
   rememberMe: false,
-  keepLoggedIn: false
+  keepLoggedIn: true  // 預設啟用保持登入
 });
 
 const showRegisterModal = ref(false);
@@ -565,15 +565,23 @@ const codeCopied = ref(false);
 // 添加 searchQuery 變量
 const searchQuery = ref('');
 
+// 新增一個參考標記，用於判斷是否為真正的數據更新
+const userDataVersion = ref(0);
+const currentUserLoaded = ref(false);
+
 // 監視用戶數據變化，確保當用戶存儲更新時NavBar也更新
 watch(() => userStore.user, (newUserData) => {
   if (newUserData) {
     console.log('檢測到用戶資料變更，更新 NavBar 顯示');
-    username.value = newUserData.username;
-    email.value = newUserData.email;
-    userTag.value = newUserData.role || 'regular';
-    avatarUrl.value = newUserData.avatar || '';
-    fullName.value = newUserData.fullName || '';
+    // 同樣使用靜默模式的邏輯，只在數據確實變化時才更新UI
+    if (username.value !== newUserData.username ||
+        email.value !== newUserData.email ||
+        userTag.value !== (newUserData.role || 'regular') ||
+        avatarUrl.value !== (newUserData.avatar || '') ||
+        fullName.value !== (newUserData.fullName || '')) {
+      applyUserDataToUI(newUserData);
+      userDataVersion.value++; // 增加版本號
+    }
   }
 }, { immediate: true });
 
@@ -599,46 +607,57 @@ onMounted(async () => {
     userTag.value = 'regular';
   });
 
-  // 监听通知状态变化事件
-  window.addEventListener('notification:state-changed', () => {
-    console.log('检测到通知状态变化，更新UI');
-    // 直接从store获取最新的未读通知数量
-    if (notificationStore) {
-      console.log('当前未读通知数：', notificationStore.unreadCount);
-    }
-  });
-
-  // 监听未读通知计数更新事件
-  window.addEventListener('notification:unread-updated', (event) => {
-    console.log('收到未读通知计数更新事件:', event.detail?.count);
-    // 可以直接使用事件中的计数，或者触发一个UI刷新
-    if (notificationStore) {
-      // 确保store的计数也是最新的
-      notificationStore.updateUnreadCount();
-    }
-  });
+  // 監控頁面渲染性能，用於優化
+  const startTime = performance.now();
+  console.log('NavBar 開始掛載');
   
-  // 初始化認證狀態前先檢查緩存的用戶資料
-  // 這能確保即使在 authService.initialize() 之前也能顯示用戶資料
+  // 階段性掛載 - 第一階段：立即從緩存加載用戶資料
+  console.log('NavBar 階段 1: 從緩存加載用戶資料');
   const hasCachedUser = userStore.loadUserFromCache();
   if (hasCachedUser && userStore.user) {
     console.log('已從緩存載入用戶資料，立即更新 NavBar 顯示');
-    username.value = userStore.user.username;
-    email.value = userStore.user.email;
-    userTag.value = userStore.user.role || 'regular';
-    avatarUrl.value = userStore.user.avatar || '';
-    fullName.value = userStore.user.fullName || '';
+    applyUserDataToUI(userStore.user);
+    currentUserLoaded.value = true;
+    userDataVersion.value++; // 增加版本號
+    
+    // 如果有緩存用戶，確保token也同步到authStore
+    if (userStore.token) {
+      // 這會觸發isAuthenticated計算屬性更新
+      if (!authStore.token) {
+        authStore.token = userStore.token;
+      }
+    }
   }
   
-  // 初始化認證狀態
-  console.log('NavBar 組件掛載，初始化認證狀態...');
-  await authService.initialize();
+  // 階段性掛載 - 第二階段：後台初始化認證狀態
+  console.log('NavBar 階段 2: 後台初始化認證');
+  setTimeout(async () => {
+    try {
+      console.log('NavBar 開始後台初始化認證狀態...');
+    await authService.initialize();
+      console.log('NavBar 後台認證初始化完成');
+  } catch (error) {
+      console.error('NavBar 認證初始化失敗，但不影響UI展示:', error);
+  }
   
-  // 如果已登錄，加載用戶資料
-  if (authStore.isAuthenticated) {
-    console.log('使用者已登錄，加載用戶資料');
+  // 只有確實登入且沒有顯示用戶資料時才重新加載
+  if (authStore.isAuthenticated && !currentUserLoaded.value) {
+    console.log('使用者已登錄但沒有緩存資料，加載用戶資料');
     await loadUserData();
+  } else if (authStore.isAuthenticated) {
+    // 已經顯示了緩存資料，在後台靜默更新
+    setTimeout(async () => {
+      await loadUserData(true); // 靜默模式
+    }, 100);
+    }
+  }, 10);
+  
+  // 階段性掛載 - 第三階段：低優先級初始化（消息和通知）
+  setTimeout(() => {
+    console.log('NavBar 階段 3: 低優先級初始化');
     
+    // 只有在用戶已登入時才初始化通知和聊天
+    if (authStore.isAuthenticated || userStore.isLoggedIn) {
     // 设置通知回调
     notificationStore.setNewNotificationCallback((notification) => {
       console.log('收到新通知回调:', notification);
@@ -646,31 +665,12 @@ onMounted(async () => {
       showNotificationToast(notification);
     });
     
-    // 初始化通知系统
-    console.log('初始化通知系统...');
-    notificationStore.initialize();
-    console.log('通知系统初始化完成，WebSocket状态:', notificationStore.websocketConnected ? '已连接' : '未连接');
+      // 初始化通知系统和聊天系统
+      initializeMessagingSystems();
+    }
     
-    // 初始化聊天系统
-    console.log('初始化聊天系统...');
-    chatroomStore.initialize();
-    console.log('聊天系统初始化完成');
-    
-    // 额外检查：3秒后再次检查WebSocket连接状态
-    setTimeout(() => {
-      console.log('WebSocket连接状态检查:', 
-        notificationStore.websocketConnected ? '已连接' : '未连接',
-        '通知数量:', notificationStore.notifications.length
-      );
-      
-      // 如果连接断开，尝试重新连接
-      if (!notificationStore.websocketConnected) {
-        console.log('检测到WebSocket未连接，尝试重新连接...');
-        // 注意：此方法内部已更新为使用WebSocketManager，保留调用是为了兼容现有代码
-        webSocketManager.connect();
-      }
-    }, 3000);
-  }
+    console.log(`NavBar 掛載完成，總耗時: ${(performance.now() - startTime).toFixed(2)}ms`);
+  }, 200);
 
   if (window.location.pathname === '/auth/google/callback') {
     handleGoogleCallback();
@@ -822,7 +822,9 @@ watch(() => route.path, () => {
 });
 
 const isAuthenticated = computed(() => {
-  return authStore.isAuthenticated;
+  // 同時檢查authStore的isAuthenticated和userStore的用戶資料
+  // 這樣即使token還未驗證完成，但本地有用戶資料，也會顯示已登入
+  return authStore.isAuthenticated || !!userStore.user;
 });
 
 const handleLogin = async () => {
@@ -1187,29 +1189,57 @@ const getUserTagName = (tag) => {
   }
 };
 
-// 載入用戶數據
-const loadUserData = async (retryCount = 3) => {
+// 載入用戶數據的修改版，添加靜默模式
+const loadUserData = async (silent = false, retryCount = 3) => {
   try {
+    const currentVersion = userDataVersion.value;
+    
     // 嘗試獲取用戶數據
-    await userStore.getUserData();
+    await userStore.getUserData(true); // 強制刷新
     
     if (userStore.user) {
-      username.value = userStore.user.username;
-      email.value = userStore.user.email;
-      userTag.value = userStore.user.role || 'regular';
-      avatarUrl.value = userStore.user.avatar || '';
-      fullName.value = userStore.user.fullName || '';
-      oauthProvider.value = userStore.user.oauthProvider || '';
-      console.log('用戶數據已通過 API 更新');
-    } else {
+      // 如果是靜默模式，只有當數據確實變化時才更新UI
+      if (silent) {
+        // 比較關鍵數據是否變化
+        if (username.value !== userStore.user.username ||
+            email.value !== userStore.user.email ||
+            userTag.value !== (userStore.user.role || 'regular') ||
+            avatarUrl.value !== (userStore.user.avatar || '') ||
+            fullName.value !== (userStore.user.fullName || '')) {
+          // 數據有變化，更新UI
+          applyUserDataToUI(userStore.user);
+          userDataVersion.value++; // 增加版本號
+          console.log('檢測到用戶數據變更，靜默更新UI');
+        } else {
+          console.log('用戶數據無變化，不更新UI');
+        }
+      } else {
+        // 非靜默模式，直接更新UI
+        applyUserDataToUI(userStore.user);
+        userDataVersion.value++; // 增加版本號
+        console.log('用戶數據已通過API更新');
+      }
+      currentUserLoaded.value = true;
+    } else if (!silent) {
       console.error('用戶數據獲取失敗: userStore.user 為空');
     }
   } catch (error) {
     console.error('Error loading user data:', error);
-    if (retryCount > 0) {
+    if (!silent && retryCount > 0) {
       console.log(`重試加載用戶數據，剩餘重試次數: ${retryCount - 1}`);
-      setTimeout(() => loadUserData(retryCount - 1), 1000);
+      setTimeout(() => loadUserData(silent, retryCount - 1), 1000);
     }
+  }
+};
+
+// 將用戶數據應用到UI的輔助函數
+const applyUserDataToUI = (userData) => {
+  if (userData) {
+    username.value = userData.username;
+    email.value = userData.email;
+    userTag.value = userData.role || 'regular';
+    avatarUrl.value = userData.avatar || '';
+    fullName.value = userData.fullName || '';
   }
 };
 
@@ -1370,6 +1400,32 @@ const goToGitHub = () => {
 const showHelp = () => {
   // 顯示幫助中心或文檔
   router.push('/help');
+};
+
+// 抽出初始化消息系統的邏輯到單獨函數，降低耦合度
+const initializeMessagingSystems = () => {
+  console.log('初始化通知系统...');
+  notificationStore.initialize();
+  console.log('通知系统初始化完成，WebSocket状态:', notificationStore.websocketConnected ? '已连接' : '未连接');
+  
+  console.log('初始化聊天系统...');
+  chatroomStore.initialize();
+  console.log('聊天系统初始化完成');
+  
+  // 额外检查：3秒后再次检查WebSocket连接状态
+  setTimeout(() => {
+    console.log('WebSocket连接状态检查:', 
+      notificationStore.websocketConnected ? '已连接' : '未连接',
+      '通知数量:', notificationStore.notifications.length
+    );
+    
+    // 如果连接断开，尝试重新连接
+    if (!notificationStore.websocketConnected) {
+      console.log('检测到WebSocket未连接，尝试重新连接...');
+      // 注意：此方法內部已更新為使用WebSocketManager，保留調用是為了兼容現有代碼
+      webSocketManager.connect();
+    }
+  }, 3000);
 };
 </script>
 

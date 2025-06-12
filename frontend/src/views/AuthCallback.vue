@@ -12,6 +12,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import axios from 'axios'
+import { tokenService } from '@/services/token'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -39,37 +40,40 @@ onMounted(async () => {
     console.log('Auth Callback: 保持登入原始值 = ', keepLoggedInStr)
     console.log('Auth Callback: 保持登入解析後 = ', keepLoggedIn)
     
-    if (!accessToken || !tokenType || !refreshToken) {
+    if (!accessToken || !tokenType) {
       console.error('Auth Callback: 缺少令牌信息!', { 
         hasAccessToken: !!accessToken, 
-        hasTokenType: !!tokenType, 
-        hasRefreshToken: !!refreshToken 
+        hasTokenType: !!tokenType
       })
       throw new Error('Missing token information')
     }
     
     // 记录令牌前10位（用于调试）
     console.log('Auth Callback: 访问令牌前10位 = ', accessToken.substring(0, 10) + '...')
-    console.log('Auth Callback: 刷新令牌前10位 = ', refreshToken.substring(0, 10) + '...')
+    if (refreshToken) {
+      console.log('Auth Callback: 刷新令牌前10位 = ', refreshToken.substring(0, 10) + '...')
+    }
     
     // 保存令牌
     try {
-      localStorage.setItem('token', accessToken)
-      localStorage.setItem('tokenType', tokenType)
-      localStorage.setItem('refreshToken', refreshToken)
+      // 使用 tokenService 保存令牌，而不是直接使用 localStorage
       localStorage.setItem('keepLoggedIn', String(keepLoggedIn))
-      console.log('Auth Callback: 令牌已保存到本地存儲')
       
-      // 验证令牌已正确保存
-      const storedRefreshToken = localStorage.getItem('refreshToken')
-      if (storedRefreshToken !== refreshToken) {
-        console.error('Auth Callback: 刷新令牌保存失败! 存储的值与原始值不匹配')
-        console.log(`原始: ${refreshToken.substring(0, 10)}... vs 存储: ${storedRefreshToken?.substring(0, 10)}...`)
-      } else {
-        console.log('Auth Callback: 刷新令牌验证成功，已正确保存')
-      }
+      // 使用 tokenService 設置令牌
+      const expiresIn = params.get('expires_in') ? parseInt(params.get('expires_in')!) : undefined;
+      const refreshTokenExpiresIn = params.get('refresh_token_expires_in') ? parseInt(params.get('refresh_token_expires_in')!) : expiresIn;
+      
+      await tokenService.setTokens(
+        accessToken,
+        '', // 不再傳入 refreshToken，因為它現在由 HTTP-only cookie 管理
+        tokenType,
+        expiresIn,
+        refreshTokenExpiresIn
+      );
+      
+      console.log('Auth Callback: 令牌已保存到 tokenService')
     } catch (storageError) {
-      console.error('Auth Callback: 保存令牌到localStorage时出错:', storageError)
+      console.error('Auth Callback: 保存令牌時出錯:', storageError)
     }
     
     // 設置 axios 默認 headers
@@ -90,9 +94,10 @@ onMounted(async () => {
     });
     
     try {
+      // 修改為僅傳入 accessToken，刷新令牌將由 cookie 處理
       const success = await authStore.handleGoogleCallback(
         accessToken, 
-        refreshToken, 
+        '', // 不再傳入 refreshToken
         keepLoggedIn, 
         expiresIn,
         refreshTokenExpiresIn
@@ -147,32 +152,30 @@ onMounted(async () => {
 async function checkIfAlreadyLoggedIn(): Promise<boolean> {
   try {
     console.log('Auth Callback: 检查用户是否已在其他流程中登录')
-    // 检查localStorage中是否有token
-    const hasToken = !!localStorage.getItem('token');
     
-    if (!hasToken) {
-      console.log('Auth Callback: localStorage中没有token，用户未登录')
-      return false;
+    // 使用 tokenService 檢查是否已經登入
+    const isAuthenticated = tokenService.isAuthenticated();
+    
+    if (!isAuthenticated) {
+      console.log('Auth Callback: tokenService 顯示用戶未登入')
+      // 再嘗試通過 authStore 檢查認證狀態
+      const storeAuthenticated = await authStore.checkAuth();
+      console.log(`Auth Callback: authStore.checkAuth結果: ${storeAuthenticated ? '已登录' : '未登录'}`);
+      return storeAuthenticated;
     }
     
-    // 尝试通过checkAuth检查认证状态
-    const isAuthenticated = await authStore.checkAuth();
-    console.log(`Auth Callback: authStore.checkAuth结果: ${isAuthenticated ? '已登录' : '未登录'}`)
+    console.log('Auth Callback: 用戶已登錄，確保初始化WebSocket連接');
     
     // 如果用户已认证，确保初始化WebSocket连接
-    if (isAuthenticated) {
-      console.log('Auth Callback: 用户已登录，确保初始化WebSocket连接');
-      // 延迟触发login-authenticated事件，确保WebSocket连接初始化
-      // 只有在主流程未觸發事件的情況下才觸發
-      if (!loginEventTriggered.value) {
-        setTimeout(() => {
-          console.log('Auth Callback: 延迟触发login-authenticated事件');
-          window.dispatchEvent(new Event('login-authenticated'));
-          loginEventTriggered.value = true;
-        }, 500);
-      } else {
-        console.log('Auth Callback: 主流程已觸發登入事件，不再重複觸發')
-      }
+    // 只有在主流程未觸發事件的情況下才觸發
+    if (!loginEventTriggered.value) {
+      setTimeout(() => {
+        console.log('Auth Callback: 延迟触发login-authenticated事件');
+        window.dispatchEvent(new Event('login-authenticated'));
+        loginEventTriggered.value = true;
+      }, 500);
+    } else {
+      console.log('Auth Callback: 主流程已觸發登入事件，不再重複觸發')
     }
     
     return isAuthenticated;

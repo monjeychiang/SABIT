@@ -1,30 +1,35 @@
-from datetime import datetime, timedelta
-from typing import Optional, Tuple
-from passlib.context import CryptContext
-from jose import JWTError, jwt
-from fastapi.security import OAuth2PasswordBearer
-from fastapi import HTTPException, status, Depends
 import os
-from dotenv import load_dotenv
-from sqlalchemy.orm import Session
-from ..db.database import get_db
-from ..db.models.user import User, RefreshToken
+import json
+import secrets
+import logging
+import string
+import random
+import time
+import uuid
 import base64
+import threading
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional, Tuple, Union
+
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jose import jwt, JWTError
+from passlib.context import CryptContext
+from sqlalchemy.orm import Session
+from dotenv import load_dotenv
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-import secrets
-import uuid
-import logging
-import json
-import string
 from google_auth_oauthlib.flow import Flow
 from google.oauth2 import id_token
 from google.auth.transport import requests
-import random
-import time
 
-# 配置日誌記錄器，用於安全模組的日誌記錄
+from app.db.database import get_db
+from app.db.models.user import User, RefreshToken
+from app.core.token_grace_store import token_grace_store
+from app.core.config import settings
+
+# 設定日誌記錄器
 logger = logging.getLogger(__name__)
 
 # 載入環境變數，確保能夠獲取敏感配置信息
@@ -320,20 +325,54 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+def clean_revoked_tokens_for_user_device(db: Session, user_id: int, device_id: str) -> int:
+    """
+    清理用戶在特定設備上的已撤銷或過期令牌
+    
+    確保在創建新的令牌前，清除可能導致唯一約束衝突的舊令牌。
+    
+    參數:
+        db: 資料庫會話
+        user_id: 使用者ID
+        device_id: 設備ID
+        
+    返回:
+        已刪除的令牌數量
+    """
+    try:
+        count = db.query(RefreshToken).filter(
+            RefreshToken.user_id == user_id,
+            RefreshToken.device_id == device_id,
+            (RefreshToken.is_revoked == True) | (RefreshToken.expires_at < datetime.utcnow())
+        ).delete()
+        
+        if count > 0:
+            db.commit()
+            logger.info(f"已刪除用戶 {user_id} 在設備 {device_id} 上的 {count} 個無效令牌")
+        
+        return count
+    except Exception as e:
+        db.rollback()
+        logger.error(f"清理已撤銷令牌時發生錯誤: {e}")
+        return 0
+
 def create_refresh_token(
     db: Session, 
     user_id: int,
-    expires_delta: Optional[timedelta] = None
+    expires_delta: Optional[timedelta] = None,
+    device_info: Optional[str] = None
 ) -> Tuple[str, RefreshToken]:
     """
-    創建刷新令牌
+    創建或更新刷新令牌
     
-    生成刷新令牌並在資料庫中存儲相關資訊，用於獲取新的存取令牌。
+    如果指定用戶在指定設備上已有令牌，則更新該令牌而非創建新令牌。
+    這種"更新而非新增"的策略可以減少資料庫中的冗餘記錄，提高查詢效能。
     
     參數:
         db: 資料庫會話
         user_id: 使用者ID
         expires_delta: 可選的過期時間，如果不提供則使用預設值（30天）
+        device_info: 裝置資訊，用於識別令牌來源
     
     返回:
         Tuple[str, RefreshToken]: 刷新令牌字符串和資料庫中的刷新令牌物件
@@ -341,24 +380,101 @@ def create_refresh_token(
     # 生成隨機令牌
     token = secrets.token_urlsafe(32)
     
+    # 對令牌進行雜湊處理
+    token_hash = pwd_context.hash(token)
+    
     # 計算過期時間
     if expires_delta:
         expires = datetime.utcnow() + expires_delta
     else:
         expires = datetime.utcnow() + timedelta(days=30)  # 預設30天過期
     
-    # 創建刷新令牌記錄
-    db_token = RefreshToken(
-        token=token,
-        user_id=user_id,
-        expires_at=expires,
-        is_revoked=False
-    )
+    # 從設備資訊中提取設備ID，如果沒有則使用預設值
+    device_id = None
+    if device_info:
+        # 嘗試從設備資訊中解析出唯一標識符
+        try:
+            device_info_dict = json.loads(device_info) if isinstance(device_info, str) else device_info
+            if isinstance(device_info_dict, dict):
+                # 使用設備資訊的組合作為設備ID
+                parts = []
+                if device_info_dict.get('browser'):
+                    parts.append(device_info_dict['browser'])
+                if device_info_dict.get('os'):
+                    parts.append(device_info_dict['os'])
+                if device_info_dict.get('device'):
+                    parts.append(device_info_dict['device'])
+                if parts:
+                    device_id = "_".join(parts)
+        except:
+            # 如果解析失敗，使用原始字符串的雜湊作為設備ID
+            import hashlib
+            device_id = hashlib.md5(str(device_info).encode()).hexdigest()[:20]
     
-    # 存儲到資料庫
-    db.add(db_token)
-    db.commit()
-    db.refresh(db_token)
+    # 如果沒有提取到設備ID，使用預設值
+    if not device_id:
+        device_id = "default_device"
+    
+    # 重要：清理該用戶在當前設備上的已撤銷或過期令牌，避免唯一約束衝突
+    clean_revoked_tokens_for_user_device(db, user_id, device_id)
+    
+    # 查找該用戶在該設備上是否已有未撤銷的令牌
+    existing_token = db.query(RefreshToken).filter(
+        RefreshToken.user_id == user_id,
+        RefreshToken.device_id == device_id,
+        RefreshToken.is_revoked == False
+    ).first()
+    
+    if existing_token:
+        # 更新前先將舊令牌添加到寬限期存儲
+        try:
+            # 為了安全起見，驗證舊令牌存在
+            old_token_hash = existing_token.token_hash
+            # 由於我們無法還原原始令牌，這裡使用令牌雜湊作為識別
+            # 在實際應用中，可能需要另外的機制來處理這種情況
+            old_token_id = f"{existing_token.id}-{device_id}"
+            
+            # 將舊令牌ID加入寬限期緩存
+            token_grace_store.add_revoked_token(old_token_id, str(user_id))
+            logger.debug(f"將用戶 {user_id} 的舊令牌添加到寬限期緩存")
+        except Exception as e:
+            logger.warning(f"添加舊令牌到寬限期緩存失敗: {e}")
+        
+        # 更新現有令牌
+        logger.info(f"更新用戶 {user_id} 在設備 {device_id} 上的現有令牌")
+        existing_token.token_hash = token_hash
+        existing_token.expires_at = expires
+        existing_token.updated_at = datetime.utcnow()
+        existing_token.device_info = device_info
+        db_token = existing_token
+    else:
+        # 創建新的刷新令牌記錄
+        logger.info(f"為用戶 {user_id} 在設備 {device_id} 上創建新令牌")
+        db_token = RefreshToken(
+            token_hash=token_hash,  # 存儲雜湊值，而非原始令牌
+            user_id=user_id,
+            device_id=device_id,
+            expires_at=expires,
+            is_revoked=False,
+            device_info=device_info
+        )
+        db.add(db_token)
+    
+    # 提交變更到資料庫
+    try:
+        db.commit()
+        db.refresh(db_token)
+    except Exception as e:
+        db.rollback()
+        logger.error(f"保存令牌時發生錯誤: {e}")
+        # 再次嘗試清理可能的衝突記錄並重試
+        clean_revoked_tokens_for_user_device(db, user_id, device_id)
+        if existing_token:
+            db.refresh(existing_token)
+        else:
+            db.add(db_token)
+        db.commit()
+        db.refresh(db_token)
     
     return token, db_token
 
@@ -367,6 +483,9 @@ def verify_refresh_token(db: Session, token: str) -> Optional[User]:
     驗證刷新令牌並返回相關聯的使用者
     
     檢查刷新令牌是否有效且未過期，並返回對應的使用者資訊。
+    透過雜湊比對方式驗證令牌，增強安全性。
+    
+    如果令牌不在數據庫中但在寬限期內，會嘗試獲取該用戶的當前有效令牌。
     
     參數:
         db: 資料庫會話
@@ -375,27 +494,142 @@ def verify_refresh_token(db: Session, token: str) -> Optional[User]:
     返回:
         如果令牌有效，則返回使用者物件，否則返回None
     """
-    # 查詢令牌
-    db_token = db.query(RefreshToken).filter(
-        RefreshToken.token == token,
-        RefreshToken.is_revoked == False
-    ).first()
-    
-    # 如果找不到令牌或已過期，則返回None
-    if not db_token or db_token.expires_at < datetime.utcnow():
+    # 輕量級初步驗證 - 快速過濾明顯無效的令牌
+    if not token or len(token) < 16:
+        if settings.DEBUG:
+            logger.debug("令牌格式無效或過短")
         return None
     
-    # 查詢關聯的使用者
-    user = db.query(User).filter(User.id == db_token.user_id).first()
+    # 添加簡單的令牌驗證結果緩存
+    if not hasattr(verify_refresh_token, "cache"):
+        verify_refresh_token.cache = {}
     
-    return user
+    # 生成高效的令牌指紋 (不是完整的哈希，僅用於緩存鍵)
+    token_fingerprint = f"{token[:4]}..{token[-4:]}"
+    cache_key = f"token:{token_fingerprint}"
+    
+    # 檢查緩存 - 緩存讀取優先採用無鎖設計
+    now = time.time()
+    if cache_key in verify_refresh_token.cache:
+        cache_data = verify_refresh_token.cache[cache_key]
+        # 緩存有效期5秒，適合高頻刷新場景
+        if now - cache_data["timestamp"] < 5:
+            if settings.DEBUG:
+                logger.debug(f"使用緩存的令牌驗證結果: {token_fingerprint}")
+            return cache_data["user"]
+            
+    try:
+        # 使用更高效的查詢策略
+        now_dt = datetime.utcnow()
+        
+        # 檢查寬限期存儲 - 這通常比數據庫查詢更快
+        grace_user_id = token_grace_store.get_user_id(token)
+        
+        if grace_user_id:
+            # 令牌在寬限期內，查找該用戶的當前有效令牌
+            # 避免詳細日誌，減少IO開銷
+            if settings.DEBUG:
+                logger.debug(f"令牌在寬限期內，用戶ID: {grace_user_id}")
+            
+            # 快速查詢：只獲取必要欄位的用戶信息
+            user = db.query(User).filter(User.id == grace_user_id).first()
+            
+            # 添加標記，表示這是通過寬限期機制驗證的
+            if user:
+                setattr(user, "_from_grace_period", True)
+                
+                # 存入緩存
+                verify_refresh_token.cache[cache_key] = {
+                    "user": user,
+                    "timestamp": now
+                }
+                
+                return user
+        
+        # 高效的活動令牌查詢：限制查詢範圍和返回數量
+        # 首先嘗試使用索引查詢，只返回最近更新的有限數量令牌
+        active_tokens = db.query(RefreshToken).filter(
+            RefreshToken.is_revoked == False,
+            RefreshToken.expires_at > now_dt
+        ).order_by(RefreshToken.updated_at.desc()).limit(10).all()
+        
+        # 找到匹配的令牌 - 使用預先過濾減少密碼驗證次數
+        matched_token = None
+        for db_token in active_tokens:
+            try:
+                # 快速預過濾：如果令牌長度和特徵不匹配，跳過昂貴的密碼驗證
+                if db_token.token_hash.startswith('$2') and pwd_context.verify(token, db_token.token_hash):
+                    matched_token = db_token
+                    
+                    # 最小化更新：只更新必要字段
+                    if (now_dt - db_token.updated_at).total_seconds() > 60:
+                        db_token.updated_at = now_dt
+                        db.commit()
+                    
+                    break
+            except Exception as e:
+                # 減少日誌噪音，只記錄非預期錯誤
+                if not isinstance(e, ValueError):
+                    logger.warning(f"令牌雜湊驗證異常: {e}")
+                continue
+        
+        # 查詢關聯的用戶
+        user = None
+        if matched_token:
+            # 延遲載入：只在需要時查詢用戶
+            user = db.query(User).filter(User.id == matched_token.user_id).first()
+        
+        if not user:
+            # 減少日誌噪音，使用簡潔信息
+            if settings.DEBUG:
+                if matched_token:
+                    logger.debug(f"找不到與令牌關聯的用戶，用戶ID: {matched_token.user_id}")
+                else:
+                    logger.debug("找不到有效的刷新令牌")
+            return None
+        
+        # 存入緩存
+        verify_refresh_token.cache[cache_key] = {
+            "user": user,
+            "timestamp": now
+        }
+        
+        # 簡單的緩存清理 - 非阻塞且高效
+        if len(verify_refresh_token.cache) > 100 and random.random() < 0.1:
+            # 在10%的調用中清理緩存，避免每次調用都清理
+            threading.Thread(
+                target=lambda: _clean_verify_token_cache(verify_refresh_token.cache),
+                daemon=True
+            ).start()
+            
+        return user
+    except Exception as e:
+        logger.error(f"驗證刷新令牌時發生錯誤: {e}")
+        return None
+
+# 非阻塞緩存清理函數
+def _clean_verify_token_cache(cache):
+    """清理令牌驗證緩存的過期項目"""
+    try:
+        # 獲取當前時間
+        now = time.time()
+        # 找出過期的鍵
+        expired_keys = [
+            k for k, v in cache.items() 
+            if now - v["timestamp"] > 60  # 60秒後過期
+        ]
+        # 刪除過期項目
+        for k in expired_keys:
+            cache.pop(k, None)
+    except Exception as e:
+        logger.error(f"清理令牌驗證緩存時出錯: {e}")
 
 def revoke_refresh_token(db: Session, token: str) -> bool:
     """
-    撤銷刷新令牌
+    撤銷刷新令牌（直接刪除而非標記）
     
-    直接從資料庫刪除指定的刷新令牌，而不是標記為已撤銷。
-    用於使用者登出或密碼變更等場景。
+    找到並直接從數據庫中刪除對應的刷新令牌記錄，避免唯一約束衝突。
+    同時將令牌添加到寬限期存儲中，以允許在短時間內仍然可用。
     
     參數:
         db: 資料庫會話
@@ -405,12 +639,40 @@ def revoke_refresh_token(db: Session, token: str) -> bool:
         如果成功刪除，則返回True，否則返回False
     """
     try:
-        # 直接刪除令牌記錄
-        result = db.query(RefreshToken).filter(RefreshToken.token == token).delete()
-        db.commit()
+        # 查詢未過期的令牌
+        active_tokens = db.query(RefreshToken).filter(
+            RefreshToken.expires_at > datetime.utcnow()
+        ).all()
         
-        # 如果刪除了記錄，返回True
-        return result > 0
+        # 找到匹配的令牌
+        deleted = False
+        for db_token in active_tokens:
+            try:
+                if pwd_context.verify(token, db_token.token_hash):
+                    # 記錄要刪除的令牌信息（用於日誌）
+                    user_id = db_token.user_id
+                    device_id = db_token.device_id
+                    
+                    # 將令牌添加到寬限期存儲中
+                    try:
+                        # 由於我們無法還原原始令牌，使用一個標識符
+                        token_id = f"{db_token.id}-{device_id}"
+                        token_grace_store.add_revoked_token(token_id, str(user_id))
+                        logger.debug(f"已將用戶 {user_id} 的刷新令牌添加到寬限期緩存")
+                    except Exception as e:
+                        logger.warning(f"添加令牌到寬限期緩存失敗: {e}")
+                    
+                    # 直接刪除令牌而非標記為已撤銷
+                    db.delete(db_token)
+                    db.commit()
+                    logger.info(f"已刪除用戶 {user_id} 在設備 {device_id} 上的刷新令牌")
+                    deleted = True
+                    break
+            except Exception as e:
+                logger.warning(f"令牌雜湊驗證失敗: {e}")
+                continue
+                
+        return deleted
     except Exception as e:
         db.rollback()
         logger.error(f"刪除刷新令牌時發生錯誤: {e}")

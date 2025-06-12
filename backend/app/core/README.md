@@ -127,4 +127,110 @@ btc_price = exchange.get_ticker("BTCUSDT", "spot")
 
 - 添加新的交易所支援時，應繼承 `ExchangeBase` 類並實現所有抽象方法
 - 修改配置參數時，建議通過環境變數或 `.env` 檔案進行，避免直接更改 `config.py`
-- 安全相關的更新應同時考慮 `security.py` 中可能需要同步更新的多個部分 
+- 安全相關的更新應同時考慮 `security.py` 中可能需要同步更新的多個部分
+
+# 認證系統優化模組
+
+本目錄包含用於提升系統認證效能的優化模組，主要解決高併發場景下的效能瓶頸問題。
+
+## 模組概述
+
+### 1. 非同步認證處理 (`async_auth.py`)
+
+提供高效能的非同步處理能力，透過任務佇列和協程池實現認證相關操作的並行處理和負載均衡。
+
+```python
+# 使用範例
+from app.core.async_auth import auth_pool
+
+# 添加認證任務
+task_id = await auth_pool.add_task("token_validation", {"token": token, "db": db})
+
+# 獲取結果
+result = await auth_pool.get_result(task_id, timeout=5.0)
+```
+
+### 2. 令牌驗證優化 (`token_validation.py`)
+
+實現高效的令牌驗證策略，通過分層驗證和內存緩存大幅提高令牌驗證性能，減少不必要的計算和數據庫查詢。
+
+```python
+# 使用範例
+from app.core.token_validation import verify_token_optimized
+
+# 驗證令牌
+try:
+    payload = verify_token_optimized(token, db)
+    # 令牌有效，繼續處理
+except HTTPException:
+    # 令牌無效，處理錯誤
+```
+
+### 3. 令牌刷新優化 (`token_refresh.py`)
+
+實現高效的令牌刷新策略，通過動態閾值計算、批量處理請求和令牌衰減機制，優化系統在高併發情況下的刷新令牌處理性能。
+
+```python
+# 使用範例
+from app.core.token_refresh import token_refresh_manager
+
+# 獲取動態刷新閾值
+threshold = token_refresh_manager.calculate_dynamic_refresh_threshold(user_id)
+
+# 創建帶衰減特性的刷新令牌
+token, db_token, decay_info = token_refresh_manager.create_refresh_token_with_decay(
+    db, user_id, expires_delta, device_info
+)
+```
+
+### 4. 認證優化整合 (`auth_optimizations.py`)
+
+整合所有認證相關優化，並提供統一的接口來初始化和使用這些優化功能。
+
+```python
+# 使用範例
+from app.core.auth_optimizations import initialize_auth_optimizations, get_current_user_optimized
+
+# 在FastAPI應用啟動時初始化
+await initialize_auth_optimizations(app)
+
+# 使用優化的依賴項
+@app.get("/api/protected")
+async def protected_route(user = Depends(get_current_user_optimized)):
+    return {"message": "Protected data", "user": user.username}
+```
+
+## 配置選項
+
+以下環境變數可用於調整認證優化系統的行為：
+
+| 環境變數 | 描述 | 默認值 |
+|---------|------|-------|
+| `AUTH_CACHE_SIZE` | 令牌驗證緩存大小 | 5000 |
+| `AUTH_CACHE_TTL` | 令牌驗證緩存有效期（秒） | 60 |
+| `JWT_SIG_CACHE_SIZE` | JWT簽名緩存大小 | 10000 |
+| `JWT_SIG_CACHE_TTL` | JWT簽名緩存有效期（秒） | 300 |
+| `AUTH_WORKER_COUNT` | 非同步認證工作者數量 | 5 |
+| `REFRESH_BATCH_SIZE` | 令牌刷新批處理大小 | 20 |
+| `REFRESH_MAX_WAIT_MS` | 令牌刷新批處理最大等待時間（毫秒） | 200 |
+
+## 效能測試
+
+使用 `test_auth_optimization.py` 腳本測試認證系統的效能：
+
+```bash
+# 基本測試
+python test_auth_optimization.py
+
+# 自定義測試參數
+python test_auth_optimization.py --iterations 500 --threads 50 --requests 10 --charts
+
+# 查看幫助
+python test_auth_optimization.py --help
+```
+
+## 注意事項
+
+1. 所有緩存都是進程內的，在多進程部署時需要考慮緩存一致性問題
+2. 定期監控緩存使用情況，避免記憶體使用過高
+3. 在生產環境中，建議根據實際負載調整緩存大小和過期時間 

@@ -47,34 +47,133 @@ export const authService = {
     const hasCachedUser = userStore.loadUserFromCache();
     if (hasCachedUser) {
       console.log('從持久化緩存成功載入用戶資料，無需等待API請求');
+      
+      // 如果有緩存用戶，立即同步token到authStore確保UI正確顯示
+      if (userStore.token) {
+        authStore.token = userStore.token;
+        // 設置axios授權頭，確保後續請求帶有授權
+        axios.defaults.headers.common['Authorization'] = `Bearer ${userStore.token}`;
+      }
+      
+      // 在後台啟動所有WebSocket連接，不阻塞UI
+      setTimeout(async () => {
+        try {
+          await this.initializeWebSockets();
+          console.log('後台WebSocket連接初始化完成');
+        } catch (e) {
+          console.warn('後台WebSocket連接初始化失敗，但不影響用戶體驗:', e);
+        }
+      }, 0);
     }
     
-    // 初始化 auth store 身份驗證狀態
-    await authStore.initAuth();
+    // 非阻塞方式處理令牌驗證
+    // 立即返回初始狀態，讓UI可以快速顯示
+    // 在後台處理完整的令牌驗證和刷新流程
+    setTimeout(async () => {
+      try {
+        await this._completeInitialization(hasCachedUser);
+        console.log('後台完成認證初始化');
+      } catch (e) {
+        console.warn('後台認證初始化過程發生錯誤，但不影響當前UI:', e);
+      }
+    }, 0);
     
-    // 若 auth store 已登錄，則設置 user store 的令牌
-    if (authStore.isAuthenticated && authStore.token) {
-      console.log('同步令牌到 user store');
-      userStore.setToken(authStore.token);
+    // 立即返回初始認證狀態
+    return { isAuthenticated: !!userStore.token || !!authStore.token || hasCachedUser };
+  },
+  
+  /**
+   * 完成初始化過程（內部方法，由initialize在後台調用）
+   * @private
+   */
+  async _completeInitialization(hasCachedUser: boolean) {
+    const authStore = useAuthStore();
+    const userStore = useUserStore();
+    
+    try {
+      // 先檢查URL中是否有訪問令牌（登入重定向回調）
+      const urlParams = new URLSearchParams(window.location.search);
+      const accessToken = urlParams.get('access_token');
       
-      // 若沒有緩存數據或需要刷新，再獲取用戶數據
+      // 如果URL中有訪問令牌，優先處理它（來自登入回調）
+      if (accessToken) {
+        console.log('檢測到URL中的訪問令牌，優先處理');
+        const tokenType = urlParams.get('token_type') || 'bearer';
+        
+        // 更新store中的token
+        authStore.token = accessToken;
+        userStore.setToken(accessToken);
+        
+        // 設置axios授權頭
+        axios.defaults.headers.common['Authorization'] = `${tokenType} ${accessToken}`;
+        
+        // 若沒有緩存數據或需要刷新，獲取用戶數據
       if (!hasCachedUser) {
         try {
-          console.log('從緩存未載入到用戶資料，嘗試從API獲取');
           await userStore.getUserData();
-        } catch (error) {
-          console.error('獲取用戶數據失敗', error);
+          } catch (userError) {
+            console.error('獲取用戶數據失敗', userError);
+          }
         }
-      } else {
-        console.log('已有緩存用戶資料，背景刷新資料');
-        // 在背景刷新用戶資料，但不等待完成
-        userStore.getUserData().catch(error => {
-          console.error('背景刷新用戶資料失敗', error);
-        });
+        
+        // 清除URL參數，避免重新加載時重複處理
+        window.history.replaceState({}, document.title, window.location.pathname);
+        
+        // 初始化WebSocket連接
+        await this.initializeWebSockets();
+        
+        return { isAuthenticated: true };
+      }
+      
+      // 如果URL中沒有訪問令牌，再嘗試刷新流程
+      // 嘗試通過刷新令牌 cookie 獲取新的 access token
+      const refreshResult = await this.tryRefreshToken();
+      
+      if (refreshResult.success && refreshResult.accessToken) {
+        console.log('通過刷新令牌成功獲取新的訪問令牌');
+        
+        // 更新 token 到內部狀態
+        authStore.token = refreshResult.accessToken;
+        userStore.setToken(refreshResult.accessToken);
+        
+        // 手動設置所需的 axios Authorization 頭
+        axios.defaults.headers.common['Authorization'] = `Bearer ${refreshResult.accessToken}`;
+        
+        // 若沒有緩存數據或需要刷新，獲取用戶數據
+        if (!hasCachedUser) {
+          try {
+            await userStore.getUserData();
+          } catch (userError) {
+            console.error('獲取用戶數據失敗', userError);
+          }
       }
       
       // 用户已登录，初始化WebSocket连接
       await this.initializeWebSockets();
+        
+        return { isAuthenticated: true };
+      }
+      
+      // 刷新失敗，嘗試從 authStore 初始化
+      console.log('刷新令牌失敗，嘗試從 authStore 初始化');
+      const authResult = await authStore.initAuth();
+      
+      if (authResult.authenticated && authStore.token) {
+        userStore.setToken(authStore.token);
+        
+        // 若沒有緩存數據或需要刷新，獲取用戶數據
+        if (!hasCachedUser) {
+          try {
+            await userStore.getUserData();
+          } catch (userError) {
+            console.error('獲取用戶數據失敗', userError);
+          }
+        }
+        
+        // 初始化WebSocket连接
+        await this.initializeWebSockets();
+        
+        return { isAuthenticated: true };
     } else {
       // 嘗試從 user store 初始化令牌
       if (!hasCachedUser) {
@@ -84,17 +183,15 @@ export const authService = {
       // 如果 user store 有有效令牌，初始化WebSocket連接
       if (userStore.isLoggedIn) {
         await this.initializeWebSockets();
+          return { isAuthenticated: true };
+        }
+        
+        return { isAuthenticated: false };
       }
+    } catch (error) {
+      console.error('認證初始化失敗:', error);
+      return { isAuthenticated: false };
     }
-    
-    console.log('認證狀態初始化完成', {
-      authStore: authStore.isAuthenticated,
-      userStore: userStore.isLoggedIn
-    });
-    
-    return {
-      isAuthenticated: authStore.isAuthenticated || userStore.isLoggedIn
-    };
   },
   
   /**
@@ -272,64 +369,95 @@ export const authService = {
    * 登出用戶
    */
   async logout() {
-    console.log('[AuthService] 統一關閉所有WebSocket連線');
-    // 先关闭所有WebSocket连接
-    this.closeAllWebSockets();
+    console.log('[AuthService] 開始處理登出流程');
     
-    console.log('[AuthService] 所有WebSocket連線已關閉');
-    
+    try {
+      // 獲取需要的 store 引用
     const authStore = useAuthStore();
     const userStore = useUserStore();
     const chatroomStore = useChatroomStore();
     const notificationStore = useNotificationStore();
     
-    // 重置聊天室状态
-    chatroomStore.resetState();
-    notificationStore.resetState();
-    
-    try {
-      // 從 authStore 獲取當前刷新令牌（而非訪問令牌）
-      const currentRefreshToken = authStore.refreshToken;
+      // 快速重置前端狀態層以便立即反映給使用者
+      await this.finalizeLogout(authStore, userStore);
       
-      // 如果用戶已登入且有有效刷新令牌，嘗試調用登出 API
-      if (currentRefreshToken) {
+      // 診斷信息
+      console.log('[AuthService] 登出前檢查 store 狀態:', {
+        'authStore 存在': !!authStore,
+        'userStore 存在': !!userStore,
+        'authStore.token 存在': !!authStore.token,
+        'userStore.token 存在': !!userStore.token
+      });
+      
+      // 以下操作將在後台完成，不阻塞 UI
+      setTimeout(async () => {
         try {
-          // 嘗試帶有表單格式的請求，使用正確的參數名稱 'refresh_token'
+          // 1. 關閉 WebSocket 連線
+          this.closeAllWebSockets();
+          console.log('[AuthService] 所有WebSocket連線已關閉');
+          
+          // 2. 重置聊天室狀態
+          chatroomStore.resetState();
+          notificationStore.resetState();
+          
+          // 3. 調用後端登出 API
           try {
-            const formData = new FormData();
-            formData.append('refresh_token', currentRefreshToken);
-            
-            await axios.post('/api/v1/auth/logout', formData, {
-              headers: {
-                'Content-Type': 'multipart/form-data'
-              }
+            await axios.post('/api/v1/auth/logout', {}, {
+              withCredentials: true
             });
-            console.log('[AuthService] 登出 API 調用成功 (表單格式)');
-            // 如果成功，不再嘗試其他格式
-            return await this.finalizeLogout(authStore, userStore);
-          } catch (formError) {
-            console.warn('[AuthService] 表單格式登出請求失敗:', formError);
-            // 即使API調用失敗，也繼續本地登出流程
+            console.log('[AuthService] 登出 API 調用成功');
+          } catch (apiError) {
+            console.warn('[AuthService] 登出 API 調用失敗', apiError);
           }
+          
+          console.log('[AuthService] 後台清理操作完成');
         } catch (error) {
-          // 捕獲但不拋出錯誤，確保登出流程繼續
-          console.warn('[AuthService] 登出 API 調用失敗，繼續本地登出流程', error);
+          console.error('[AuthService] 後台登出清理操作失敗:', error);
         }
-      } else {
-        console.warn('[AuthService] 沒有刷新令牌可用於登出 API 調用');
+      }, 0);
+      
+      // 立即返回成功，讓 UI 可以立即響應
+      return true;
+    } catch (error) {
+      // 詳細記錄錯誤信息
+      console.error('[AuthService] 登出過程中發生錯誤:', error);
+      if (error instanceof Error) {
+        console.error('[AuthService] 錯誤類型:', error.name);
+        console.error('[AuthService] 錯誤訊息:', error.message);
+        console.error('[AuthService] 錯誤堆疊:', error.stack);
       }
       
-      // 無論 API 是否成功，都完成本地登出流程
-      return await this.finalizeLogout(authStore, userStore);
-    } catch (error) {
-      console.error('[AuthService] 登出過程中發生錯誤:', error);
+      // 即使發生錯誤，也確保清除前端狀態
+      const authStore = useAuthStore();
+      const userStore = useUserStore();
       
-      // 即使發生錯誤，也確保清除用戶狀態
       try {
-        tokenService.clearTokens();
-        userStore.logout();
+        // 直接清除本地狀態
+        console.log('[AuthService] 嘗試手動清除狀態');
+        if (authStore) {
+          // 手動重置關鍵狀態
+          authStore.token = null;
+          authStore.refreshToken = null;
+          console.log('[AuthService] 手動清除 authStore 狀態完成');
+        }
+        
+        if (userStore) {
+          // 手動重置關鍵狀態，只設置那些可寫的屬性
+          userStore.user = null;
+          userStore.token = null;
+          // 移除 isLoggedIn 的賦值，因為它是一個計算屬性
+          console.log('[AuthService] 手動清除 userStore 狀態完成');
+        }
+        
+        localStorage.removeItem('keepLoggedIn');
+        
+        // 清除令牌，使用非阻塞方式
+        setTimeout(() => tokenService.clearTokens(), 0);
+        
+        // 清除 axios 授權標頭
+        delete axios.defaults.headers.common['Authorization'];
       } catch (e) {
-        console.error('[AuthService] 登出時清除用戶狀態失敗:', e);
+        console.error('[AuthService] 登出時清除本地狀態失敗:', e);
       }
       
       return false;
@@ -337,25 +465,50 @@ export const authService = {
   },
   
   /**
-   * 完成登出流程的最後步驟
+   * 完成登出流程的最後步驟 (只處理前端狀態，不呼叫後端 API)
    * @private
    */
   async finalizeLogout(authStore: any, userStore: any): Promise<boolean> {
     try {
-      // 先登出 auth store (這會清除令牌)
-      await authStore.logout();
+      console.log('[AuthService] 開始快速清除前端狀態');
       
-      // 再登出 user store
-      userStore.logout();
+      // 完全移除對 $reset() 的嘗試，直接手動重置，減少不必要的等待
       
-      console.log('[AuthService] 登出完成');
+      // 1. 手動重置 authStore 的狀態
+      if (authStore) {
+        authStore.token = null;
+        authStore.refreshToken = null;
+        authStore.error = null;
+        console.log('[AuthService] Auth store 狀態已重置');
+      }
+      
+      // 2. 手動重置 userStore 的狀態
+      if (userStore) {
+        userStore.user = null;
+        userStore.token = null;
+        console.log('[AuthService] User store 狀態已重置');
+      }
+      
+      // 3. 立即清除本地存儲
+      localStorage.removeItem('keepLoggedIn');
+      
+      // 4. 立即移除授權標頭
+      delete axios.defaults.headers.common['Authorization'];
+      
+      // 5. 啟動令牌清除（不等待其完成）
+      // 並行處理令牌清除，不阻塞登出流程完成
+      setTimeout(() => {
+        try {
+          tokenService.clearTokens();
+        } catch (tokenError) {
+          console.warn('[AuthService] 清除令牌時出現非阻塞錯誤:', tokenError);
+        }
+      }, 0);
+      
+      console.log('[AuthService] 前端狀態快速清除完成');
       return true;
     } catch (e) {
-      console.error('[AuthService] 完成登出過程失敗:', e);
-      
-      // 確保令牌被清除
-      tokenService.clearTokens();
-      
+      console.error('[AuthService] 清除前端狀態失敗:', e);
       return false;
     }
   },
@@ -408,6 +561,43 @@ export const authService = {
         message: `預熱連接失敗: ${error instanceof Error ? error.message : '未知錯誤'}`,
         exchanges: []
       };
+    }
+  },
+
+  /**
+   * 嘗試使用 HTTP-only cookie 中的刷新令牌獲取新的訪問令牌
+   */
+  async tryRefreshToken(): Promise<{ success: boolean, accessToken?: string }> {
+    try {
+      console.log('[AuthService] 嘗試使用刷新令牌獲取新的訪問令牌');
+      
+      // 使用統一的tokenService刷新機制，避免重複刷新
+      const refreshed = await tokenService.refreshTokenIfNeeded();
+      
+      if (refreshed) {
+        // 獲取刷新後的token
+        const accessToken = tokenService.getAccessToken();
+        
+        if (accessToken) {
+          // 安全地顯示 token 部分內容
+          const maskToken = (token: string): string => {
+            if (token.length <= 8) return '***' + token.substring(token.length - 3);
+            return token.substring(0, 4) + '...' + token.substring(token.length - 4);
+          };
+          
+          console.log(`[AuthService] 成功獲取新的訪問令牌: ${maskToken(accessToken)}`);
+          return {
+            success: true,
+            accessToken: accessToken
+          };
+        }
+      }
+      
+      console.log('[AuthService] 刷新請求未能獲得新的訪問令牌');
+      return { success: false };
+    } catch (error) {
+      console.error('[AuthService] 刷新令牌失敗:', error);
+      return { success: false };
     }
   }
 };

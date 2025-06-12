@@ -95,6 +95,15 @@ export const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/rtl-test',
+    name: 'rtl-test',
+    component: () => import('@/views/RTLTestView.vue'),
+    meta: { 
+      layout: 'default',
+      breadcrumb: 'RTL 測試'
+    }
+  },
+  {
     path: '/account',
     name: 'account',
     component: () => import('@/views/AccountView.vue'),

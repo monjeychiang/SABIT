@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, DateTime, Enum, ForeignKey
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, Enum, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship, backref
 from ...db.database import Base
 from .base import get_china_time, UserTag
@@ -83,15 +83,27 @@ class RefreshToken(Base):
     
     用於實現JWT認證中的令牌刷新機制，允許用戶在不重新登入的情況下
     獲取新的訪問令牌。支持多設備登入，並提供令牌撤銷功能，增強安全性。
+    令牌以雜湊形式存儲以提高安全性，防止資料庫洩露時暴露原始令牌。
+    
+    優化策略：採用"更新而非新增"的方式，每個用戶在每個設備上只保留一個活躍令牌，
+    減少資料庫負擔並提高查詢效能。
     """
     __tablename__ = "refresh_tokens"  # 資料表名稱
     
     id = Column(Integer, primary_key=True, index=True)  # 唯一識別符，主鍵
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)  # 關聯用戶ID，使用級聯刪除
-    token = Column(String(255), unique=True, nullable=False, index=True)  # 令牌值，必須唯一，建立索引以加速查詢
+    device_id = Column(String(100), nullable=True, index=True)  # 設備識別碼，用於區分用戶的不同裝置
+    token_hash = Column(String(255), unique=True, nullable=False, index=True)  # 令牌雜湊值，必須唯一，建立索引以加速查詢
     expires_at = Column(DateTime, nullable=False)  # 令牌過期時間，用於自動失效控制
     created_at = Column(DateTime, default=get_china_time)  # 令牌創建時間
+    updated_at = Column(DateTime, default=get_china_time, onupdate=get_china_time)  # 令牌更新時間
     is_revoked = Column(Boolean, default=False)  # 令牌是否已被撤銷，用於手動使令牌失效
+    device_info = Column(String(255), nullable=True)  # 裝置資訊，用於識別令牌來源
+    
+    # 複合唯一約束：確保每個用戶在每個設備上只有一個活躍令牌
+    __table_args__ = (
+        UniqueConstraint('user_id', 'device_id', name='uix_user_device'),
+    )
     
     # 關聯關係：所屬用戶
     # 多對一關係，多個刷新令牌可以關聯到同一個用戶
